@@ -13,7 +13,7 @@ let package = Package(
         // FluidAudio — Apple Silicon ANE Parakeet/Nemotron ASR + Silero VAD.
         // Mode B client-side speech recognition.
         // Exact pin: FluidAudio is pre-1.0 and minor releases remove APIs.
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.5"),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.7"),
     ],
     targets: [
         .executableTarget(
