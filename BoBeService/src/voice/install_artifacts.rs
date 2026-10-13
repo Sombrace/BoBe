@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum VoiceModelKind {
     Tts,
@@ -35,8 +35,6 @@ pub(super) struct ModelArtifact {
     pub(super) required_files: &'static [&'static str],
 }
 
-// One immutable, generation-matched set: weights, tokenizer, config and presets.
-// Provenance and attribution are also installed alongside the model.
 const POCKET_FILES: &[ModelFile] = &[
     ModelFile {
         path: "config.json",

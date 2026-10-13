@@ -34,8 +34,24 @@ extension VoicePipeline {
             logger.warning("voice.malformed_tts_frame size=\(bytes.count)")
             return
         }
-        self.ensureDecoder()
-        guard let decoder = self.decoder, let format = self.ttsOutputFormat else { return }
+        guard let format = self.ttsOutputFormat else { return }
+        let selectedDecoder: OpusDecoder?
+        if parsed.header.isFiller {
+            if parsed.header.chunkId == 0 {
+                do {
+                    self.fillerDecoder = try OpusDecoder(outputFormat: format)
+                } catch {
+                    self.lastError = "decoder init: \(error.localizedDescription)"
+                    return
+                }
+            }
+            selectedDecoder = self.fillerDecoder
+        } else {
+            if parsed.header.isFirstOfTurn { self.decoder = nil }
+            self.ensureDecoder()
+            selectedDecoder = self.decoder
+        }
+        guard let decoder = selectedDecoder else { return }
         guard let outBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_440)
         else { return }
         do {

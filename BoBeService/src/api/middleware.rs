@@ -281,7 +281,7 @@ fn required_scope(method: &Method, path: &str) -> RouteScope {
     if path == "/events" {
         return RouteScope::Required(EventsSubscribe);
     }
-    if path == "/voice/stream" {
+    if matches!(path, "/voice/stream" | "/voice/preview") {
         return RouteScope::Required(VoiceSession);
     }
     if path == "/conversation/current"
@@ -594,6 +594,7 @@ mod tests {
             ),
             (Method::GET, "/events", Required(Scope::EventsSubscribe)),
             (Method::GET, "/voice/stream", Required(Scope::VoiceSession)),
+            (Method::GET, "/voice/preview", Required(Scope::VoiceSession)),
         ];
 
         for (method, path, expected) in cases {

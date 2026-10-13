@@ -10,7 +10,6 @@ pub(crate) trait TtsEngine: Send + Sync {
         Ok(audio)
     }
 
-    /// Runs on a blocking worker. Returning false from `emit` cancels generation.
     fn synthesize_stream(
         &self,
         text: &str,

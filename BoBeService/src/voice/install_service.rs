@@ -143,6 +143,48 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
 
+    #[tokio::test]
+    async fn a_failed_tts_reload_does_not_quarantine_a_healthy_recognizer() {
+        use super::{
+            VoiceEngineAvailability, VoiceInstallService, VoiceModelKind, unavailable_kinds,
+        };
+        use std::sync::Arc;
+        let root =
+            std::env::temp_dir().join(format!("bobe-voice-isolation-{}", uuid::Uuid::new_v4()));
+        for artifact in ARTIFACTS {
+            create_artifact_files(&root.join(artifact.target_subpath), artifact.required_files);
+        }
+        let service = VoiceInstallService::new(
+            Arc::new(reqwest::Client::new()),
+            root.clone(),
+            Arc::new(|| {
+                Box::pin(async {
+                    VoiceEngineAvailability {
+                        tts: false,
+                        stt: true,
+                    }
+                })
+            }),
+        );
+        let failures = unavailable_kinds(
+            &[VoiceModelKind::Tts, VoiceModelKind::Stt],
+            &VoiceEngineAvailability {
+                tts: false,
+                stt: true,
+            },
+        );
+        service.quarantine_invalid_targets(&failures).await;
+        assert!(!service.is_installed(VoiceModelKind::Tts));
+        assert!(service.is_installed(VoiceModelKind::Stt));
+        assert!(
+            service
+                .target_path(VoiceModelKind::Tts)
+                .with_extension("invalid")
+                .is_dir()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn model_target_stays_beneath_models_root() {
         assert_eq!(
@@ -302,6 +344,11 @@ impl VoiceInstallService {
         let on_complete = Arc::clone(&self.on_complete);
         state.in_flight = Some(tokio::spawn(async move {
             let requested_kinds = kinds.clone();
+            if requested_kinds.iter().any(|kind| svc.is_installed(*kind)) {
+                let availability = (on_complete)().await;
+                let invalid = unavailable_kinds(&requested_kinds, &availability);
+                svc.quarantine_invalid_targets(&invalid).await;
+            }
             let result = Arc::clone(&svc)
                 .run(kinds, snapshot_tx.clone(), cancel_rx)
                 .await;
@@ -313,19 +360,13 @@ impl VoiceInstallService {
                     (InstallStatus::Failed, Some(e.to_string()))
                 }
             };
-            if matches!(final_status, InstallStatus::Complete) {
-                let availability = (on_complete)().await;
-                let requested_engines_ready = requested_kinds.iter().all(|kind| match kind {
-                    VoiceModelKind::Stt => availability.stt,
-                    VoiceModelKind::Tts => availability.tts,
-                });
-                if !requested_engines_ready {
-                    svc.quarantine_invalid_targets(&requested_kinds).await;
-                    final_status = InstallStatus::Failed;
-                    final_error = Some(
-                        "Installed voice model failed to load or pass its readiness probe".into(),
-                    );
-                }
+            let availability = (on_complete)().await;
+            let invalid = unavailable_kinds(&requested_kinds, &availability);
+            svc.quarantine_invalid_targets(&invalid).await;
+            if matches!(final_status, InstallStatus::Complete) && !invalid.is_empty() {
+                final_status = InstallStatus::Failed;
+                final_error =
+                    Some("Installed voice model failed to load or pass its readiness probe".into());
             }
             let snap = snapshot_tx.borrow().clone();
             drop(snapshot_tx.send_replace(VoiceInstallSnapshot {
@@ -580,4 +621,18 @@ impl VoiceInstallService {
             drop(h.await);
         }
     }
+}
+
+fn unavailable_kinds(
+    kinds: &[VoiceModelKind],
+    availability: &VoiceEngineAvailability,
+) -> Vec<VoiceModelKind> {
+    kinds
+        .iter()
+        .copied()
+        .filter(|kind| match kind {
+            VoiceModelKind::Tts => !availability.tts,
+            VoiceModelKind::Stt => !availability.stt,
+        })
+        .collect()
 }

@@ -9,3 +9,4 @@ pub(crate) mod service;
 pub(crate) mod setup;
 pub(crate) mod status;
 pub(crate) mod update;
+pub(crate) mod voice;

@@ -3,8 +3,6 @@ use tracing::warn;
 
 const TTS_OPUS_BITRATE_BPS: i32 = 24_000;
 
-/// Keeps incomplete 20 ms frames across inference chunks. Only the end of a
-/// sentence is padded; padding each model chunk would insert gaps in speech.
 pub(crate) struct PcmPacketizer {
     pending: Vec<f32>,
     frame_samples: usize,

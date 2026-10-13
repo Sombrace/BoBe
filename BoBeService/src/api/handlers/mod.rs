@@ -34,3 +34,4 @@ pub(crate) mod agent_jobs;
 pub(crate) mod agent_schedules;
 pub(crate) mod agent_tools;
 pub(crate) mod owner_input;
+pub(crate) mod voice_preview;

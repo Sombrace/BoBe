@@ -341,8 +341,22 @@ daemon's speech models.
 ```bash
 bobe voice-models status
 bobe voice-models install
+bobe voice-models install --kind tts
 bobe voice-models cancel
 ```
+
+Preview speech without a model-provider account:
+
+```bash
+bobe voice preview "Hello. This is BoBe." --output /tmp/bobe-preview.wav --play --json
+```
+
+Use `--voice marius`, `--speed 1.5`, or `--cancel-after 100ms` to exercise voice
+selection, tempo and cancellation. Omit `--play` to save audio without playing it.
+The output path must be new. Preview uses the daemon's real sentence processing,
+speech engine and Opus stream, and does not create a conversation or call an LLM.
+See [Pocket TTS](pocket-tts.md#preview-speech-without-a-provider-account) for setup
+and the measurements reported by the command.
 
 ## Configuration
 
@@ -565,6 +579,7 @@ Run any command with `--help` for its options. Most commands accept `--json`.
 | `bobe endpoint` | Physical bodies and other surfaces: enroll, list, revoke |
 | `bobe device` | Paired Macs and phones: pair, list, revoke |
 | `bobe voice-models` | Speech models: status, install, cancel |
+| `bobe voice preview` | Generate, export and optionally play speech without a provider account |
 | `bobe service` | The per-user service: install, status, logs, restart, uninstall |
 | `bobe backup` | Create, list, verify and restore backups |
 | `bobe update` | Apply a signed standalone update |

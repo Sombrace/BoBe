@@ -361,7 +361,7 @@ struct VoicePanel: View {
         guard let progress = self.installStatus?.models.first(where: { $0.kind == VoiceWire.modelKindTts }) else {
             return .unknown
         }
-        if self.installStatus?.installed.tts == true {
+        if self.installStatus?.ttsReady == true {
             return .installed
         }
         if progress.status.starts(with: "downloading") || self.isReinstalling {
@@ -421,7 +421,7 @@ struct VoicePanel: View {
             return L10n.tr("settings.voice.installed_label")
         case .installing, .modelsMissing, .failed:
             let selectedTtsReady = switch self.ttsPreference.backend {
-            case .serverPocket: self.installStatus?.installed.tts ?? false
+            case .serverPocket: self.installStatus?.ttsReady ?? false
             case .clientSupertonic: self.clientTtsInstalled
             }
             let sttReady = self.pipeline.sttStatus == .ready

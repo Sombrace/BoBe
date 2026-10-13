@@ -1,6 +1,3 @@
-/// Pitch-preserving streaming speed adjustment. Compensate for both sides of
-/// the analysis window so faster speech neither clips the last word nor starts
-/// with the time stretcher's silent pre-roll.
 pub(super) struct Tempo {
     stretch: signalsmith_stretch::Stretch,
     speed: f64,

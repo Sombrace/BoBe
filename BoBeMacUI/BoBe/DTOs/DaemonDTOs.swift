@@ -59,6 +59,11 @@ struct VoiceInstallSnapshot: Codable, Sendable {
     let error: String?
     let models: [VoiceModelProgress]
     let installed: VoiceInstallPresence
+    let ready: VoiceInstallPresence?
+
+    var ttsReady: Bool {
+        self.ready?.tts == true
+    }
 
     var isRunning: Bool {
         self.status == .running

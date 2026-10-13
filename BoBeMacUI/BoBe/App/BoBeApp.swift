@@ -59,8 +59,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Hosted unit tests must not launch a second daemon or show setup/error
-        // dialogs over the owner's running app.
         if NSClassFromString("XCTestCase") != nil {
             return
         }

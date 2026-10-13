@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::speech::protocol::ServerMessage;
@@ -12,12 +13,27 @@ pub(crate) enum VoiceOutputFrame {
 #[derive(Clone)]
 pub(crate) struct VoiceOutput {
     sender: mpsc::Sender<VoiceOutputFrame>,
+    audio_sequence: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl VoiceOutput {
     pub(crate) fn channel(capacity: usize) -> (Self, mpsc::Receiver<VoiceOutputFrame>) {
         let (sender, receiver) = mpsc::channel(capacity);
-        (Self { sender }, receiver)
+        (
+            Self {
+                sender,
+                audio_sequence: Arc::new(tokio::sync::Mutex::new(())),
+            },
+            receiver,
+        )
+    }
+
+    pub(crate) async fn audio_sequence(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.audio_sequence.lock().await
+    }
+
+    pub(crate) fn try_audio_sequence(&self) -> Option<tokio::sync::MutexGuard<'_, ()>> {
+        self.audio_sequence.try_lock().ok()
     }
 
     pub(crate) async fn send(&self, frame: VoiceOutputFrame) -> bool {

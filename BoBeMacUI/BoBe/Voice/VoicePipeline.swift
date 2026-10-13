@@ -108,6 +108,7 @@ public final class VoicePipeline {
     @ObservationIgnored var heldUtteranceTask: Task<Void, Never>?
 
     var decoder: OpusDecoder?
+    var fillerDecoder: OpusDecoder?
     var scheduledChunks: [ScheduledTtsChunk] = []
     var nextScheduleFrame: AVAudioFramePosition = 0
     var sampleTimeBase: AVAudioFramePosition = 0

@@ -70,6 +70,9 @@ pub(crate) async fn emit_filler(
     let Some(output) = sink.get(run_id) else {
         return;
     };
+    let Some(_sequence) = output.try_audio_sequence() else {
+        return;
+    };
     let Some(pcm) = library.get(kind) else {
         return;
     };

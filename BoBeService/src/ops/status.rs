@@ -115,6 +115,56 @@ impl OpsTarget {
         self.base_url.as_str().trim_end_matches('/').to_owned()
     }
 
+    pub(crate) async fn voice_socket(
+        &self,
+    ) -> Result<tokio_tungstenite::WebSocketStream<reqwest::Upgraded>, crate::error::AppError> {
+        use reqwest::header;
+        use tokio_tungstenite::tungstenite::{
+            handshake::{client::generate_key, derive_accept_key},
+            protocol::Role,
+        };
+        let key = generate_key();
+        let protocol = crate::constants::voice_wire::SUBPROTOCOL_V2;
+        let response = self
+            .request_builder_with_timeout(reqwest::Method::GET, "/voice/preview", None)?
+            .version(reqwest::Version::HTTP_11)
+            .header(header::CONNECTION, "Upgrade")
+            .header(header::UPGRADE, "websocket")
+            .header(header::SEC_WEBSOCKET_KEY, &key)
+            .header(header::SEC_WEBSOCKET_VERSION, "13")
+            .header(header::SEC_WEBSOCKET_PROTOCOL, protocol)
+            .send()
+            .await?;
+        if response.status() != StatusCode::SWITCHING_PROTOCOLS {
+            return Err(crate::error::AppError::Validation(format!(
+                "Voice connection rejected (HTTP {})",
+                response.status()
+            )));
+        }
+        let expected = derive_accept_key(key.as_bytes());
+        if response
+            .headers()
+            .get(header::SEC_WEBSOCKET_ACCEPT)
+            .and_then(|v| v.to_str().ok())
+            != Some(expected.as_str())
+            || response
+                .headers()
+                .get(header::SEC_WEBSOCKET_PROTOCOL)
+                .and_then(|v| v.to_str().ok())
+                != Some(protocol)
+        {
+            return Err(crate::error::AppError::Validation(
+                "Invalid voice WebSocket handshake".into(),
+            ));
+        }
+        Ok(tokio_tungstenite::WebSocketStream::from_raw_socket(
+            response.upgrade().await?,
+            Role::Client,
+            None,
+        )
+        .await)
+    }
+
     pub(crate) async fn patch_json(
         &self,
         path: &str,

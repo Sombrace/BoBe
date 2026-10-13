@@ -226,6 +226,7 @@ struct VoiceLease {
     stt_stream: Option<Box<dyn crate::speech::SttStream>>,
     next_capture_sequence: Option<u32>,
     opus_decoder: Option<OpusDecoder>,
+    filler_opus_decoder: Option<OpusDecoder>,
     playback: Option<PlaybackState>,
 }
 
@@ -1025,6 +1026,7 @@ impl BodyGateway {
             stt_stream,
             next_capture_sequence: None,
             opus_decoder: OpusDecoder::new(OpusChannels::Mono, OpusSampleRate::Hz24000).ok(),
+            filler_opus_decoder: None,
             playback: None,
         });
         Ok(LeaseGrant {
@@ -1515,20 +1517,30 @@ impl BodyGateway {
             if !GatewayState::lease_is_routable(lease, route) {
                 return;
             }
-            lease
-                .opus_decoder
-                .as_mut()
-                .ok_or_else(|| "body Opus decoder is unavailable".to_owned())
-                .and_then(|decoder| {
-                    let frame = crate::speech::protocol::decode_tts_frame(bytes)
-                        .ok_or_else(|| "invalid body TTS frame".to_owned())?;
-                    tracing::trace!(
-                        chunk_id = frame.chunk_id,
-                        flags = frame.flags,
-                        "body.tts_frame"
-                    );
-                    decode_opus_body_pcm(decoder, frame.payload)
-                })
+            if let Some(frame) = crate::speech::protocol::decode_tts_frame(bytes) {
+                let filler = frame.flags & crate::speech::protocol::FLAG_FILLER != 0;
+                let decoder = if filler {
+                    &mut lease.filler_opus_decoder
+                } else {
+                    &mut lease.opus_decoder
+                };
+                if (filler && frame.chunk_id == 0)
+                    || frame.flags & crate::speech::protocol::FLAG_FIRST_OF_TURN != 0
+                {
+                    *decoder = OpusDecoder::new(OpusChannels::Mono, OpusSampleRate::Hz24000).ok();
+                }
+                tracing::trace!(
+                    chunk_id = frame.chunk_id,
+                    flags = frame.flags,
+                    "body.tts_frame"
+                );
+                decoder
+                    .as_mut()
+                    .ok_or_else(|| "body Opus decoder is unavailable".to_owned())
+                    .and_then(|decoder| decode_opus_body_pcm(decoder, frame.payload))
+            } else {
+                Err("invalid body TTS frame".to_owned())
+            }
         };
         match pcm {
             Ok(pcm) => self.queue_body_pcm(route, pcm).await,
@@ -2381,6 +2393,7 @@ mod tests {
             stt_stream: None,
             next_capture_sequence: None,
             opus_decoder: None,
+            filler_opus_decoder: None,
             playback: None,
         });
 

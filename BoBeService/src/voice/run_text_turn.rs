@@ -8,20 +8,18 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, warn};
 
 use crate::models::ids::conversation_turn_id_from_wire_id;
-use crate::speech::protocol::{
-    FLAG_FILLER, FLAG_FIRST_OF_TURN, ServerMessage, VoicePhase, encode_tts_frame,
-};
-use crate::speech::{TtsEngine, TtsTextDelivery};
+use crate::speech::protocol::{FLAG_FILLER, ServerMessage, VoicePhase, encode_tts_frame};
 use crate::voice::context::VoiceContext;
 use crate::voice::filler_library::FillerKind;
-use crate::voice::opus::{PcmPacketizer, encode_pcm_with, make_opus_encoder};
+use crate::voice::opus::{encode_pcm_with, make_opus_encoder};
 use crate::voice::output::VoiceOutput;
 use crate::voice::protocol_helpers::{send_error, send_json, send_state};
 use crate::voice::sentence_pipeline::SentencePipeline;
 use crate::voice::session::SessionVoiceConfig;
 use crate::voice::spoken::SpokenScript;
+use crate::voice::synthesis::spawn_tts_task;
 use crate::voice::telemetry::{
-    CTR_FILLER_TRIGGER, CTR_TURN_COMPLETE, HIST_E2E_MS, HIST_TTS_SYNTH_MS, HIST_TURN_TOTAL_MS,
+    CTR_FILLER_TRIGGER, CTR_TURN_COMPLETE, HIST_E2E_MS, HIST_TURN_TOTAL_MS,
 };
 use tokio_util::task::AbortOnDropHandle;
 
@@ -241,7 +239,8 @@ pub(crate) async fn run_text_turn(
             sentence_rx,
             output.clone(),
             Arc::clone(&first_audio_emitted),
-            voice_cfg.clone(),
+            voice_cfg.speech_plan.voice_id.clone(),
+            voice_cfg.speed,
             voice_cfg.speech_plan.tts_text_delivery,
             turn_start,
             script,
@@ -393,7 +392,7 @@ async fn abort_and_settle<T>(task: AbortOnDropHandle<T>, task_name: &'static str
     }
 }
 
-fn playback_report_limit(synthesised: Option<Duration>) -> Duration {
+pub(crate) fn playback_report_limit(synthesised: Option<Duration>) -> Duration {
     synthesised.map_or(PLAYBACK_REPORT_LIMIT, |audio| {
         (audio + PLAYBACK_REPORT_MARGIN).min(PLAYBACK_REPORT_LIMIT)
     })
@@ -451,109 +450,6 @@ fn spawn_client_tts_text_task(
     })
 }
 
-fn spawn_tts_task(
-    tts: Arc<dyn TtsEngine>,
-    turn_id: String,
-    mut sentence_rx: mpsc::Receiver<String>,
-    output: VoiceOutput,
-    first_audio_emitted: Arc<AtomicBool>,
-    voice_cfg: SessionVoiceConfig,
-    tts_text_delivery: TtsTextDelivery,
-    turn_start: Instant,
-    script: Arc<SpokenScript>,
-) -> tokio::task::JoinHandle<bool> {
-    let sample_rate = tts.sample_rate();
-    tokio::spawn(async move {
-        let Some(mut encoder) = make_opus_encoder(sample_rate) else {
-            return false;
-        };
-        let mut chunk_id: u64 = 0;
-        let mut sentence_sequence: u64 = 0;
-        let mut first_chunk_pending = true;
-        let mut produced = false;
-        while let Some(sentence) = sentence_rx.recv().await {
-            let tts_clone = Arc::clone(&tts);
-            let sentence_owned = sentence.clone();
-            let voice_id = voice_cfg.speech_plan.voice_id.clone();
-            let speed = voice_cfg.speed;
-            let synth_start = Instant::now();
-            // A small bounded queue propagates network backpressure to inference.
-            // Aborting this task drops the receiver, cancelling the blocking worker
-            // at its next chunk, which also joins ptts's own inference workers.
-            let (pcm_tx, mut pcm_rx) = mpsc::channel::<Vec<f32>>(2);
-            let synth = tokio::task::spawn_blocking(move || {
-                tts_clone.synthesize_stream(&sentence_owned, &voice_id, speed, &mut |pcm| {
-                    pcm_tx.blocking_send(pcm.to_vec()).is_ok()
-                })
-            });
-            let sentence_index = script.begin_sentence(&sentence);
-            let mut packetizer = PcmPacketizer::new(sample_rate);
-            if tts_text_delivery == TtsTextDelivery::SentenceCaptions {
-                send_json(
-                    &output,
-                    &ServerMessage::TtsText {
-                        turn_id: turn_id.clone(),
-                        sequence: sentence_sequence,
-                        text: sentence.clone(),
-                    },
-                )
-                .await;
-                sentence_sequence = sentence_sequence.saturating_add(1);
-            }
-            loop {
-                let pcm = pcm_rx.recv().await;
-                let packets = match pcm.as_ref() {
-                    Some(pcm) => packetizer.push(&mut encoder, pcm),
-                    None => packetizer.finish(&mut encoder),
-                };
-                let packets = match packets {
-                    Ok(packets) => packets,
-                    Err(error) => {
-                        warn!(%error, "voice.tts_encode_failed");
-                        return false;
-                    }
-                };
-                for opus_packet in packets {
-                    let mut flags = 0_u8;
-                    if first_chunk_pending {
-                        flags |= FLAG_FIRST_OF_TURN;
-                        first_chunk_pending = false;
-                        first_audio_emitted.swap(true, Ordering::AcqRel);
-                        metrics::histogram!(HIST_E2E_MS)
-                            .record(turn_start.elapsed().as_secs_f64() * 1_000.0);
-                    }
-                    let framed = encode_tts_frame(chunk_id, flags, &opus_packet);
-                    if !output.audio(framed).await {
-                        return produced;
-                    }
-                    chunk_id = chunk_id.saturating_add(1);
-                    script.add_audio(Duration::from_millis(20));
-                    produced = true;
-                }
-                if pcm.is_none() {
-                    break;
-                }
-            }
-            match synth.await {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    warn!(%error, "voice.tts_synth_failed");
-                    return false;
-                }
-                Err(error) => {
-                    warn!(%error, "voice.tts_join_failed");
-                    return false;
-                }
-            }
-            metrics::histogram!(HIST_TTS_SYNTH_MS)
-                .record(synth_start.elapsed().as_secs_f64() * 1_000.0);
-            script.complete_sentence(sentence_index, chunk_id);
-        }
-        script.finish();
-        produced
-    })
-}
-
 fn spawn_filler_watchdog(
     filler_pcm: Option<Arc<Vec<f32>>>,
     sample_rate: u32,
@@ -564,6 +460,9 @@ fn spawn_filler_watchdog(
     let pcm = filler_pcm?;
     Some(tokio::spawn(async move {
         tokio::time::sleep(FILLER_TRIGGER).await;
+        let Some(_sequence) = output.try_audio_sequence() else {
+            return;
+        };
         if first_audio_emitted.swap(true, Ordering::AcqRel) {
             debug!("voice.filler_skipped_tts_already_emitted");
             return;

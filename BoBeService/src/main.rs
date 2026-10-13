@@ -88,6 +88,10 @@ enum Commands {
         token: Option<String>,
     },
     Chat(ops::headless::ChatArgs),
+    Voice {
+        #[command(subcommand)]
+        command: ops::voice::VoiceCommands,
+    },
     Jobs(ops::headless::JobsArgs),
     Runs(ops::headless::RunsArgs),
     Schedules(ops::headless::SchedulesArgs),
@@ -255,6 +259,8 @@ enum ModelsCommands {
         token: Option<String>,
     },
     Install {
+        #[arg(long, value_enum)]
+        kind: Option<voice::install_service::VoiceModelKind>,
         #[arg(long)]
         json: bool,
         #[arg(long)]
@@ -1593,6 +1599,9 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             };
             emit_report(json, &report, rendered);
         }
+        Commands::Voice { command } => {
+            return ops::voice::run(command).await.map_err(Into::into);
+        }
         Commands::Models { command } => {
             let loaded = config::Config::load_operational()?;
             match command {
@@ -1613,14 +1622,28 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                         ops::exit::ExitCode::Failed
                     });
                 }
-                ModelsCommands::Install { json, url, token } => {
+                ModelsCommands::Install {
+                    kind,
+                    json,
+                    url,
+                    token,
+                } => {
                     let target = ops::status::OpsTarget::resolve(
                         &loaded.config,
                         url.as_deref(),
                         token.as_deref(),
                     )
                     .map_err(error::AppError::Config)?;
-                    let response = target.post("/voice/install/start").await?;
+                    let path = match kind {
+                        Some(voice::install_service::VoiceModelKind::Tts) => {
+                            "/voice/install/start/tts"
+                        }
+                        Some(voice::install_service::VoiceModelKind::Stt) => {
+                            "/voice/install/start/stt"
+                        }
+                        None => "/voice/install/start",
+                    };
+                    let response = target.post(path).await?;
                     if !response.status().is_success()
                         && response.status() != reqwest::StatusCode::CONFLICT
                     {
@@ -3416,6 +3439,7 @@ mod tests {
             | Commands::Status { .. }
             | Commands::WaitReady { .. }
             | Commands::Doctor { .. }
+            | Commands::Voice { .. }
             | Commands::Chat(..)
             | Commands::Jobs(..)
             | Commands::Runs(..)
@@ -3487,6 +3511,7 @@ mod tests {
             | Commands::Status { .. }
             | Commands::WaitReady { .. }
             | Commands::Doctor { .. }
+            | Commands::Voice { .. }
             | Commands::Chat(..)
             | Commands::Jobs(..)
             | Commands::Runs(..)

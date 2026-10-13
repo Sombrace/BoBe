@@ -30,7 +30,7 @@ fn completion_matches_current_turn(current_turn_id: Option<&str>, completed_turn
     current_turn_id.is_some_and(|turn_id| turn_id == completed_turn_id)
 }
 
-struct VoiceWsPermit(Arc<AtomicBool>);
+pub(super) struct VoiceWsPermit(Arc<AtomicBool>);
 
 impl Drop for VoiceWsPermit {
     fn drop(&mut self) {
@@ -38,7 +38,10 @@ impl Drop for VoiceWsPermit {
     }
 }
 
-async fn acquire_permit(socket: WebSocket, state: &AppState) -> Option<(WebSocket, VoiceWsPermit)> {
+pub(super) async fn acquire_permit(
+    socket: WebSocket,
+    state: &AppState,
+) -> Option<(WebSocket, VoiceWsPermit)> {
     if state
         .voice
         .voice_ws_active
@@ -113,7 +116,7 @@ async fn teardown_session(td: SessionTeardown) {
     }
 }
 
-fn spawn_writer(
+pub(super) fn spawn_writer(
     mut ws_tx: futures::stream::SplitSink<WebSocket, Message>,
     mut out_rx: mpsc::Receiver<VoiceOutputFrame>,
 ) -> tokio::task::JoinHandle<()> {
@@ -141,7 +144,7 @@ fn spawn_writer(
     })
 }
 
-fn spawn_keepalive(output: VoiceOutput) -> tokio::task::JoinHandle<()> {
+pub(super) fn spawn_keepalive(output: VoiceOutput) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(KEEPALIVE_PING_INTERVAL);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -156,11 +159,22 @@ fn spawn_keepalive(output: VoiceOutput) -> tokio::task::JoinHandle<()> {
 }
 
 pub(crate) async fn voice_stream(
-    mut ws: WebSocketUpgrade,
+    ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
     Extension(allowed_origins): Extension<AllowedOrigins>,
     Extension(principal): Extension<Principal>,
     headers: HeaderMap,
+) -> Response {
+    upgrade_voice(ws, state, allowed_origins, principal, headers, false)
+}
+
+pub(super) fn upgrade_voice(
+    mut ws: WebSocketUpgrade,
+    state: Arc<AppState>,
+    allowed_origins: AllowedOrigins,
+    principal: Principal,
+    headers: HeaderMap,
+    preview: bool,
 ) -> Response {
     if let Some(origin) = headers.get(header::ORIGIN)
         && !allowed_origins.contains(origin)
@@ -178,7 +192,15 @@ pub(crate) async fn voice_stream(
     ws.set_selected_protocol(HeaderValue::from_static(
         crate::constants::voice_wire::SUBPROTOCOL_V2,
     ));
-    ws.on_upgrade(move |socket| handle_socket(socket, state, principal))
+    ws.max_message_size(32_768)
+        .max_frame_size(32_768)
+        .on_upgrade(move |socket| async move {
+            if preview {
+                super::voice_preview::handle_socket(socket, state, principal).await;
+            } else {
+                handle_socket(socket, state, principal).await;
+            }
+        })
         .into_response()
 }
 

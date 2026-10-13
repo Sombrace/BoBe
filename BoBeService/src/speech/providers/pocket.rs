@@ -11,7 +11,6 @@ mod tempo;
 
 pub(crate) const VOICES: &[&str] = &["alba", "azelma", "eponine", "fantine", "javert", "marius"];
 
-/// Fixed English presets; no microphone audio or voice cloning is used.
 pub(crate) struct PocketTts {
     synth: Synth,
 }
@@ -50,31 +49,63 @@ fn load_error(error: impl std::fmt::Display) -> AppError {
     AppError::Config(format!("Cannot load Pocket TTS English pack: {error}"))
 }
 
-/// Existing installations may still have a Kokoro preset saved in their config.
 pub(crate) fn migrate_voice(voice: &str) -> &str {
-    let legacy_prefix = voice.split_once('_').map(|(prefix, _)| prefix);
-    if matches!(
-        legacy_prefix,
-        Some(
-            "af" | "am"
-                | "bf"
-                | "bm"
-                | "ef"
-                | "em"
-                | "ff"
-                | "hf"
-                | "hm"
-                | "if"
-                | "im"
-                | "jf"
-                | "jm"
-                | "pf"
-                | "pm"
-                | "zf"
-                | "zm"
-        )
-    ) || voice.parse::<u8>().is_ok_and(|id| id <= 52)
-    {
+    const LEGACY_VOICES: &[&str] = &[
+        "af_alloy",
+        "af_aoede",
+        "af_bella",
+        "af_heart",
+        "af_jessica",
+        "af_kore",
+        "af_nicole",
+        "af_nova",
+        "af_river",
+        "af_sarah",
+        "af_sky",
+        "am_adam",
+        "am_echo",
+        "am_eric",
+        "am_fenrir",
+        "am_liam",
+        "am_michael",
+        "am_onyx",
+        "am_puck",
+        "am_santa",
+        "bf_alice",
+        "bf_emma",
+        "bf_isabella",
+        "bf_lily",
+        "bm_daniel",
+        "bm_fable",
+        "bm_george",
+        "bm_lewis",
+        "ef_dora",
+        "em_alex",
+        "ff_siwis",
+        "hf_alpha",
+        "hf_beta",
+        "hm_omega",
+        "hm_psi",
+        "if_sara",
+        "im_nicola",
+        "jf_alpha",
+        "jf_gongitsune",
+        "jf_nezumi",
+        "jf_tebukuro",
+        "jm_kumo",
+        "pf_dora",
+        "pm_alex",
+        "pm_santa",
+        "zf_xiaobei",
+        "zf_xiaoni",
+        "zf_xiaoxiao",
+        "zf_xiaoyi",
+        "zm_yunjian",
+        "zm_yunxi",
+        "zm_yunxia",
+        "zm_yunyang",
+    ];
+    if LEGACY_VOICES.contains(&voice) || voice.parse::<u8>().is_ok_and(|id| id <= 52) {
         crate::constants::voice_wire::DEFAULT_PERSONA
     } else {
         voice
@@ -117,7 +148,6 @@ impl TtsEngine for PocketTts {
                 None => chunk,
             };
             if !output.is_empty() && !emit(&output) {
-                // Dropping ptts's bounded stream stops and joins its inference workers.
                 return Err(AppError::Canceled("Speech playback stopped".into()));
             }
         }

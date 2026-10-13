@@ -18,6 +18,7 @@ pub(crate) struct InstallStatusResponse {
     pub error: Option<String>,
     pub models: Vec<ModelProgress>,
     pub installed: PresenceSnapshot,
+    pub ready: PresenceSnapshot,
 }
 
 #[derive(Serialize)]
@@ -29,6 +30,7 @@ pub(crate) struct PresenceSnapshot {
 pub(crate) async fn status(State(state): State<Arc<AppState>>) -> Json<InstallStatusResponse> {
     let snap: VoiceInstallSnapshot = state.voice.voice_install.subscribe().await.borrow().clone();
     let install = state.voice.voice_install.as_ref();
+    let engines = state.voice.voice_engines.load();
     Json(InstallStatusResponse {
         status: snap.status,
         error: snap.error,
@@ -36,6 +38,10 @@ pub(crate) async fn status(State(state): State<Arc<AppState>>) -> Json<InstallSt
         installed: PresenceSnapshot {
             tts: install.is_installed(VoiceModelKind::Tts),
             stt: install.is_installed(VoiceModelKind::Stt),
+        },
+        ready: PresenceSnapshot {
+            tts: engines.tts.is_some(),
+            stt: engines.supports_daemon_stt(),
         },
     })
 }

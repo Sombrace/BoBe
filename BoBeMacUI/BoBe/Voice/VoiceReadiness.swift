@@ -148,7 +148,7 @@ extension VoicePipeline {
                                    VoiceLanguages.displayName(for: self.effectiveLanguage)))
         }
         let ttsReady = backend == .serverPocket
-            ? self.installSnapshot?.installed.tts == true
+            ? self.installSnapshot?.ttsReady == true
             : FluidAudioSupertonicModelPresence.isInstalled()
         let sttReady = preference.speechRecognitionReady(
             endpointReady: preference.usesEndpointEngine && self.sttStatus == .ready,

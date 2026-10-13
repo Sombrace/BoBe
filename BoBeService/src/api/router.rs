@@ -74,6 +74,7 @@ pub(crate) fn build_router(
     let long_lived = Router::new()
         .route("/events", get(handlers::events::stream_events))
         .route("/voice/stream", get(handlers::voice::voice_stream))
+        .route("/voice/preview", get(handlers::voice_preview::upgrade))
         .route(
             "/local-runtime/status",
             get(handlers::local_runtime::install_status_stream),
