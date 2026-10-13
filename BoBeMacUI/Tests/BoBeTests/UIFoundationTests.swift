@@ -130,6 +130,9 @@ struct UIFoundationTests {
                 == L10n.tr("app.setup_incomplete.retry")
         )
         defaults.set(true, forKey: key)
+        if let authority = EndpointStore.shared.runtimeAuthorityId {
+            defaults.set([authority.uuidString], forKey: authoritiesKey)
+        }
         #expect(
             [L10n.tr("tray.show"), L10n.tr("tray.hide")]
                 .contains(BobeCommandRouter.shared.overlayTitle)
@@ -176,7 +179,10 @@ struct UIFoundationTests {
         let authoritiesKey = SetupWindowManager.completedAuthoritiesKey
         let previousOnboardingValue = defaults.object(forKey: onboardingKey)
         let previousAuthorities = defaults.object(forKey: authoritiesKey)
-        defaults.set([], forKey: authoritiesKey)
+        defaults.set(
+            EndpointStore.shared.runtimeAuthorityId.map { [$0.uuidString] } ?? [],
+            forKey: authoritiesKey
+        )
         defaults.set(true, forKey: onboardingKey)
         defer {
             if let previousOnboardingValue {
