@@ -6,10 +6,10 @@ private enum VoiceInstallTarget {
 }
 
 private enum VoiceModelPaths {
-    static var kokoro: String {
+    static var pocket: String {
         DaemonConfig.managedDataDirectory
             .appendingPathComponent("models", isDirectory: true)
-            .appendingPathComponent(VoiceWire.kokoroModelDir, isDirectory: true)
+            .appendingPathComponent(VoiceWire.pocketTtsModelDir, isDirectory: true)
             .path
     }
     static let parakeet = "~/Library/Application Support/FluidAudio/Models/parakeet-eou-streaming/"
@@ -137,9 +137,15 @@ struct VoicePanel: View {
                     description: L10n.tr("settings.voice.persona.description")
                 ) {
                     BobeMenuPicker(
-                        selection: self.store.binding(\.voicePersona, fallback: VoiceWire.defaultPersona),
-                        options: KokoroVoices.allSlots,
-                        label: KokoroVoices.displayName(for:),
+                        selection: Binding(
+                            get: {
+                                let saved = self.store.settings?.voicePersona ?? VoiceWire.defaultPersona
+                                return PocketVoices.allSlots.contains(saved) ? saved : VoiceWire.defaultPersona
+                            },
+                            set: { self.store.binding(\.voicePersona, fallback: VoiceWire.defaultPersona).wrappedValue = $0 }
+                        ),
+                        options: PocketVoices.allSlots,
+                        label: PocketVoices.displayName(for:),
                         width: 240
                     )
                 }
@@ -264,9 +270,9 @@ struct VoicePanel: View {
                     purpose: L10n.tr("settings.voice.model.tts.purpose"),
                     sizeHint: L10n.tr("settings.voice.model.tts.size"),
                     location: self.expertMode.isEnabled && DaemonConfig.endpoint.daemonFilesystemIsLocalToApp
-                        ? VoiceModelPaths.kokoro
+                        ? VoiceModelPaths.pocket
                         : nil,
-                    status: self.kokoroStatus,
+                    status: self.pocketStatus,
                     onInstall: { await self.installSingle(.daemonTts) },
                     onUninstall: nil
                 )
@@ -351,7 +357,7 @@ struct VoicePanel: View {
         }
     }
 
-    private var kokoroStatus: VoiceModelCard.Status {
+    private var pocketStatus: VoiceModelCard.Status {
         guard let progress = self.installStatus?.models.first(where: { $0.kind == VoiceWire.modelKindTts }) else {
             return .unknown
         }
@@ -415,7 +421,7 @@ struct VoicePanel: View {
             return L10n.tr("settings.voice.installed_label")
         case .installing, .modelsMissing, .failed:
             let selectedTtsReady = switch self.ttsPreference.backend {
-            case .serverKokoro: self.installStatus?.installed.tts ?? false
+            case .serverPocket: self.installStatus?.installed.tts ?? false
             case .clientSupertonic: self.clientTtsInstalled
             }
             let sttReady = self.pipeline.sttStatus == .ready

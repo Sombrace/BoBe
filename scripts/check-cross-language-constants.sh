@@ -134,9 +134,9 @@ rust_sample=$(grep -E 'TTS_OUTPUT_SAMPLE_RATE: u32 =' "$RUST" | sed -E 's/.*= ([
 swift_sample=$(grep -E 'static let ttsOutputSampleRate = ' "$SWIFT_CONST" | sed -E 's/.*= ([0-9_]+).*/\1/' | tr -d '_')
 expect_match "voice TTS sample rate" "$rust_sample" "$swift_sample"
 
-rust_kokoro=$(grep -E 'KOKORO_MODEL_DIR: &str =' "$RUST" | sed -E 's/.*= "([^"]+)";.*/\1/')
-swift_kokoro=$(grep -E 'static let kokoroModelDir = ' "$SWIFT_CONST" | sed -E 's/.*= "([^"]+)".*/\1/')
-expect_match "Kokoro model dir name" "$rust_kokoro" "$swift_kokoro"
+rust_pocket=$(grep -E 'POCKET_TTS_MODEL_DIR: &str =' "$RUST" | sed -E 's/.*= "([^"]+)";.*/\1/')
+swift_pocket=$(grep -E 'static let pocketTtsModelDir = ' "$SWIFT_CONST" | sed -E 's/.*= "([^"]+)".*/\1/')
+expect_match "Pocket TTS model dir name" "$rust_pocket" "$swift_pocket"
 
 rust_streaming_stt=$(grep -A1 -E 'STREAMING_STT_MODEL_DIR: &str =' "$RUST" | tail -n 1 | sed -E 's/.*"([^"]+)";.*/\1/')
 swift_streaming_stt=$(grep -E 'static let streamingSttModelDir = ' "$SWIFT_CONST" | sed -E 's/.*= "([^"]+)".*/\1/')
@@ -194,16 +194,16 @@ rust_pause_patient=$(grep -E 'PATIENT: u32 =' "$RUST" | sed -E 's/.*= ([0-9]+);.
 swift_pause_patient=$(grep -E 'static let patient: Int = ' "$SWIFT_CONST" | sed -E 's/.*= ([0-9]+).*/\1/')
 expect_match "pause_sensitivity_ms::PATIENT" "$rust_pause_patient" "$swift_pause_patient"
 
-RUST_KOKORO="$ROOT/BoBeService/src/speech/providers/sherpa/kokoro_tts.rs"
-SWIFT_KOKORO="$ROOT/BoBeMacUI/BoBe/Voice/VoiceSettingsEnums.swift"
+RUST_POCKET="$ROOT/BoBeService/src/speech/providers/pocket.rs"
+SWIFT_POCKET="$ROOT/BoBeMacUI/BoBe/Voice/VoiceSettingsEnums.swift"
 
-rust_voices=$(grep -oE '"[a-z][a-z]_[a-z0-9]+"' "$RUST_KOKORO" | sort -u)
-swift_voices=$(grep -oE '"[a-z][a-z]_[a-z0-9]+"' "$SWIFT_KOKORO" | sort -u)
+rust_voices=$(sed -n '/const VOICES:/,$p' "$RUST_POCKET" | sed '/];/q' | grep -oE '"[a-z]+"' | sort -u)
+swift_voices=$(sed -n '/static let allSlots = /,$p' "$SWIFT_POCKET" | sed '/]/q' | grep -oE '"[a-z]+"' | sort -u)
 rust_voice_count=$(echo "$rust_voices" | wc -l | tr -d ' ')
 swift_voice_count=$(echo "$swift_voices" | wc -l | tr -d ' ')
-expect_match "Kokoro voice slot count" "$rust_voice_count" "$swift_voice_count"
+expect_match "Pocket TTS voice slot count" "$rust_voice_count" "$swift_voice_count"
 if [[ "$rust_voices" != "$swift_voices" ]]; then
-    echo "drift: Kokoro voice set differs between Rust and Swift" >&2
+    echo "drift: Pocket TTS voice set differs between Rust and Swift" >&2
     diff <(echo "$rust_voices") <(echo "$swift_voices") >&2 || true
     fail=1
 fi

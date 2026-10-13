@@ -45,10 +45,10 @@ pub(crate) mod pause_sensitivity_ms {
 
 pub(crate) mod voice_wire {
     pub(crate) const TTS_OUTPUT_SAMPLE_RATE: u32 = 24_000;
-    pub(crate) const KOKORO_MODEL_DIR: &str = "kokoro-multi-lang-v1_0";
+    pub(crate) const POCKET_TTS_MODEL_DIR: &str = "pocket-tts-en-b6369a24-q8";
     pub(crate) const STREAMING_STT_MODEL_DIR: &str =
         "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17";
-    pub(crate) const DEFAULT_PERSONA: &str = "af_bella";
+    pub(crate) const DEFAULT_PERSONA: &str = "alba";
     pub(crate) const MODEL_KIND_TTS: &str = "tts";
     pub(crate) const MODEL_KIND_STT: &str = "stt";
     pub(crate) const SUBPROTOCOL_V2: &str = "bobe.voice.v2";

@@ -4,34 +4,32 @@ import Testing
 @Suite("VoiceLanguageAdvice")
 struct VoiceLanguageAdviceTests {
     @Test
-    func eachLanguageGetsAnEngineThatCanSpeakIt() {
-        #expect(VoiceTtsBackend.best(for: "en") == .serverKokoro)
-        #expect(VoiceTtsBackend.best(for: "zh-CN") == .serverKokoro)
-        #expect(VoiceTtsBackend.best(for: "ja") == .serverKokoro)
+    func pocketOnlyAdvertisesInstalledEnglishSupport() {
+        #expect(VoiceTtsBackend.best(for: "en-GB") == .serverPocket)
+        #expect(VoiceTtsBackend.serverPocket.speaks("en-US"))
+        #expect(!VoiceTtsBackend.serverPocket.speaks("zh-CN"))
+        #expect(!VoiceTtsBackend.serverPocket.speaks("ja"))
+        #expect(VoiceTtsBackend.best(for: "ja") == .clientSupertonic)
         #expect(VoiceTtsBackend.best(for: "ko") == .clientSupertonic)
-        #expect(VoiceTtsBackend.best(for: "de-DE") == .clientSupertonic)
-        #expect(!VoiceTtsBackend.clientSupertonic.speaks("zh"))
-        #expect(!VoiceTtsBackend.serverKokoro.speaks("ko"))
     }
 
     @Test
-    func anEngineThatCannotSpeakTheLanguageIsReplaced() {
-        #expect(VoiceLanguageAdvice.advice(language: "ko", backend: .serverKokoro, persona: "af_bella") == .engine(.clientSupertonic))
-        #expect(VoiceLanguageAdvice.advice(language: "zh", backend: .clientSupertonic, persona: "af_bella") == .engine(.serverKokoro))
+    func recommendsAnAvailableEngineWithoutInventingLanguageSupport() {
+        #expect(VoiceLanguageAdvice.advice(language: "ko", backend: .serverPocket, persona: "alba") == .engine(.clientSupertonic))
+        #expect(VoiceLanguageAdvice.advice(language: "zh", backend: .clientSupertonic, persona: "alba") == nil)
+        #expect(!VoiceTtsBackend.best(for: "zh").speaks("zh"))
     }
 
     @Test
-    func aVoiceMadeForAnotherLanguageIsSwappedKeepingItsGender() {
-        #expect(VoiceLanguageAdvice.advice(language: "zh", backend: .serverKokoro, persona: "af_bella") == .persona("zf_xiaobei"))
-        #expect(VoiceLanguageAdvice.advice(language: "ja", backend: .serverKokoro, persona: "am_adam") == .persona("jm_kumo"))
-        #expect(VoiceLanguageAdvice.advice(language: "es", backend: .serverKokoro, persona: "bf_emma") == .persona("ef_dora"))
+    func oldPresetsMoveToTheEnglishDefault() {
+        #expect(VoiceLanguageAdvice.advice(language: "en", backend: .serverPocket, persona: "af_bella") == .persona("alba"))
+        #expect(PocketVoices.slot(for: "en", like: "marius") == "marius")
+        #expect(PocketVoices.slot(for: "ja", like: "alba") == nil)
     }
 
     @Test
     func aWorkingChoiceIsLeftAlone() {
-        #expect(VoiceLanguageAdvice.advice(language: "en", backend: .serverKokoro, persona: "bf_emma") == nil)
-        #expect(VoiceLanguageAdvice.advice(language: "en", backend: .clientSupertonic, persona: "af_bella") == nil)
-        #expect(VoiceLanguageAdvice.advice(language: "ko", backend: .clientSupertonic, persona: "af_bella") == nil)
-        #expect(VoiceLanguageAdvice.advice(language: "zh", backend: .serverKokoro, persona: "zm_yunxi") == nil)
+        #expect(VoiceLanguageAdvice.advice(language: "en", backend: .serverPocket, persona: "alba") == nil)
+        #expect(VoiceLanguageAdvice.advice(language: "ko", backend: .clientSupertonic, persona: "alba") == nil)
     }
 }

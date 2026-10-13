@@ -17,6 +17,8 @@ archive="$root.tar.gz"
 rm -rf "$root" "$archive"
 mkdir -p "$root/bin"
 install -m 0755 BoBeService/target/release/bobe "$root/bin/bobe"
+mkdir -p "$root/bin/licenses"
+cp -RP third_party/speech-licenses "$root/bin/licenses/speech"
 ./scripts/check-agent-runtime.sh
 install -m 0755 build/agent-runtime/node "$root/bin/node"
 cp -RP build/agent-runtime/agent "$root/bin/agent"

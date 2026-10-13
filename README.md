@@ -344,6 +344,9 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 
 [MIT License](LICENSE)
 
+Downloaded speech models and voice presets have separate licenses and attribution
+requirements. See the [Pocket TTS integration notes](docs/pocket-tts.md).
+
 <p align="center">
   <br>
   <a href="https://www.bobebot.com"><img src="branding/logo-128.png" alt="BoBe" width="64"></a>

@@ -444,6 +444,9 @@ persistence and optional server speech. A frozen `SpeechPlan` selects engines
 per voice session. The socket speaks `bobe.voice.v2` only: the surface sends a
 speech offer, transcripts by default, or credit-bounded 20 ms PCM frames to a
 readiness-qualified daemon STT engine. Raw audio is not stored.
+Daemon synthesis uses native Pocket TTS with an English pack, bounded streaming
+PCM and a persistent Opus packetizer. See [Pocket TTS](pocket-tts.md) for the
+runtime, pack provenance, language scope and licensing.
 Tool-activity filler output is keyed to the authoritative run. Concurrent
 Mac/body turns cannot redirect each other's filler audio, and ending one run
 removes only its output binding.

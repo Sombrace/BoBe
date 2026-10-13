@@ -154,7 +154,7 @@ extension VoicePipeline {
                 && plan.ttsEngineId == VoiceTtsBackend.clientSupertonic.rawValue
                 && plan.downlink == .text
         }
-        return plan.ttsEngineId == VoiceTtsBackend.serverKokoro.rawValue
+        return plan.ttsEngineId == VoiceTtsBackend.serverPocket.rawValue
             && plan.downlink == .audio
     }
 

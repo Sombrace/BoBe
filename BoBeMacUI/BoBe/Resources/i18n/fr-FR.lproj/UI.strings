@@ -491,7 +491,7 @@
 "settings.voice.stt_preference.daemon" = "Service BoBe";
 "settings.voice.tts_backend" = "Moteur de synthèse vocale";
 "settings.voice.tts_backend.description" = "Expérimental. Supertonic assure la synthèse vocale multilingue directement dans l'app et télécharge son modèle Core ML à la première utilisation. Reconnectez la voix après modification.";
-"settings.voice.tts_backend.server_kokoro" = "Kokoro côté serveur (stable)";
+"settings.voice.tts_backend.server_pocket" = "Pocket TTS côté serveur (anglais)";
 "settings.voice.tts_backend.client_supertonic" = "Supertonic-3 côté client (expérimental)";
 "settings.voice.tts_backend.best_for_format" = "%1$@ · idéal pour %2$@";
 "settings.voice.advice.engine_format" = "%1$@ ne parle pas %2$@. %3$@ oui.";

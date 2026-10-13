@@ -72,6 +72,9 @@ else
     install -m 0755 "$source_dir/bin/bobe" "$staging/bin/bobe"
     install -m 0755 "$source_dir/bin/node" "$staging/bin/node"
     cp -RP "$source_dir/bin/agent" "$staging/bin/agent"
+    if [ -d "$source_dir/bin/licenses" ]; then
+        cp -RP "$source_dir/bin/licenses" "$staging/bin/licenses"
+    fi
     install -m 0644 "$source_dir/compatibility.json" "$staging/compatibility.json"
     mv "$staging" "$destination"
 fi

@@ -8,8 +8,8 @@ use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::error::AppError;
-use crate::voice::install_artifacts::{ARTIFACTS, ModelArtifact};
-use crate::voice::install_extract::{extract_and_install, tempfile_dir};
+use crate::voice::install_artifacts::{ARTIFACTS, ModelArtifact, ModelFile};
+use crate::voice::install_extract::{extract_and_install, install_directory, tempfile_dir};
 
 pub(crate) use crate::voice::install_artifacts::{
     InstallStatus, ModelProgress, VoiceInstallSnapshot, VoiceModelKind,
@@ -58,12 +58,7 @@ fn artifact_installed_at(artifact: &ModelArtifact, target: &Path) -> bool {
     if metadata.file_type().is_symlink() {
         return false;
     }
-    let expected_target_type = if artifact.is_tarball {
-        metadata.is_dir()
-    } else {
-        metadata.is_file()
-    };
-    expected_target_type
+    metadata.is_dir()
         && artifact.required_files.iter().all(|relative| {
             std::fs::symlink_metadata(target.join(relative))
                 .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
@@ -151,9 +146,9 @@ mod tests {
     #[test]
     fn model_target_stays_beneath_models_root() {
         assert_eq!(
-            safe_model_target(Path::new("/models"), "kokoro/model.onnx")
+            safe_model_target(Path::new("/models"), "pocket/model.q8.gguf")
                 .expect("relative target is valid"),
-            PathBuf::from("/models/kokoro/model.onnx")
+            PathBuf::from("/models/pocket/model.q8.gguf")
         );
     }
 
@@ -162,7 +157,7 @@ mod tests {
         for target in [
             "/tmp/model.onnx",
             "../model.onnx",
-            "kokoro/../model.onnx",
+            "pocket/../model.q8.gguf",
             "",
         ] {
             assert!(safe_model_target(Path::new("/models"), target).is_err());
@@ -411,7 +406,7 @@ impl VoiceInstallService {
         snapshot_tx: &watch::Sender<VoiceInstallSnapshot>,
         cancel_rx: &watch::Receiver<bool>,
     ) -> Result<(), AppError> {
-        info!(kind = %art.kind.label(), url = art.url, "voice_install.start");
+        info!(kind = %art.kind.label(), "voice_install.start");
         let tmp_dir = tempfile_dir(&self.models_root)?;
         let result = self
             .install_one_in(art, snapshot_tx, cancel_rx, &tmp_dir)
@@ -431,24 +426,40 @@ impl VoiceInstallService {
         cancel_rx: &watch::Receiver<bool>,
         tmp_dir: &Path,
     ) -> Result<(), AppError> {
-        let archive_name = art.url.rsplit('/').next().unwrap_or("download.bin");
-        let archive_path = tmp_dir.join(archive_name);
-
-        self.download_to(art, &archive_path, snapshot_tx, cancel_rx)
-            .await?;
-
+        let staging = tmp_dir.join("model");
+        tokio::fs::create_dir(&staging).await?;
+        let mut downloaded = 0;
+        for file in art.files {
+            let dest = safe_model_target(&staging, file.path)?;
+            if let Some(parent) = dest.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            downloaded += self
+                .download_to(art, file, downloaded, &dest, snapshot_tx, cancel_rx)
+                .await?;
+        }
         if *cancel_rx.borrow() {
             return Err(AppError::Canceled("Voice install canceled".into()));
         }
-
         let final_target = safe_model_target(&self.models_root, art.target_subpath)?;
         if art.is_tarball {
-            extract_and_install(&archive_path, tmp_dir, &final_target).await?;
+            let archive = art
+                .files
+                .first()
+                .ok_or_else(|| AppError::Internal("Missing voice archive".into()))?;
+            let extracted = tmp_dir.join("extracted");
+            tokio::fs::create_dir(&extracted).await?;
+            extract_and_install(&staging.join(archive.path), &extracted, &final_target).await?;
         } else {
-            if let Some(parent) = final_target.parent() {
-                tokio::fs::create_dir_all(parent).await?;
+            tokio::fs::write(
+                staging.join("NOTICE.txt"),
+                include_str!("../../assets/pocket-tts-NOTICE.txt"),
+            )
+            .await?;
+            if !artifact_installed_at(art, &staging) {
+                return Err(AppError::Config("Voice pack is incomplete".into()));
             }
-            tokio::fs::rename(&archive_path, &final_target).await?;
+            install_directory(&staging, &final_target).await?;
         }
         self.update_model(
             snapshot_tx,
@@ -462,10 +473,12 @@ impl VoiceInstallService {
     async fn download_to(
         &self,
         art: &ModelArtifact,
+        download: &ModelFile,
+        previously_downloaded: u64,
         dest: &Path,
         snapshot_tx: &watch::Sender<VoiceInstallSnapshot>,
         cancel_rx: &watch::Receiver<bool>,
-    ) -> Result<(), AppError> {
+    ) -> Result<u64, AppError> {
         let mut cancel = cancel_rx.clone();
         let response = tokio::select! {
             changed = cancel.changed() => {
@@ -474,22 +487,27 @@ impl VoiceInstallService {
                 }
                 return Err(AppError::Internal("Voice install cancellation channel changed unexpectedly".into()));
             }
-            response = self.http.get(art.url).send() => response?.error_for_status()?,
+            response = self.http.get(download.url).send() => response?.error_for_status()?,
         };
-        let total = response.content_length();
-        if total.is_some_and(|size| size > art.max_bytes) {
+        let file_total = response.content_length();
+        let total = if art.is_tarball {
+            file_total
+        } else {
+            Some(art.files.iter().map(|file| file.max_bytes).sum())
+        };
+        if file_total.is_some_and(|size| size > download.max_bytes) {
             return Err(AppError::Config(format!(
                 "{} download Content-Length exceeds {} byte limit",
                 art.kind.label(),
-                art.max_bytes
+                download.max_bytes
             )));
         }
         let mut stream = response.bytes_stream();
         let mut file = tokio::fs::File::create(dest).await?;
         let mut integrity = crate::util::download_integrity::DownloadIntegrity::new(
             art.kind.label(),
-            art.sha256,
-            art.max_bytes,
+            download.sha256,
+            download.max_bytes,
         );
         use tokio::io::AsyncWriteExt;
         let throttle = Duration::from_millis(250);
@@ -500,7 +518,7 @@ impl VoiceInstallService {
             kind: art.kind,
             label: art.kind.label(),
             status: "downloading".into(),
-            bytes_downloaded: got,
+            bytes_downloaded: previously_downloaded + got,
             bytes_total: total,
             percent,
         };
@@ -519,19 +537,22 @@ impl VoiceInstallService {
             integrity.update(&chunk)?;
             file.write_all(&chunk).await?;
             got = got.saturating_add(chunk.len() as u64);
-            let percent = total.map(|t| ((got as f64 / t as f64) * 100.0).min(100.0) as u8);
+            let percent = total.map(|t| {
+                (((previously_downloaded + got) as f64 / t as f64) * 100.0).min(100.0) as u8
+            });
             if percent != last_percent || last_emit.elapsed() >= throttle {
                 self.update_model(snapshot_tx, art.kind, make_progress(got, percent));
                 last_emit = Instant::now();
                 last_percent = percent;
             }
         }
-        let final_percent = total.map(|t| ((got as f64 / t as f64) * 100.0).min(100.0) as u8);
+        let final_percent = total
+            .map(|t| (((previously_downloaded + got) as f64 / t as f64) * 100.0).min(100.0) as u8);
         self.update_model(snapshot_tx, art.kind, make_progress(got, final_percent));
         file.flush().await?;
         let verified_bytes = integrity.finish()?;
         debug_assert_eq!(got, verified_bytes);
-        Ok(())
+        Ok(verified_bytes)
     }
 
     fn update_model(

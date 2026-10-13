@@ -6,7 +6,7 @@ use crate::provider::InterruptedReply;
 
 struct SpokenSentence {
     text: String,
-    end_chunk: u64,
+    end_chunk: Option<u64>,
 }
 
 #[derive(Default)]
@@ -23,8 +23,32 @@ impl SpokenScript {
             .unwrap_or_else(PoisonError::into_inner)
             .push(SpokenSentence {
                 text: text.trim().to_owned(),
-                end_chunk,
+                end_chunk: Some(end_chunk),
             });
+    }
+
+    pub(crate) fn begin_sentence(&self, text: &str) -> usize {
+        let mut sentences = self
+            .sentences
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let index = sentences.len();
+        sentences.push(SpokenSentence {
+            text: text.trim().to_owned(),
+            end_chunk: None,
+        });
+        index
+    }
+
+    pub(crate) fn complete_sentence(&self, index: usize, end_chunk: u64) {
+        if let Some(sentence) = self
+            .sentences
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(index)
+        {
+            sentence.end_chunk = Some(end_chunk);
+        }
     }
 
     pub(crate) fn add_audio(&self, duration: Duration) {
@@ -50,7 +74,7 @@ impl SpokenScript {
             .unwrap_or_else(PoisonError::into_inner);
         let heard_count = sentences
             .iter()
-            .take_while(|sentence| sentence.end_chunk <= playhead_chunk)
+            .take_while(|sentence| sentence.end_chunk.is_some_and(|end| end <= playhead_chunk))
             .count();
         let cut_off = sentences
             .get(heard_count)
@@ -126,5 +150,17 @@ mod tests {
         let reply = script.heard_until(2).expect("interrupted");
         assert_eq!(reply.heard, "One. Two.");
         assert!(reply.cut_off.is_none());
+    }
+
+    #[test]
+    fn catching_up_with_generation_does_not_mark_an_unfinished_sentence_heard() {
+        let script = script(&[("One.", 10)]);
+        let pending = script.begin_sentence("Still being generated.");
+        let reply = script.heard_until(25).expect("interrupted");
+        assert_eq!(reply.heard, "One.");
+        assert_eq!(reply.cut_off.as_deref(), Some("Still being generated."));
+        script.complete_sentence(pending, 30);
+        script.finish();
+        assert!(script.heard_until(30).is_none());
     }
 }

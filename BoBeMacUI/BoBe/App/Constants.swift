@@ -184,9 +184,9 @@ enum InstallStatusWire: String, Codable, Sendable, Equatable {
 
 enum VoiceWire {
     static let ttsOutputSampleRate = 24_000
-    static let kokoroModelDir = "kokoro-multi-lang-v1_0"
+    static let pocketTtsModelDir = "pocket-tts-en-b6369a24-q8"
     static let streamingSttModelDir = "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
-    static let defaultPersona = "af_bella"
+    static let defaultPersona = "alba"
     static let modelKindTts = "tts"
     static let modelKindStt = "stt"
     static let subprotocolV2 = "bobe.voice.v2"

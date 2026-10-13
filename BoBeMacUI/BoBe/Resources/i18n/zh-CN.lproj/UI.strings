@@ -488,7 +488,7 @@
 "settings.voice.stt_preference.daemon" = "BoBe 守护进程";
 "settings.voice.tts_backend" = "语音合成后端";
 "settings.voice.tts_backend.description" = "实验性功能。Supertonic 在应用内运行多语种 TTS，首次使用时会下载它的 Core ML 模型。更改后请重新连接语音。";
-"settings.voice.tts_backend.server_kokoro" = "服务端 Kokoro（稳定）";
+"settings.voice.tts_backend.server_pocket" = "服务端 Pocket TTS（英语）";
 "settings.voice.tts_backend.client_supertonic" = "客户端 Supertonic-3（实验性）";
 "settings.voice.tts_backend.best_for_format" = "%1$@ · 最适合%2$@";
 "settings.voice.advice.engine_format" = "%1$@ 不会说%2$@，%3$@ 可以。";

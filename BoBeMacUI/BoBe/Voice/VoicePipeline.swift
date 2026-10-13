@@ -340,7 +340,7 @@ public final class VoicePipeline {
 
     public func prepareSelectedTts() async throws {
         switch VoiceTtsPreference.shared.backend {
-        case .serverKokoro:
+        case .serverPocket:
             try await self.startDaemonTtsInstall()
         case .clientSupertonic:
             try await self.clientTtsEngine.prepare()
@@ -518,7 +518,7 @@ public final class VoicePipeline {
         let sid = self.sessionId
         let voiceId = self.sessionVoicePersona
         let speed = self.sessionVoiceSpeed
-        let ttsBackend = self.sessionTtsBackend ?? .serverKokoro
+        let ttsBackend = self.sessionTtsBackend ?? .serverPocket
         self.handshakeTask = Task { @MainActor [weak self, weak newTask] in
             guard let self,
                   let newTask,

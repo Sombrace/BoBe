@@ -490,7 +490,7 @@
 "settings.voice.stt_preference.daemon" = "Daemon de BoBe";
 "settings.voice.tts_backend" = "Motor de síntesis de voz";
 "settings.voice.tts_backend.description" = "Experimental. Supertonic genera voz multilingüe dentro de la app y descarga su modelo de Core ML la primera vez que se usa. Vuelve a conectar la voz después de cambiarlo.";
-"settings.voice.tts_backend.server_kokoro" = "Kokoro en el servidor (estable)";
+"settings.voice.tts_backend.server_pocket" = "Pocket TTS en el servidor (inglés)";
 "settings.voice.tts_backend.client_supertonic" = "Supertonic-3 en el cliente (experimental)";
 "settings.voice.tts_backend.best_for_format" = "%1$@ · ideal para %2$@";
 "settings.voice.advice.engine_format" = "%1$@ no habla %2$@. %3$@ sí.";

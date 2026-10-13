@@ -1,0 +1,31 @@
+Pocket TTS English pack for BoBe
+
+Model: Pocket TTS, Copyright Kyutai, licensed under Creative Commons Attribution
+4.0 International (CC BY 4.0): https://creativecommons.org/licenses/by/4.0/
+Original: https://huggingface.co/kyutai/pocket-tts-without-voice-cloning
+This pack uses the b6369a24 English generation, converted to Q8 GGUF. It is not
+the later multilingual v3 model and does not provide voice cloning.
+
+Converted weights, tokenizer and configuration are from davencyw's ptts test
+layout at https://huggingface.co/davencyw/pocket-tts-ptts, immutable revision
+7cc3c90b88f3e6617ded1b9b74100d1cd0162d90. This is a third-party conversion,
+not an official Kyutai release. BoBe pins the SHA-256 of every downloaded file.
+
+Voice sources (precomputed embeddings of the following recordings):
+- Alba: Alba MacKenna, casual.wav, CC BY 4.0.
+  https://huggingface.co/kyutai/tts-voices/blob/main/alba-mackenna/casual.wav
+- Azelma, Eponine, Fantine: CSTR VCTK Corpus, CC BY 4.0, by Junichi
+  Yamagishi, Christophe Veaux and Kirsten MacDonald, University of Edinburgh.
+  https://datashare.ed.ac.uk/handle/10283/3443
+  Speakers p303, p262 and p244, sentence 023, mic1; enhanced by ai-coustics.
+- Javert, Marius: Kyutai Unmute Voice Donation Project, CC0.
+  Recordings Butter.wav and Selfie.wav, respectively.
+  https://unmute.sh/voice-donation
+
+Voice license documentation: https://huggingface.co/kyutai/tts-voices
+CC0: https://creativecommons.org/publicdomain/zero/1.0/
+Cosette (Expresso) and Jean (EARS) are deliberately excluded because their
+source recordings are licensed for noncommercial use only.
+
+BoBe does not claim endorsement by Kyutai, the conversion author or voice
+contributors. Preserve this attribution when redistributing the model pack.

@@ -491,7 +491,7 @@
 "settings.voice.stt_preference.daemon" = "Υπηρεσία BoBe";
 "settings.voice.tts_backend" = "Μηχανή σύνθεσης ομιλίας";
 "settings.voice.tts_backend.description" = "Πειραματικό. Το Supertonic-3 εκτελεί πολυγλωσσική σύνθεση ομιλίας μέσα στην εφαρμογή και κατεβάζει το μοντέλο Core ML την πρώτη φορά. Επανασυνδέστε τη φωνή μετά την αλλαγή.";
-"settings.voice.tts_backend.server_kokoro" = "Kokoro στον διακομιστή (σταθερό)";
+"settings.voice.tts_backend.server_pocket" = "Pocket TTS στον διακομιστή (Αγγλικά)";
 "settings.voice.tts_backend.client_supertonic" = "Supertonic-3 στην εφαρμογή (πειραματικό)";
 "settings.voice.tts_backend.best_for_format" = "%1$@ · ιδανικό για %2$@";
 "settings.voice.advice.engine_format" = "Το %1$@ δεν μιλά %2$@. Το %3$@ μιλά.";

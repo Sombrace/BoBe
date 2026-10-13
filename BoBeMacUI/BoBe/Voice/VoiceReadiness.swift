@@ -143,7 +143,11 @@ extension VoicePipeline {
     var modelPreparation: VoiceModelPreparation {
         let backend = VoiceTtsPreference.shared.backend
         let preference = VoiceSttPreferenceStore.shared.preference
-        let ttsReady = backend == .serverKokoro
+        guard backend.speaks(self.effectiveLanguage) else {
+            return .failed(L10n.tr("settings.voice.language_unsupported", backend.shortName,
+                                   VoiceLanguages.displayName(for: self.effectiveLanguage)))
+        }
+        let ttsReady = backend == .serverPocket
             ? self.installSnapshot?.installed.tts == true
             : FluidAudioSupertonicModelPresence.isInstalled()
         let sttReady = preference.speechRecognitionReady(
@@ -153,7 +157,7 @@ extension VoicePipeline {
         let failure: String?
         if case let .failed(message) = self.sttStatus, !sttReady {
             failure = message
-        } else if backend == .serverKokoro,
+        } else if backend == .serverPocket,
                   self.installSnapshot?.status == .failed, !ttsReady {
             failure = self.installSnapshot?.error ?? L10n.tr("setup.voice.poll_failure")
         } else {
@@ -163,7 +167,7 @@ extension VoicePipeline {
             snapshotAvailable: self.installSnapshot != nil,
             ttsReady: ttsReady,
             sttReady: sttReady,
-            installing: (backend == .serverKokoro && self.installSnapshot?.isRunning == true)
+            installing: (backend == .serverPocket && self.installSnapshot?.isRunning == true)
                 || (preference.usesEndpointEngine && self.sttStatus == .downloading),
             failure: failure
         )

@@ -40,7 +40,8 @@ impl VoiceDefaults {
     pub(crate) fn from_config(config: &crate::config::Config) -> Self {
         Self {
             enabled: config.voice.enabled,
-            persona: config.voice.persona.clone(),
+            persona: crate::speech::providers::pocket::migrate_voice(&config.voice.persona)
+                .to_owned(),
             speed: config.voice.speed,
         }
     }

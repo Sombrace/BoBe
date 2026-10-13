@@ -491,7 +491,7 @@
 "settings.voice.stt_preference.daemon" = "BoBe-Daemon";
 "settings.voice.tts_backend" = "Backend für Sprachausgabe";
 "settings.voice.tts_backend.description" = "Experimentell. Supertonic erzeugt mehrsprachige Sprachausgabe direkt in der App und lädt sein Core ML-Modell beim ersten Mal herunter. Verbinde die Sprachfunktion danach neu.";
-"settings.voice.tts_backend.server_kokoro" = "Kokoro auf dem Server (stabil)";
+"settings.voice.tts_backend.server_pocket" = "Pocket TTS auf dem Server (Englisch)";
 "settings.voice.tts_backend.client_supertonic" = "Supertonic-3 in der App (experimentell)";
 "settings.voice.tts_backend.best_for_format" = "%1$@ · am besten für %2$@";
 "settings.voice.advice.engine_format" = "%1$@ kann kein %2$@ sprechen. %3$@ schon.";

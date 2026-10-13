@@ -29,7 +29,7 @@ struct VoiceSetupStepView: View {
     }
 
     private var visibleDaemonModels: [VoiceModelProgress] {
-        guard self.selectedTtsBackend == .serverKokoro else { return [] }
+        guard self.selectedTtsBackend == .serverPocket else { return [] }
         return (self.status?.models ?? []).filter { $0.kind == VoiceWire.modelKindTts }
     }
 

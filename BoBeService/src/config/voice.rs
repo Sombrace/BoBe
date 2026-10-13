@@ -23,7 +23,7 @@ impl Default for VoiceConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            persona: "af_bella".into(),
+            persona: crate::constants::voice_wire::DEFAULT_PERSONA.into(),
             speed: 1.0,
             stt_language: "en".into(),
             pause_sensitivity: PauseSensitivity::Balanced,

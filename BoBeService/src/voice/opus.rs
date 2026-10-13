@@ -3,6 +3,55 @@ use tracing::warn;
 
 const TTS_OPUS_BITRATE_BPS: i32 = 24_000;
 
+/// Keeps incomplete 20 ms frames across inference chunks. Only the end of a
+/// sentence is padded; padding each model chunk would insert gaps in speech.
+pub(crate) struct PcmPacketizer {
+    pending: Vec<f32>,
+    frame_samples: usize,
+}
+
+impl PcmPacketizer {
+    pub(crate) fn new(sample_rate: u32) -> Self {
+        Self {
+            pending: Vec::new(),
+            frame_samples: sample_rate as usize / 50,
+        }
+    }
+
+    pub(crate) fn push(
+        &mut self,
+        encoder: &mut OpusEncoder,
+        pcm: &[f32],
+    ) -> Result<Vec<Vec<u8>>, crate::error::AppError> {
+        self.pending.extend_from_slice(pcm);
+        let complete = self.pending.len() / self.frame_samples * self.frame_samples;
+        let mut packets = Vec::new();
+        for frame in self.pending[..complete].chunks_exact(self.frame_samples) {
+            let mut packet = vec![0; 1500];
+            let n = encoder
+                .encode_float_to_slice(frame, &mut packet)
+                .map_err(|e| {
+                    crate::error::AppError::Internal(format!("Opus encoding failed: {e:?}"))
+                })?;
+            packet.truncate(n);
+            packets.push(packet);
+        }
+        self.pending.drain(..complete);
+        Ok(packets)
+    }
+
+    pub(crate) fn finish(
+        &mut self,
+        encoder: &mut OpusEncoder,
+    ) -> Result<Vec<Vec<u8>>, crate::error::AppError> {
+        if self.pending.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.pending.resize(self.frame_samples, 0.0);
+        self.push(encoder, &[])
+    }
+}
+
 pub(crate) fn make_opus_encoder(sample_rate: u32) -> Option<OpusEncoder> {
     let sample_rate = match sample_rate {
         8_000 => SampleRate::Hz8000,
@@ -123,5 +172,22 @@ mod tests {
         let short = vec![0.0_f32; 100];
         let frames = encode_pcm_with(&mut encoder, &short, 24_000);
         assert_eq!(frames.len(), 1);
+    }
+
+    #[test]
+    fn streaming_boundaries_do_not_add_silence_or_drop_samples() {
+        let pcm: Vec<f32> = (0..4_193).map(|n| (n as f32 * 0.02).sin() * 0.5).collect();
+        let mut batch_encoder = make_opus_encoder(24_000).expect("encoder");
+        let expected = encode_pcm_with(&mut batch_encoder, &pcm, 24_000);
+        for size in [1, 197, 480, 1_920] {
+            let mut encoder = make_opus_encoder(24_000).expect("encoder");
+            let mut packetizer = PcmPacketizer::new(24_000);
+            let mut packets = Vec::new();
+            for chunk in pcm.chunks(size) {
+                packets.extend(packetizer.push(&mut encoder, chunk).expect("packet"));
+            }
+            packets.extend(packetizer.finish(&mut encoder).expect("tail"));
+            assert_eq!(packets, expected, "chunk size {size}");
+        }
     }
 }

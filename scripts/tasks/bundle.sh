@@ -17,6 +17,7 @@ ditto build/agent-runtime/node "$APP/Contents/MacOS/node"
 ditto build/agent-runtime/agent "$APP/Contents/Resources/agent"
 
 ditto BoBeService/target/release/bobe "$APP/Contents/MacOS/bobe-daemon"
+ditto third_party/speech-licenses "$APP/Contents/Resources/licenses/speech"
 ./scripts/check-agent-runtime.sh "$APP/Contents/MacOS" "$APP/Contents/Resources/agent"
 
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${version}" "$APP/Contents/Info.plist"

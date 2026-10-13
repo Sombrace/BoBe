@@ -335,7 +335,7 @@
 "settings.voice.stt_preference.daemon" = "BoBe 데몬";
 "settings.voice.tts_backend" = "음성 합성 백엔드";
 "settings.voice.tts_backend.description" = "실험적인 기능이에요. Supertonic은 다국어 TTS를 앱 안에서 실행하고, 처음 쓸 때 Core ML 모델을 내려받아요. 바꾼 뒤에는 음성을 다시 연결해 주세요.";
-"settings.voice.tts_backend.server_kokoro" = "서버 Kokoro (안정적)";
+"settings.voice.tts_backend.server_pocket" = "서버 Pocket TTS (영어)";
 "settings.voice.tts_backend.client_supertonic" = "클라이언트 Supertonic-3 (실험적)";
 "settings.voice.tts_backend.best_for_format" = "%1$@ · %2$@에 최적";
 "settings.voice.advice.engine_format" = "%1$@은(는) %2$@을(를) 말할 수 없습니다. %3$@은(는) 가능합니다.";

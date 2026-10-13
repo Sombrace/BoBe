@@ -54,6 +54,19 @@ pub(super) async fn extract_and_install(
     let extracted =
         extracted.ok_or_else(|| AppError::Internal("tarball had no directory inside".into()))?;
 
+    install_directory(&extracted, final_target).await?;
+    if let Err(error) = tokio::fs::remove_file(archive).await
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(path = %archive.display(), error = %error, "voice_install.archive_cleanup_failed");
+    }
+    Ok(())
+}
+
+pub(super) async fn install_directory(
+    extracted: &Path,
+    final_target: &Path,
+) -> Result<(), AppError> {
     if let Some(parent) = final_target.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -65,7 +78,7 @@ pub(super) async fn extract_and_install(
     if had_existing {
         tokio::fs::rename(final_target, &backup).await?;
     }
-    if let Err(error) = tokio::fs::rename(&extracted, final_target).await {
+    if let Err(error) = tokio::fs::rename(extracted, final_target).await {
         if had_existing {
             drop(tokio::fs::rename(&backup, final_target).await);
         }
@@ -73,11 +86,6 @@ pub(super) async fn extract_and_install(
     }
     if had_existing {
         tokio::fs::remove_dir_all(&backup).await?;
-    }
-    if let Err(error) = tokio::fs::remove_file(archive).await
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        tracing::warn!(path = %archive.display(), error = %error, "voice_install.archive_cleanup_failed");
     }
     Ok(())
 }

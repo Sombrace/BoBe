@@ -1,0 +1,31 @@
+Software notices added by BoBe's Pocket TTS migration
+
+ptts 0.4.0-rc.1 (Gradium / Laurent Mazare)
+https://github.com/gradium-ai/xn-ptts
+MIT selected from MIT / Apache-2.0; see ptts-MIT.txt.
+
+xn 0.2.11 (Laurent Mazare), upstream commit
+878928e6bc9e10686b3bcd5dd422ae81f54c24cb
+https://github.com/LaurentMazare/xn
+MIT selected from MIT / Apache-2.0; see xn-MIT.txt.
+
+xn-gemm family 0.20.2 (Gradium), upstream commit
+f74bc3c2b5c668d9de964b8f4f6151bff97d0f21
+https://github.com/gradium-ai/gemm
+MIT; see gemm-MIT.txt.
+
+signalsmith-stretch 0.1.3 (Rust wrapper, Colin Marc), and its bundled
+Signalsmith Stretch / Signalsmith Linear C++ libraries (Signalsmith Audio).
+https://github.com/colinmarc/signalsmith-stretch-rs
+https://github.com/Signalsmith-Audio/signalsmith-stretch
+MIT; see the three signalsmith-*-MIT.txt files.
+
+sherpa-onnx 1.13.8, k2-fsa project
+https://github.com/k2-fsa/sherpa-onnx
+Apache-2.0; see sherpa-onnx-APACHE.txt. BoBe's sys-crate build adaptation uses
+the recognition-only static distribution and is described in the adjacent
+third_party/sherpa-onnx-sys directory in the source distribution.
+
+These notices supplement the existing distribution's third-party licenses.
+They do not relicense model weights. Each downloaded English speech pack
+contains its own NOTICE.txt describing CC BY 4.0 and CC0 attribution.

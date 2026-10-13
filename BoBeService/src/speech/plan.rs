@@ -7,7 +7,7 @@ pub(crate) const ENDPOINT_STT_ENGINE: &str = "voice_v1_endpoint_stt";
 pub(crate) const APPLE_SPEECH_ANALYZER_ENGINE: &str = "apple_speech_analyzer";
 pub(crate) const FLUIDAUDIO_PARAKEET_ENGINE: &str = "fluidaudio_parakeet_eou";
 pub(crate) const FLUIDAUDIO_NEMOTRON_ENGINE: &str = "fluidaudio_nemotron";
-pub(crate) const SERVER_KOKORO_ENGINE: &str = "server_kokoro";
+pub(crate) const SERVER_POCKET_ENGINE: &str = "server_pocket";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -191,7 +191,8 @@ impl SpeechPlan {
         let (tts_site, tts_engine_id) = resolve_site(
             offer.overrides.tts,
             endpoint_tts.map(|engine| engine.id.as_str()),
-            daemon_tts_ready.then_some(SERVER_KOKORO_ENGINE),
+            (daemon_tts_ready && offer.language.split('-').next() == Some("en"))
+                .then_some(SERVER_POCKET_ENGINE),
             "TTS",
         )?;
         let reason = match (stt_site, tts_site) {
@@ -204,6 +205,16 @@ impl SpeechPlan {
             }
             (SpeechSite::Daemon, SpeechSite::Daemon) => SpeechPlanReason::VoiceV2DaemonSpeech,
         };
+        let daemon_voice = crate::speech::providers::pocket::migrate_voice(
+            voice_id.as_deref().unwrap_or(&defaults.persona),
+        );
+        if tts_site == SpeechSite::Daemon
+            && !crate::speech::providers::pocket::VOICES.contains(&daemon_voice)
+        {
+            return Err(SpeechPlanError::InvalidOffer(format!(
+                "Unknown Pocket TTS voice: {daemon_voice}"
+            )));
+        }
         let plan = Self {
             plan_id: Uuid::new_v4().to_string(),
             stt_site,
@@ -218,7 +229,7 @@ impl SpeechPlan {
                         SpeechPlanError::InvalidOffer("endpoint TTS voice is required".into())
                     })?
             } else {
-                voice_id.unwrap_or_else(|| defaults.persona.clone())
+                daemon_voice.to_owned()
             },
             uplink: if stt_site == SpeechSite::Endpoint {
                 SpeechUplink::Transcript
@@ -249,7 +260,7 @@ impl SpeechPlan {
             stt_site: SpeechSite::Endpoint,
             stt_engine_id: ENDPOINT_STT_ENGINE.to_owned(),
             tts_site: SpeechSite::Daemon,
-            tts_engine_id: SERVER_KOKORO_ENGINE.to_owned(),
+            tts_engine_id: SERVER_POCKET_ENGINE.to_owned(),
             voice_id: defaults.persona.clone(),
             uplink: SpeechUplink::Transcript,
             downlink: SpeechDownlink::Audio,
@@ -340,7 +351,7 @@ mod tests {
     fn defaults() -> VoiceDefaults {
         VoiceDefaults {
             enabled: true,
-            persona: "af_heart".into(),
+            persona: "alba".into(),
             speed: 1.0,
         }
     }
@@ -455,6 +466,37 @@ mod tests {
         let plan = SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, None, true).unwrap();
         assert_eq!(plan.stt_site, SpeechSite::Endpoint);
         assert_eq!(plan.tts_site, SpeechSite::Daemon);
+    }
+
+    #[test]
+    fn english_pack_does_not_advertise_uninstalled_languages() {
+        let mut offer = offer();
+        offer.language = "fr".into();
+        offer.endpoint_stt[0].languages = vec!["fr".into()];
+        offer.overrides.tts = SpeechPlacementOverride::Daemon;
+        assert_eq!(
+            SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, None, true).unwrap_err(),
+            SpeechPlanError::NoSpeechPath("TTS".into())
+        );
+        offer.language = "en-GB".into();
+        offer.endpoint_stt[0].languages = vec!["en".into()];
+        assert!(SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, None, true).is_ok());
+    }
+
+    #[test]
+    fn voice_negotiation_migrates_old_presets_and_rejects_excluded_voices() {
+        let mut offer = offer();
+        offer.overrides.tts = SpeechPlacementOverride::Daemon;
+        let plan =
+            SpeechPlan::resolve_voice_v2(&offer, &defaults(), Some("af_bella".into()), None, true)
+                .unwrap();
+        assert_eq!(plan.voice_id, "alba");
+        for voice in ["cosette", "jean", "unknown"] {
+            assert!(matches!(
+                SpeechPlan::resolve_voice_v2(&offer, &defaults(), Some(voice.into()), None, true),
+                Err(SpeechPlanError::InvalidOffer(_))
+            ));
+        }
     }
 
     #[test]

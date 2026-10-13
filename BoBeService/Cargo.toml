@@ -141,7 +141,9 @@ tar = "0.4.46"
 zstd = "0.13.3"
 bzip2 = "0.6.1"
 bytes = "1"
-sherpa-onnx = "1.13"
+sherpa-onnx = "=1.13.8"
+ptts = { version = "=0.4.0-rc.1", default-features = false, features = ["hf"] }
+signalsmith-stretch = "=0.1.3"
 opusic-c = "1.6.1"
 regex = "1.13"
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring", "zeroize"] }
@@ -156,3 +158,7 @@ sha2 = { version = "0.11.0", default-features = false }
 ed25519-dalek = { version = "3.0.0", default-features = false, features = ["alloc"] }
 serde_ignored = "0.1.14"
 qrcodegen = "1.8.0"
+
+[patch.crates-io]
+sherpa-onnx-sys = { path = "../third_party/sherpa-onnx-sys" }
+paste = { path = "../third_party/paste" }

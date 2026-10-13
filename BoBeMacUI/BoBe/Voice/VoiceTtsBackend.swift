@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 enum VoiceTtsBackend: String, CaseIterable, Sendable {
-    case serverKokoro = "server_kokoro"
+    case serverPocket = "server_pocket"
     case clientSupertonic = "client_supertonic"
 
     var label: String {
@@ -11,15 +11,15 @@ enum VoiceTtsBackend: String, CaseIterable, Sendable {
 
     var shortName: String {
         switch self {
-        case .serverKokoro: "Kokoro"
+        case .serverPocket: "Pocket TTS"
         case .clientSupertonic: "Supertonic"
         }
     }
 
     private var languages: Set<String> {
         switch self {
-        case .serverKokoro:
-            ["en", "es", "fr", "hi", "it", "ja", "pt", "zh"]
+        case .serverPocket:
+            ["en"]
         case .clientSupertonic:
             [
                 "ar", "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hi", "hr", "hu", "id", "it",
@@ -33,9 +33,9 @@ enum VoiceTtsBackend: String, CaseIterable, Sendable {
     }
 
     static func best(for language: String) -> VoiceTtsBackend {
-        if VoiceTtsBackend.serverKokoro.speaks(language) { return .serverKokoro }
+        if VoiceTtsBackend.serverPocket.speaks(language) { return .serverPocket }
         if VoiceTtsBackend.clientSupertonic.speaks(language) { return .clientSupertonic }
-        return .serverKokoro
+        return .serverPocket
     }
 
     static func languageKey(_ code: String) -> String {
@@ -52,9 +52,9 @@ enum VoiceLanguageAdvice: Equatable, Sendable {
         if !backend.speaks(language) {
             return best.speaks(language) && best != backend ? .engine(best) : nil
         }
-        guard backend == .serverKokoro,
-              KokoroVoices.language(ofSlot: persona) != VoiceTtsBackend.languageKey(language),
-              let slot = KokoroVoices.slot(for: language, like: persona)
+        guard backend == .serverPocket,
+              PocketVoices.language(ofSlot: persona) != VoiceTtsBackend.languageKey(language),
+              let slot = PocketVoices.slot(for: language, like: persona)
         else { return nil }
         return .persona(slot)
     }
@@ -70,8 +70,11 @@ final class VoiceTtsPreference {
     private(set) var backend: VoiceTtsBackend
 
     private init() {
-        self.backend = UserDefaults.standard.string(forKey: Self.key)
-            .flatMap(VoiceTtsBackend.init(rawValue:)) ?? .serverKokoro
+        let saved = UserDefaults.standard.string(forKey: Self.key)
+        self.backend = saved.flatMap(VoiceTtsBackend.init(rawValue:)) ?? .serverPocket
+        if saved == "server_kokoro" {
+            UserDefaults.standard.set(self.backend.rawValue, forKey: Self.key)
+        }
     }
 
     func setBackend(_ backend: VoiceTtsBackend) {
