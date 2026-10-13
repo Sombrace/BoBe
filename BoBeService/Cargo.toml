@@ -140,7 +140,7 @@ tracing-appender = "0.2.5"
 uuid = { version = "1.24.0", features = ["v4", "serde"] }
 which = "8.0.5"
 libc = "0.2.186"
-base64 = "0.22.1"
+base64 = "0.23.1"
 rand = "0.10.2"
 mdns-sd = { version = "0.20.1", features = ["async"] }
 dashmap = "6.2.1"
