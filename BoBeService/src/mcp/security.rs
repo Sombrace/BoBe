@@ -33,13 +33,7 @@ pub(crate) const DEFAULT_BLOCKED_COMMANDS: &[&str] = &[
     "halt",
     "init",
     "systemctl",
-    // `tee` writes stdin to arbitrary paths (`cmd | tee /etc/passwd`).
-    // No legitimate MCP server needs it as its declared command.
     "tee",
-    // `find -exec` / `-execdir` / `-delete` are arbitrary-exec and arbitrary-
-    // delete primitives. Validation only sees the basename — we can't reason
-    // about flags — so the safe default is to block `find` outright. MCP
-    // servers that need file discovery can wrap their own bounded glob.
     "find",
 ];
 
@@ -291,19 +285,14 @@ mod tests {
 
     #[test]
     fn test_validate_command_blocks_tee_and_find() {
-        // `tee` is a write primitive (`cmd | tee /etc/passwd` clobbers files).
         assert!(validate_mcp_command_with_args("tee", &[], &[]).is_err());
         assert!(validate_mcp_command_with_args("/usr/bin/tee", &[], &[]).is_err());
-        // `find` has `-exec` / `-delete`; blocking the basename is the
-        // conservative default because validation can't reason about flags.
         assert!(validate_mcp_command_with_args("find", &[], &[]).is_err());
         assert!(validate_mcp_command_with_args("/usr/bin/find", &[], &[]).is_err());
     }
 
     #[test]
     fn test_validate_command_blocks_env_wrapped_tee_and_find() {
-        // The env-wrapper unwrap path must also catch these — otherwise
-        // `env tee /etc/passwd` would slip through.
         assert!(
             validate_mcp_command_with_args(
                 "env",

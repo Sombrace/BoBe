@@ -63,7 +63,6 @@ impl SoulsService {
         Ok(saved)
     }
 
-    /// Editing a default soul preserves the original as a disabled copy.
     pub(crate) async fn update(
         &self,
         id: SoulId,
@@ -140,7 +139,6 @@ impl SoulsService {
         Ok(updated)
     }
 
-    /// Default souls cannot be deleted; caller should disable instead.
     pub(crate) async fn delete(&self, id: SoulId) -> Result<DeleteOutcome, AppError> {
         let Some(soul) = self.repo.get_by_id(id).await? else {
             return Ok(DeleteOutcome::NotFound);

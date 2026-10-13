@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct SoulsEditor: View {
+    @State private var client = DaemonClient(endpoint: DaemonConfig.endpoint)
+
     var body: some View {
         EntityListEditor<Soul, SoulCreateRequest, SoulUpdateRequest>(
             strings: EntityEditorStrings(
@@ -16,12 +18,12 @@ struct SoulsEditor: View {
             ),
             emptyIcon: "sparkles",
             actions: EntityActions(
-                list: { try await DaemonClient.shared.listSouls().souls },
-                create: { try await DaemonClient.shared.createSoul($0) },
-                update: { id, request in try await DaemonClient.shared.updateSoul(id, request) },
-                delete: { try await DaemonClient.shared.deleteSoul($0) },
-                enable: { _ = try await DaemonClient.shared.enableSoul($0) },
-                disable: { _ = try await DaemonClient.shared.disableSoul($0) },
+                list: { [client = self.client] in try await client.listSouls().souls },
+                create: { [client = self.client] request in try await client.createSoul(request) },
+                update: { [client = self.client] id, request in try await client.updateSoul(id, request) },
+                delete: { [client = self.client] id in try await client.deleteSoul(id) },
+                enable: { [client = self.client] id in try await client.enableSoul(id) },
+                disable: { [client = self.client] id in try await client.disableSoul(id) },
                 buildCreateRequest: { name in
                     SoulCreateRequest(name: name, content: "# \(name)\n\nDescribe this soul here.\n")
                 },

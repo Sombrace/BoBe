@@ -42,11 +42,6 @@ final class ToolExecutionController {
     }
 
     private func handleComplete(_ complete: ToolCallCompletePayload) {
-        // The daemon sends `error`, `duration_ms`, and `completed_at` on
-        // every complete event, but the UI today only surfaces the
-        // `.running` filter — completion data is invisible. We parse the
-        // success/failure status to drop the entry from the running set;
-        // the rest of the payload is intentionally discarded.
         self.applyStateMutation { ctx in
             ctx.toolExecutions = ctx.toolExecutions.map { t in
                 guard t.toolCallId == complete.toolCallId else { return t }

@@ -1,0 +1,17 @@
+[package]
+name = "bobe-pairing-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+license = "MIT"
+publish = false
+
+[dependencies]
+opaque-ke = { version = "=4.0.1", default-features = false, features = ["argon2", "ristretto255", "std"] }
+rand = { version = "0.8.7", features = ["getrandom"] }
+sha2 = { version = "0.10.9", default-features = false }
+thiserror = "2.0"
+zeroize = { version = "1.9.0", features = ["zeroize_derive"] }
+
+[lints.rust]
+unsafe_code = "deny"

@@ -146,8 +146,6 @@ impl CheckinScheduler {
             .min()
     }
 
-    /// Lazy-init both scheduling slots. Idempotent — only schedules a slot
-    /// that's currently `None`; cleared slots are recomputed against `now`.
     fn refresh_schedules(&mut self, now: DateTime<Utc>) {
         if !self.times.is_empty() && self.next_checkin.is_none() {
             self.schedule_next_checkin(now);

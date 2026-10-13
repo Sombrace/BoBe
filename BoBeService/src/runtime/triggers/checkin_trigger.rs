@@ -10,7 +10,7 @@ use crate::runtime::conversation_service::ConversationService;
 use crate::runtime::proactive_generator::ProactiveGenerator;
 use crate::runtime::state::Decision;
 use crate::runtime::triggers::checkin_scheduler::CheckinScheduler;
-use crate::runtime::turn_admission::{TurnAdmission, TurnSource};
+use crate::runtime::turn_admission::TurnSource;
 
 pub(crate) struct CheckinTrigger {
     scheduler: CheckinScheduler,
@@ -18,7 +18,7 @@ pub(crate) struct CheckinTrigger {
     conversation: Arc<ConversationService>,
     cooldown_repo: Arc<SqliteCooldownRepo>,
     config: Arc<ArcSwap<Config>>,
-    turn_admission: Arc<TurnAdmission>,
+    personal_data_lifecycle: Arc<tokio::sync::RwLock<()>>,
 }
 
 impl CheckinTrigger {
@@ -28,7 +28,7 @@ impl CheckinTrigger {
         conversation: Arc<ConversationService>,
         cooldown_repo: Arc<SqliteCooldownRepo>,
         config: Arc<ArcSwap<Config>>,
-        turn_admission: Arc<TurnAdmission>,
+        personal_data_lifecycle: Arc<tokio::sync::RwLock<()>>,
     ) -> Self {
         Self {
             scheduler,
@@ -36,7 +36,7 @@ impl CheckinTrigger {
             conversation,
             cooldown_repo,
             config,
-            turn_admission,
+            personal_data_lifecycle,
         }
     }
 
@@ -50,10 +50,7 @@ impl CheckinTrigger {
     }
 
     pub(crate) async fn fire(&mut self) -> Decision {
-        let Some(_turn) = self.turn_admission.try_admit(TurnSource::Checkin) else {
-            debug!("checkin_trigger.turn_busy");
-            return Decision::Idle;
-        };
+        let _personal_data = self.personal_data_lifecycle.read().await;
         if !self.scheduler.should_checkin() {
             return Decision::Idle;
         }
@@ -90,10 +87,7 @@ impl CheckinTrigger {
         info!("checkin_trigger.started");
         let decision = self
             .generator
-            .generate_proactive_response(
-                cfg.conversation.auto_close_minutes as i64,
-                Some("Scheduled check-in".into()),
-            )
+            .generate_proactive_response(TurnSource::Checkin, Some("Scheduled check-in".into()))
             .await;
         self.scheduler.mark_checkin_done();
         info!("checkin_trigger.complete");

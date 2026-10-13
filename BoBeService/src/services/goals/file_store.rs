@@ -1,5 +1,3 @@
-//! No caching — every `list` re-reads. POSIX rename atomicity protects readers.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -13,7 +11,6 @@ use super::goal_md::{GoalDoc, parse, to_md};
 
 pub(crate) struct GoalFileStore {
     dir: PathBuf,
-    /// Serializes daemon-side writes (chat agent + API); external editors race rename.
     write_lock: Arc<Mutex<()>>,
 }
 
@@ -29,7 +26,6 @@ impl GoalFileStore {
         self.dir.join(format!("{id}.md"))
     }
 
-    /// Unparseable files are logged + skipped (don't 500 the endpoint). Order unspecified.
     pub(crate) async fn list(&self) -> Result<Vec<GoalDoc>, AppError> {
         let mut goals = Vec::new();
         let mut read_dir = match tokio::fs::read_dir(&self.dir).await {
@@ -130,7 +126,6 @@ impl GoalFileStore {
         Ok(removed)
     }
 
-    /// Idempotent: returns `Ok(false)` when the file is already gone.
     pub(crate) async fn delete(&self, id: GoalId) -> Result<bool, AppError> {
         let _guard = self.write_lock.lock().await;
         let path = self.path_for(id);

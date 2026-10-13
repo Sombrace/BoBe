@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Mirrors daemon `MemoryFile::DEFAULT_BODY`; used by Reset and PrivacyPanel nuke.
 let memoryDefaultBody = """
 # BoBe Memory
 
@@ -64,15 +63,12 @@ struct MemoriesEditor: View {
                 .foregroundStyle(self.theme.colors.textMuted)
 
             if self.expertMode.isEnabled {
-                Picker("", selection: self.$editorMode) {
-                    ForEach(ContextEditorMode.allCases, id: \.self) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .tint(self.theme.colors.primary)
-                .frame(width: 150)
+                BobeSegmented(
+                    selection: self.$editorMode,
+                    options: ContextEditorMode.allCases,
+                    title: \.label
+                )
+                .frame(width: 170)
                 .accessibilityLabel(L10n.tr("settings.context_editor.mode.accessibility"))
             }
 
@@ -113,11 +109,7 @@ struct MemoriesEditor: View {
                 if self.expertMode.isEnabled, self.editorMode == .raw {
                     CodeEditor(text: self.$text, theme: self.theme, fontSize: 13)
                         .frame(minHeight: 360, maxHeight: .infinity)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(self.theme.colors.surface)
-                                .stroke(self.theme.colors.border, lineWidth: 1)
-                        )
+                        .bobeRaised(cornerRadius: 16)
                 } else {
                     GuidedMarkdownEditor(
                         text: self.$text,
@@ -139,10 +131,6 @@ struct MemoriesEditor: View {
         }
     }
 
-    /// Value-coded health color for the memory size gauge. A positional
-    /// gradient would imply "more colorful = more memories", which has no
-    /// meaning — what the user cares about is whether they're approaching
-    /// the soft cap and should consolidate.
     private var gaugeTint: Color {
         switch self.byteProgress {
         case ..<0.75:
@@ -220,18 +208,23 @@ struct MemoriesEditor: View {
     }
 
     private func save() async -> Bool {
+        guard !self.isSaving else { return false }
         self.isSaving = true
         defer { self.isSaving = false }
-        let sentLength = self.text.utf8.count
+        let submitted = self.text
+        let sentLength = submitted.utf8.count
+        let selection = EndpointStore.shared.selection
+        let client = DaemonClient(endpoint: selection.endpoint)
         do {
-            let resp = try await DaemonClient.shared.updateMemory(self.text)
+            let resp = try await client.updateMemory(submitted)
+            guard EndpointStore.shared.selection == selection else { return false }
             self.savedText = resp.content
-            self.text = resp.content
+            self.text = reconcileSavedDraft(current: self.text, submitted: submitted, saved: resp.content)
             self.bytes = resp.bytes
             self.statusIsError = false
             self.status = L10n.tr("settings.memory.saved")
             self.consolidationHintShown = abs(resp.bytes - sentLength) > memoryConsolidationDeltaThreshold
-            return true
+            return !self.isDirty
         } catch {
             self.status = error.localizedDescription
             self.statusIsError = true

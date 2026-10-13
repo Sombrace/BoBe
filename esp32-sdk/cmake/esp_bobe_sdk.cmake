@@ -1,0 +1,7 @@
+# Include before ESP-IDF project.cmake; applications provide a board port.
+get_filename_component(ESP_BOBE_SDK_ROOT "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
+if(DEFINED IDF_TARGET AND NOT IDF_TARGET STREQUAL "esp32s3")
+    message(FATAL_ERROR "The BoBe voice runtime supports ESP32-S3; use bobe_client for other ESP32 targets")
+endif()
+set(IDF_TARGET "esp32s3")
+list(APPEND EXTRA_COMPONENT_DIRS "${ESP_BOBE_SDK_ROOT}/components")

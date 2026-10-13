@@ -1,0 +1,47 @@
+schema_version = 2
+name = "physical-controls"
+description = "Exercise real button GPIO paths and observe bounded state changes."
+claim = "physical"
+requires = ["wb12", "pico-fixture"]
+
+[[steps]]
+id = "volume-up"
+operation = "fixture_press"
+control = "volume-up"
+duration_ms = 120
+
+[[steps]]
+id = "volume-down"
+operation = "fixture_press"
+control = "volume-down"
+duration_ms = 120
+
+[[steps]]
+id = "action"
+operation = "fixture_press"
+control = "action"
+duration_ms = 250
+
+[[steps]]
+id = "observe-controls"
+operation = "capture_serial"
+duration_seconds = 20
+expect = [
+    "physical button event_id=",
+    "button=volume_up action=pressed",
+    "button=volume_up action=released",
+    "button=volume_down action=pressed",
+    "button=volume_down action=released",
+    "button=action action=pressed",
+    "button=action action=released",
+]
+reject = [
+    "action=long_press",
+    "button event queue full",
+    "Guru Meditation",
+    "Task watchdog",
+]
+
+[[cleanup]]
+id = "release-fixture"
+operation = "fixture_release_all"

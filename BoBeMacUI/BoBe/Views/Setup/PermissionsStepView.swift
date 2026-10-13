@@ -9,6 +9,15 @@ private enum PermissionState {
     case denied
 }
 
+private struct PermissionItem {
+    let symbol: String
+    let title: String
+    let subtitle: String
+    let deniedHint: String
+    let identifier: String
+    let settingsPane: String
+}
+
 struct PermissionsStepView: View {
     let screenContextEnabled: Bool
     let onContinue: () -> Void
@@ -23,144 +32,133 @@ struct PermissionsStepView: View {
     @AppStorage("screenCapturePermissionRequested") private var screenPermissionRequested = false
     @Environment(\.theme) private var theme
 
+    private var allGranted: Bool {
+        (!self.screenContextEnabled || self.screenState == .granted) && self.micState == .granted
+    }
+
+    private var screenSubtitle: String {
+        let endpoint = DaemonConfig.endpoint
+        if !endpoint.isLoopbackRuntime, let host = endpoint.baseURL.host {
+            return L10n.tr("setup.permissions.card.screen.subtitle_remote_format", host)
+        }
+        return L10n.tr("setup.permissions.card.screen.subtitle")
+    }
+
     var body: some View {
-        VStack(spacing: 20) {
-            VStack(spacing: 8) {
-                Text(L10n.tr("setup.permissions.title"))
-                    .bobeTextStyle(.setupTitle)
-                    .foregroundStyle(self.theme.colors.text)
-                Text(
-                    L10n.tr(
-                        self.screenContextEnabled
-                            ? "setup.permissions.body"
-                            : "setup.permissions.body.no_capture"
-                    )
+        VStack(alignment: .leading, spacing: 18) {
+            SetupStepHeader(
+                title: L10n.tr(
+                    self.screenContextEnabled
+                        ? "setup.permissions.title"
+                        : "setup.permissions.title.no_capture"
+                ),
+                message: L10n.tr(
+                    self.screenContextEnabled
+                        ? "setup.permissions.body"
+                        : "setup.permissions.body.no_capture"
                 )
-                .bobeTextStyle(.setupBody)
-                .foregroundStyle(self.theme.colors.textMuted)
-                .multilineTextAlignment(.center)
-            }
-            .padding(.top, 12)
+            )
+            .padding(.top, 8)
 
-            Spacer()
-
-            HStack(spacing: 12) {
+            VStack(spacing: 10) {
                 if self.screenContextEnabled {
                     self.permissionCard(
-                        title: L10n.tr("setup.permissions.card.screen.title"),
-                        subtitle: L10n.tr("setup.permissions.card.screen.subtitle"),
+                        PermissionItem(
+                            symbol: "viewfinder",
+                            title: L10n.tr("setup.permissions.card.screen.title"),
+                            subtitle: self.screenSubtitle,
+                            deniedHint: L10n.tr("setup.permissions.card.screen.denied"),
+                            identifier: "screen",
+                            settingsPane: "Privacy_ScreenCapture"
+                        ),
                         state: self.screenState,
-                        deniedHint: L10n.tr("setup.permissions.card.screen.denied")
+                        request: self.requestScreen
                     )
+                    .setupStagger(0)
                 }
                 self.permissionCard(
-                    title: L10n.tr("setup.permissions.card.mic.title"),
-                    subtitle: L10n.tr("setup.permissions.card.mic.subtitle"),
+                    PermissionItem(
+                        symbol: "mic.fill",
+                        title: L10n.tr("setup.permissions.card.mic.title"),
+                        subtitle: L10n.tr("setup.permissions.card.mic.subtitle"),
+                        deniedHint: L10n.tr("setup.permissions.card.mic.denied"),
+                        identifier: "microphone",
+                        settingsPane: "Privacy_Microphone"
+                    ),
                     state: self.micState,
-                    deniedHint: L10n.tr("setup.permissions.card.mic.denied")
+                    request: self.requestMicrophone
                 )
+                .setupStagger(1)
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
-            self.actionRow
+            Button(
+                L10n.tr(self.allGranted ? "setup.welcome.continue" : "setup.permissions.skip"),
+                action: self.onContinue
+            )
+            .bobeButton(self.allGranted ? .primary : .ghost, size: .regular)
+            .keyboardShortcut(self.allGranted ? .defaultAction : .cancelAction)
+            .accessibilityIdentifier("setup.permissions.continue")
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        // Refresh on first appear AND every time the app comes back to
-        // the foreground. Users who tap "Open System Settings", flip the
-        // toggle, then Cmd-Tab back to BoBe should immediately see the
-        // updated state — without this, the cards stayed on their stale
-        // "denied" labels until the user navigated away and back.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             self.refreshState()
         }
         .task { self.refreshState() }
+        .animation(BobeMotion.standard, value: self.screenState)
+        .animation(BobeMotion.standard, value: self.micState)
     }
 
     private func permissionCard(
-        title: String,
-        subtitle: String,
+        _ item: PermissionItem,
         state: PermissionState,
-        deniedHint: String
+        request: @escaping () -> Void
     ) -> some View {
-        VStack(spacing: 10) {
-            Image(systemName: self.icon(for: state))
-                .font(.system(size: 28))
-                .foregroundStyle(self.iconColor(for: state))
-            Text(title)
-                .bobeTextStyle(.setupHeading)
-                .foregroundStyle(self.theme.colors.text)
-            Text(self.statusText(for: state, subtitle: subtitle, denied: deniedHint))
-                .bobeTextStyle(.helper)
-                .foregroundStyle(self.theme.colors.textMuted)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+        HStack(alignment: .center, spacing: 13) {
+            BobeIconTile(systemName: item.symbol, tint: self.iconColor(for: state), size: 36)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title)
+                    .bobeTextStyle(.heading)
+                    .foregroundStyle(self.theme.colors.text)
+                Text(state == .denied ? item.deniedHint : item.subtitle)
+                    .bobeTextStyle(.helper)
+                    .foregroundStyle(self.theme.colors.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            switch state {
+            case .granted:
+                Label(L10n.tr("setup.permissions.card.status.allowed"), systemImage: "checkmark.circle.fill")
+                    .labelStyle(.iconOnly)
+                    .font(.system(size: 20))
+                    .foregroundStyle(self.theme.colors.success)
+                    .help(L10n.tr("setup.permissions.card.status.allowed"))
+                    .transition(.scale.combined(with: .opacity))
+            case .unknown:
+                Button(L10n.tr("setup.permissions.grant"), action: request)
+                    .bobeButton(.primary, size: .small)
+                    .accessibilityIdentifier("setup.permissions.\(item.identifier).allow")
+            case .denied:
+                Button(L10n.tr("setup.permissions.open_settings")) {
+                    self.openSettings(pane: item.settingsPane)
+                }
+                .bobeButton(.secondary, size: .small)
+                .accessibilityIdentifier("setup.permissions.\(item.identifier).settings")
+            }
         }
-        .frame(maxWidth: .infinity)
-        .padding(16)
-        .background(self.cardBackground(color: self.iconColor(for: state).opacity(0.5)))
-    }
-
-    private func icon(for state: PermissionState) -> String {
-        switch state {
-        case .unknown: "questionmark.circle.fill"
-        case .granted: "checkmark.seal.fill"
-        case .denied: "lock.fill"
-        }
+        .padding(14)
+        .bobeRaised(cornerRadius: BobeRadius.card)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(item.title)
     }
 
     private func iconColor(for state: PermissionState) -> Color {
         switch state {
         case .unknown: self.theme.colors.textMuted
-        case .granted: self.theme.colors.secondary
-        case .denied: self.theme.colors.tertiary
+        case .granted: self.theme.colors.success
+        case .denied: self.theme.colors.warning
         }
-    }
-
-    private func statusText(for state: PermissionState, subtitle: String, denied: String) -> String {
-        switch state {
-        case .unknown: subtitle
-        case .granted: L10n.tr("setup.permissions.card.status.allowed")
-        case .denied: denied
-        }
-    }
-
-    @ViewBuilder
-    private var actionRow: some View {
-        let anyDenied = self.screenState == .denied || self.micState == .denied
-        let allGranted = (!self.screenContextEnabled || self.screenState == .granted)
-            && self.micState == .granted
-        if allGranted {
-            Button(L10n.tr("setup.welcome.continue"), action: self.onContinue)
-                .bobeButton(.primary, size: .regular)
-                .keyboardShortcut(.defaultAction)
-        } else if anyDenied {
-            VStack(spacing: 8) {
-                Button(L10n.tr("setup.permissions.open_settings")) {
-                    self.openSettings()
-                }
-                .bobeButton(.primary, size: .regular)
-                .keyboardShortcut(.defaultAction)
-                Button(L10n.tr("setup.permissions.skip"), action: self.onContinue)
-                    .bobeButton(.ghost, size: .small)
-            }
-        } else {
-            HStack(spacing: 10) {
-                Button(L10n.tr("setup.permissions.grant"), action: self.requestAccess)
-                    .bobeButton(.primary, size: .regular)
-                    .keyboardShortcut(.defaultAction)
-                Button(L10n.tr("setup.permissions.skip"), action: self.onContinue)
-                    .bobeButton(.ghost, size: .small)
-            }
-        }
-    }
-
-    private func cardBackground(color: Color) -> some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(color.opacity(0.12))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(color, lineWidth: 1)
-            )
     }
 
     private func refreshState() {
@@ -177,31 +175,23 @@ struct PermissionsStepView: View {
         }
     }
 
-    private func requestAccess() {
-        // Screen capture is synchronous on macOS; mic is async via
-        // AVCaptureDevice. Fire both, update state from each.
-        if self.screenContextEnabled {
-            self.screenPermissionRequested = true
-            let screenGranted = CGRequestScreenCaptureAccess()
-            self.screenState = screenGranted ? .granted : .denied
-        }
+    private func requestScreen() {
+        self.screenPermissionRequested = true
+        self.screenState = CGRequestScreenCaptureAccess() ? .granted : .denied
+    }
+
+    private func requestMicrophone() {
         Task {
-            let micGranted = await AVCaptureDevice.requestAccess(for: .audio)
+            let granted = await AVCaptureDevice.requestAccess(for: .audio)
             await MainActor.run {
-                self.micState = micGranted ? .granted : .denied
+                self.micState = granted ? .granted : .denied
             }
         }
     }
 
-    private func openSettings() {
-        if self.screenState == .denied {
-            if let url = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture") {
-                NSWorkspace.shared.open(url)
-            }
-        } else if self.micState == .denied {
-            if let url = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone") {
-                NSWorkspace.shared.open(url)
-            }
+    private func openSettings(pane: String) {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?\(pane)") {
+            NSWorkspace.shared.open(url)
         }
     }
 }

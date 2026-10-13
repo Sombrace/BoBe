@@ -2,36 +2,32 @@ name: BoBe
 options:
   bundleIdPrefix: com.bobe
   deploymentTarget:
-    macOS: "15.0"
-  xcodeVersion: "16.0"
+    macOS: "26.0"
+  xcodeVersion: "26.0"
   generateEmptyDirectories: false
   groupSortPosition: none
 
 packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
-    exactVersion: 2.9.4
+    exactVersion: 2.9.6
   Textual:
     url: https://github.com/gonzalezreal/textual
     exactVersion: 0.5.0
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
-    exactVersion: 0.15.5
+    exactVersion: 0.15.6
 
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
     ARCHS: arm64
     ENABLE_PREVIEWS: YES
-    # Concurrency
     SWIFT_STRICT_CONCURRENCY: complete
-    # Warnings
     SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
     GCC_TREAT_WARNINGS_AS_ERRORS: YES
-    # Signing (override per-machine via xcconfig or Xcode UI)
     CODE_SIGN_STYLE: Automatic
-    # Dead code
     DEAD_CODE_STRIPPING: YES
   configs:
     Debug:
@@ -50,6 +46,17 @@ settings:
       ENABLE_TESTABILITY: NO
 
 targets:
+  PairingClient:
+    type: library.static
+    platform: macOS
+    sources:
+      - path: PairingClient
+        excludes:
+          - PairingClient-Bridging-Header.h
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bobe.pairing-client
+        SWIFT_OBJC_BRIDGING_HEADER: PairingClient/PairingClient-Bridging-Header.h
   BoBe:
     type: application
     platform: macOS
@@ -57,13 +64,12 @@ targets:
       - path: BoBe
         excludes:
           - Resources/Info.plist
-          - Resources/BoBe.entitlements
     resources:
       - path: BoBe/Resources
         excludes:
           - Info.plist
-          - BoBe.entitlements
     dependencies:
+      - target: PairingClient
       - package: Sparkle
       - package: Textual
       - package: FluidAudio
@@ -74,6 +80,8 @@ targets:
         INFOPLIST_FILE: BoBe/Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: entitlements.plist
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(PROJECT_DIR)/../PairingFFI/target/release"
+        OTHER_LDFLAGS: "$(inherited) -lbobe_pairing_ffi -framework Security -framework SystemConfiguration"
     preBuildScripts:
       - name: SwiftLint
         basedOnDependencyAnalysis: false
@@ -81,10 +89,23 @@ targets:
         script: |
           SWIFTLINT="${PROJECT_DIR}/../.tools/bin/swiftlint"
           if [[ ! -x "$SWIFTLINT" ]]; then
-            echo "error: Project SwiftLint is missing. Run: just bootstrap-tools"
+            echo "error: Project SwiftLint is missing. Run: scripts/tasks/bootstrap-tools.sh"
             exit 1
           fi
           "$SWIFTLINT" lint --quiet
+  BoBeTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/BoBeTests
+    dependencies:
+      - target: BoBe
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bobe.app.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/BoBe.app/Contents/MacOS/BoBe"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
   BoBeUITests:
     type: bundle.ui-testing
     platform: macOS
@@ -103,7 +124,9 @@ schemes:
     build:
       targets:
         BoBe: all
+        BoBeTests: [test]
         BoBeUITests: [test]
     test:
       targets:
+        - BoBeTests
         - BoBeUITests

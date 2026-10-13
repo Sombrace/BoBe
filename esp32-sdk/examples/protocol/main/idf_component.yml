@@ -1,0 +1,3 @@
+dependencies:
+  bobe_protocol:
+    path: ../../../components/bobe_protocol

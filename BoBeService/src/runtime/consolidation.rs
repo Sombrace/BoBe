@@ -1,5 +1,3 @@
-//! Single-writer: worker returns the body; only `MemoryFile::replace_all` writes memory.md.
-
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -8,40 +6,52 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::copilot::memory_file::{MemoryFile, TARGET_MAX_BYTES};
-use crate::copilot::registry::WorkerRegistry;
-use crate::copilot::types::JobInput;
 use crate::error::AppError;
-use crate::runtime::session::RuntimeSession;
+use crate::provider::AgentRuntime;
+use crate::provider::JobInput;
+use crate::provider::memory_file::{MemoryFile, TARGET_MAX_BYTES};
 
 const DEFAULT_FIRE_AT: (u32, u32) = (3, 0);
 
 pub(crate) struct ConsolidationScheduler {
-    workers: Arc<WorkerRegistry>,
+    workers: Arc<dyn AgentRuntime>,
     memory_file: Arc<MemoryFile>,
-    runtime_session: Arc<RuntimeSession>,
+    personal_data_lifecycle: Arc<tokio::sync::RwLock<()>>,
     fire_at: NaiveTime,
 }
 
 impl ConsolidationScheduler {
     pub(crate) fn new(
-        workers: Arc<WorkerRegistry>,
+        workers: Arc<dyn AgentRuntime>,
         memory_file: Arc<MemoryFile>,
-        runtime_session: Arc<RuntimeSession>,
+        personal_data_lifecycle: Arc<tokio::sync::RwLock<()>>,
     ) -> Self {
         let fire_at = NaiveTime::from_hms_opt(DEFAULT_FIRE_AT.0, DEFAULT_FIRE_AT.1, 0)
             .unwrap_or(NaiveTime::MIN);
         Self {
             workers,
             memory_file,
-            runtime_session,
+            personal_data_lifecycle,
             fire_at,
         }
     }
 
     pub(crate) async fn run(self, shutdown: CancellationToken) {
+        let mut first_pass = true;
         loop {
-            let wait = duration_until_next(self.fire_at, Utc::now());
+            let needs_catchup = first_pass
+                && self
+                    .memory_file
+                    .read()
+                    .await
+                    .is_ok_and(|body| body.len() > TARGET_MAX_BYTES * 3 / 4);
+            first_pass = false;
+            let scheduled_wait = duration_until_next(self.fire_at, Utc::now());
+            let wait = if needs_catchup {
+                Duration::ZERO
+            } else {
+                scheduled_wait.min(Duration::from_mins(15))
+            };
             tracing::info!(
                 wait_secs = wait.as_secs(),
                 fire_at = %self.fire_at,
@@ -56,6 +66,15 @@ impl ConsolidationScheduler {
                 }
             }
 
+            let oversized = self
+                .memory_file
+                .read()
+                .await
+                .is_ok_and(|body| body.len() > TARGET_MAX_BYTES * 3 / 4);
+            if wait < scheduled_wait && !oversized {
+                continue;
+            }
+
             match self.consolidate_once().await {
                 Ok(()) => {}
                 Err(AppError::Conflict(reason)) => {
@@ -68,18 +87,12 @@ impl ConsolidationScheduler {
         }
     }
 
-    /// Optimistic concurrency: reads lock-free, holds writer lock only for verify+commit.
     pub(crate) async fn consolidate_once(&self) -> Result<(), AppError> {
-        let _admission = self
-            .runtime_session
-            .try_begin_consolidation()
-            .map_err(|reason| AppError::Conflict(reason.into()))?;
+        let _personal_data = self.personal_data_lifecycle.read().await;
         let started = Instant::now();
 
         let before = self.memory_file.read().await?;
         let before_bytes = before.len();
-
-        let worker = self.workers.consolidate().await?;
 
         let job = JobInput {
             job_id: Uuid::new_v4(),
@@ -95,10 +108,11 @@ impl ConsolidationScheduler {
             input: json!({ "body": before }),
         };
 
-        let out = worker
-            .submit(job)
+        let out = self
+            .workers
+            .run_auxiliary(crate::provider::WorkerClass::Consolidate, job)
             .await
-            .map_err(|e| AppError::Internal(format!("consolidate submit: {e}")))?;
+            .map_err(|e| AppError::Internal(format!("consolidation inference: {e}")))?;
 
         let new_body = out
             .output

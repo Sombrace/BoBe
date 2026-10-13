@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>BoBeEndpointCredentialAccessGroup</key>
+	<string>$(AppIdentifierPrefix)com.bobe.app.endpoint-credential</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
@@ -27,7 +29,7 @@
 		<string>arm64</string>
 	</array>
 	<key>LSMinimumSystemVersion</key>
-	<string>15.0</string>
+	<string>26.0</string>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>
@@ -45,6 +47,8 @@
 	<string>Copyright © 2024-2026 The BoBe Authors. All rights reserved.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>BoBe captures your screen to understand your context and provide proactive assistance.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>BoBe can use on-device Apple Speech to turn your voice into text.</string>
 	<key>NSSupportsAutomaticTermination</key>
 	<false/>
 	<key>NSSupportsSuddenTermination</key>

@@ -1,0 +1,23 @@
+{
+  "calibration_id": "00000000000000000000000000000000",
+  "camera_id": "replace-with-persistent-camera-id",
+  "expires_at": "2030-01-01T00:00:00+00:00",
+  "fixture_id": "replace-with-optical-fixture-id",
+  "height": 240,
+  "mirrored": false,
+  "orientation_degrees": 0,
+  "roi": {
+    "height": 1.0,
+    "width": 1.0,
+    "x": 0.0,
+    "y": 0.0
+  },
+  "schema_version": 1,
+  "target": "wb12-screen",
+  "thresholds": {
+    "max_channel_error": 0,
+    "max_mean_absolute_channel_error": 0.0,
+    "max_mismatched_pixel_ratio": 0.0
+  },
+  "width": 280
+}

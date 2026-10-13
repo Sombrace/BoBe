@@ -1,9 +1,3 @@
-//! MCP config service. Stateless free-fns over a per-call
-//! `McpConfigDeps` borrow-bundle, intentionally NOT a struct: nothing
-//! here owns state across calls, so an `Arc<McpConfigService>` would be
-//! decoration. If this module ever needs cached parsing or a per-instance
-//! file watcher, lift `McpConfigDeps` into a struct then.
-
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -14,20 +8,16 @@ use tokio::sync::Mutex;
 use tracing::warn;
 
 use crate::config::Config;
-use crate::copilot::registry::WorkerRegistry;
 use crate::error::AppError;
-use crate::mcp::config::{self as mcp_config, McpConfigFile, McpServerEntry};
+use crate::mcp::config::{self as mcp_config, McpConfigFile, McpServerEntry, timeout_millis};
 use crate::mcp::security::{validate_mcp_command_with_args, validate_mcp_env};
+use crate::provider::AgentRuntime;
 use crate::secrets::SecretStore;
 
-/// Deps the MCP config service needs. Bundled so each public function
-/// can stay short instead of drilling four Arcs through every signature.
-/// Constructed once per request from `AppState` in the route handlers
-/// (see `api/handlers/tools_mcp.rs`).
 pub(crate) struct McpConfigDeps<'a> {
     pub(crate) config: &'a ArcSwap<Config>,
     pub(crate) mcp_config_lock: &'a Mutex<()>,
-    pub(crate) workers: &'a Arc<WorkerRegistry>,
+    pub(crate) workers: &'a Arc<dyn AgentRuntime>,
     pub(crate) secret_store: &'a Arc<dyn SecretStore>,
 }
 
@@ -45,7 +35,6 @@ pub(crate) struct McpServerSummary {
     pub(crate) args: Vec<String>,
     pub(crate) enabled: bool,
     pub(crate) connected: bool,
-    /// `None` means "indeterminate"; chat session not yet spawned.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) status: Option<String>,
     pub(crate) tool_count: usize,
@@ -102,7 +91,7 @@ pub(crate) async fn get_document(
     let (_path, file) = load_mcp_file(deps)?;
     let raw_json = redacted_json(&file)?;
 
-    let servers = build_runtime_summaries(deps.workers, &file).await;
+    let servers = build_runtime_summaries(deps.workers, &file).await?;
     let count = servers.len();
     let connected_count = servers.iter().filter(|s| s.connected).count();
 
@@ -120,23 +109,28 @@ pub(crate) fn validate_document(
 ) -> Result<McpConfigValidateResponse, AppError> {
     let (blocked_cmds, dangerous_keys) = blocked_and_dangerous(deps);
 
-    match parse_and_validate(&body.raw_json, &blocked_cmds, &dangerous_keys) {
-        Ok(file) => {
-            let normalized = normalize_secrets(file, &body.secret_keys, None)?;
-            Ok(McpConfigValidateResponse {
-                valid: true,
-                normalized_json: redacted_json(&normalized)?,
-                server_count: normalized.mcp_servers.len(),
-                errors: Vec::new(),
-            })
-        }
-        Err(AppError::Validation(msg)) => Ok(McpConfigValidateResponse {
+    let validation = parse_and_validate(&body.raw_json, &blocked_cmds, &dangerous_keys)
+        .and_then(|file| normalize_secrets(file, &body.secret_keys, None));
+    match validation {
+        Ok(normalized) => Ok(McpConfigValidateResponse {
+            valid: true,
+            normalized_json: redacted_json(&normalized)?,
+            server_count: normalized.mcp_servers.len(),
+            errors: Vec::new(),
+        }),
+        Err(error) => invalid_document_response(error),
+    }
+}
+
+fn invalid_document_response(error: AppError) -> Result<McpConfigValidateResponse, AppError> {
+    match error {
+        AppError::Validation(message) | AppError::Mcp(message) => Ok(McpConfigValidateResponse {
             valid: false,
             normalized_json: String::new(),
             server_count: 0,
-            errors: vec![msg],
+            errors: vec![message],
         }),
-        Err(e) => Err(e),
+        error => Err(error),
     }
 }
 
@@ -158,19 +152,17 @@ pub(crate) async fn save_document(
         cleanup_removed_secret_refs(deps.secret_store.as_ref(), prev, &file);
     }
 
-    let (sdk_servers, excluded_tools) = if deps.config.load().mcp.enabled {
+    let runtime = if deps.config.load().mcp.enabled {
         let parsed =
             mcp_config::parse_enabled_servers(file.clone(), &blocked_cmds, &dangerous_keys)?;
-        mcp_config::to_sdk_mcp_servers(parsed)
+        mcp_config::to_runtime_mcp_config(parsed)
     } else {
-        (github_copilot_sdk::IndexMap::new(), Vec::new())
+        crate::provider::McpRuntimeConfig::default()
     };
-    deps.workers
-        .apply_mcp_config(sdk_servers, excluded_tools)
-        .await;
+    deps.workers.apply_mcp_config(runtime).await?;
     drop(guard);
 
-    let servers = build_runtime_summaries(deps.workers, &file).await;
+    let servers = build_runtime_summaries(deps.workers, &file).await?;
     let count = servers.len();
     let connected_count = servers.iter().filter(|s| s.connected).count();
 
@@ -200,8 +192,8 @@ pub(crate) async fn reset_document(
     }
 
     deps.workers
-        .apply_mcp_config(github_copilot_sdk::IndexMap::new(), Vec::new())
-        .await;
+        .apply_mcp_config(crate::provider::McpRuntimeConfig::default())
+        .await?;
 
     Ok(McpConfigResetResponse {
         message: "MCP config reset".into(),
@@ -233,6 +225,8 @@ fn parse_and_validate(
                 "MCP server '{name}' command must not be empty"
             )));
         }
+        timeout_millis(entry.timeout_seconds)
+            .map_err(|message| AppError::Validation(format!("MCP server '{name}' {message}")))?;
         validate_mcp_command_with_args(&entry.command, &entry.args, blocked_commands)?;
         validate_mcp_env(&entry.env, dangerous_env_keys)?;
     }
@@ -240,8 +234,6 @@ fn parse_and_validate(
     Ok(file)
 }
 
-/// When `secret_store` is `Some`, real values are persisted via the store
-/// (Keychain in production); `None` is validate-only mode.
 fn normalize_secrets(
     mut file: McpConfigFile,
     secret_keys: &HashMap<String, Vec<String>>,
@@ -265,21 +257,6 @@ fn build_env_with_refs(
 
     for (key, value) in env {
         if mcp_config::is_secret_ref(value) {
-            let account = mcp_config::secret_account(server_name, key);
-            let legacy = mcp_config::legacy_secret_account(server_name, key);
-            let referenced = value
-                .strip_prefix(mcp_config::SECRET_REF_PREFIX)
-                .unwrap_or_default();
-            if referenced == legacy
-                && let Some(store) = secret_store
-                && let Some(secret) = store.read(&legacy)
-            {
-                store.store(&account, &secret).map_err(|error| {
-                    AppError::Config(format!("Failed to migrate MCP secret '{key}': {error}"))
-                })?;
-                out.insert(key.clone(), mcp_config::secret_ref(&account));
-                continue;
-            }
             out.insert(key.clone(), value.clone());
             continue;
         }
@@ -305,40 +282,37 @@ fn build_env_with_refs(
 }
 
 async fn build_runtime_summaries(
-    workers: &Arc<WorkerRegistry>,
+    workers: &Arc<dyn AgentRuntime>,
     file: &McpConfigFile,
-) -> Vec<McpServerSummary> {
+) -> Result<Vec<McpServerSummary>, AppError> {
     let mut entries: Vec<(&String, &McpServerEntry)> = file.mcp_servers.iter().collect();
     entries.sort_by_key(|(name, _)| *name);
 
-    let live = workers.live_mcp_servers().await;
-    let live_map: HashMap<String, mcp_live::ServerEntry> = live
-        .map(|servers| {
-            servers
-                .into_iter()
-                .map(|s| (s.name.clone(), mcp_live::ServerEntry::from_sdk(s)))
-                .collect()
-        })
-        .unwrap_or_default();
+    let live_map: HashMap<String, crate::provider::McpServerStatus> = workers
+        .live_mcp_servers()
+        .await?
+        .into_iter()
+        .map(|server| (server.name.clone(), server))
+        .collect();
 
     let mut summaries = Vec::with_capacity(entries.len());
     for (name, entry) in entries {
         let live = live_map.get(name);
         let tools = if live.is_some_and(|server| server.connected) {
-            workers.live_mcp_tools(name).await.unwrap_or_default()
+            workers.live_mcp_tools(name).await?
         } else {
             Vec::new()
         };
         summaries.push(build_server_summary(name, entry, live, tools));
     }
-    summaries
+    Ok(summaries)
 }
 
 fn build_server_summary(
     name: &str,
     entry: &McpServerEntry,
-    live: Option<&mcp_live::ServerEntry>,
-    tools: Vec<github_copilot_sdk::rpc::McpTools>,
+    live: Option<&crate::provider::McpServerStatus>,
+    tools: Vec<crate::provider::McpToolDescriptor>,
 ) -> McpServerSummary {
     let (mut env_keys, mut secret_env_keys) = env_metadata(entry);
     env_keys.sort();
@@ -353,7 +327,7 @@ fn build_server_summary(
         .map(|tool| McpToolMetadata {
             excluded: entry.excluded_tools.contains(&tool.name),
             name: tool.name,
-            description: tool.description.unwrap_or_default(),
+            description: tool.description,
         })
         .collect();
     let tool_count = tools.len();
@@ -371,41 +345,6 @@ fn build_server_summary(
         env_keys,
         secret_env_keys,
         error,
-    }
-}
-
-mod mcp_live {
-    use github_copilot_sdk::rpc::McpServer;
-    use github_copilot_sdk::session_events::McpServerStatus;
-
-    pub(super) struct ServerEntry {
-        pub(super) connected: bool,
-        pub(super) status: String,
-        pub(super) error: Option<String>,
-    }
-
-    impl ServerEntry {
-        pub(super) fn from_sdk(server: McpServer) -> Self {
-            use crate::constants::mcp_status::{
-                CONNECTED, DISABLED, FAILED, NEEDS_AUTH, NOT_CONFIGURED, PENDING, UNKNOWN,
-            };
-            let connected = matches!(server.status, McpServerStatus::Connected);
-            let status = match server.status {
-                McpServerStatus::Connected => CONNECTED,
-                McpServerStatus::Failed => FAILED,
-                McpServerStatus::NeedsAuth => NEEDS_AUTH,
-                McpServerStatus::Pending => PENDING,
-                McpServerStatus::Disabled => DISABLED,
-                McpServerStatus::NotConfigured => NOT_CONFIGURED,
-                McpServerStatus::Unknown => UNKNOWN,
-            }
-            .to_string();
-            Self {
-                connected,
-                status,
-                error: server.error,
-            }
-        }
     }
 }
 
@@ -470,4 +409,34 @@ fn secret_accounts_in(file: &McpConfigFile) -> HashSet<String> {
                 .map(ToOwned::to_owned)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_only_reports_mcp_policy_errors_as_invalid_documents() {
+        let response = invalid_document_response(AppError::Mcp("blocked command".into()))
+            .expect("validation response");
+        assert!(!response.valid);
+        assert_eq!(response.errors, ["blocked command"]);
+    }
+
+    #[test]
+    fn validate_only_propagates_operational_errors() {
+        let error = invalid_document_response(AppError::Io(std::io::Error::other("disk")))
+            .expect_err("I/O errors must propagate");
+        assert!(matches!(error, AppError::Io(_)));
+    }
+
+    #[test]
+    fn owner_config_rejects_unbounded_mcp_timeouts() {
+        for timeout in ["-1", "0", "600.001", "1e100"] {
+            let raw = r#"{"mcpServers":{"test":{"command":"server","timeout_seconds":$TIMEOUT}}}"#
+                .replace("$TIMEOUT", timeout);
+            let error = parse_and_validate(&raw, &[], &[]).expect_err("invalid timeout");
+            assert!(error.to_string().contains("timeout_seconds"));
+        }
+    }
 }

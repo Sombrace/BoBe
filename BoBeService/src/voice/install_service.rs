@@ -1,9 +1,3 @@
-//! Voice-model installer orchestrator. Mirrors `OllamaInstallService`:
-//! single-flight Mutex, progress via `watch<VoiceInstallSnapshot>`,
-//! cancel via side `watch<bool>`. Models download into `~/.bobe/models/`;
-//! `on_complete` hot-swaps the AppState ArcSwap. Catalog in
-//! `install_artifacts.rs`, extraction in `install_extract.rs`.
-
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -17,16 +11,17 @@ use crate::error::AppError;
 use crate::voice::install_artifacts::{ARTIFACTS, ModelArtifact};
 use crate::voice::install_extract::{extract_and_install, tempfile_dir};
 
-// Re-export public types so external `crate::voice::install_service::Foo`
-// paths keep working without forcing every caller to chase the file split.
 pub(crate) use crate::voice::install_artifacts::{
     InstallStatus, ModelProgress, VoiceInstallSnapshot, VoiceModelKind,
 };
 
-/// Fired by `run()` on Ok-completion so bootstrap can re-run the engine
-/// loader and ArcSwap the AppState snapshot — wizard hits "Continue" and
-/// voice works without a daemon restart.
-type OnCompleteCallback = Arc<dyn Fn() -> futures::future::BoxFuture<'static, ()> + Send + Sync>;
+pub(crate) struct VoiceEngineAvailability {
+    pub(crate) stt: bool,
+    pub(crate) tts: bool,
+}
+
+type OnCompleteCallback =
+    Arc<dyn Fn() -> futures::future::BoxFuture<'static, VoiceEngineAvailability> + Send + Sync>;
 
 pub(crate) struct VoiceInstallService {
     http: Arc<reqwest::Client>,
@@ -56,6 +51,90 @@ fn safe_model_target(models_root: &Path, target_subpath: &str) -> Result<PathBuf
     Ok(models_root.join(relative))
 }
 
+fn artifact_installed_at(artifact: &ModelArtifact, target: &Path) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(target) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() {
+        return false;
+    }
+    let expected_target_type = if artifact.is_tarball {
+        metadata.is_dir()
+    } else {
+        metadata.is_file()
+    };
+    expected_target_type
+        && artifact.required_files.iter().all(|relative| {
+            std::fs::symlink_metadata(target.join(relative))
+                .is_ok_and(|metadata| metadata.is_file() && !metadata.file_type().is_symlink())
+        })
+}
+
+async fn remove_install_entry(path: &Path) -> Result<(), AppError> {
+    let metadata = match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if metadata.is_dir() && !metadata.file_type().is_symlink() {
+        crate::util::durable_fs::durable_remove_dir_all(path).await?;
+    } else {
+        crate::util::durable_fs::durable_remove_file(path).await?;
+    }
+    Ok(())
+}
+
+async fn cleanup_stale_staging(models_root: &Path) -> Result<(), AppError> {
+    let mut entries = tokio::fs::read_dir(models_root).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(".voice-install-"))
+        {
+            remove_install_entry(&entry.path()).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn reconcile_replaced_model(
+    models_root: &Path,
+    artifact: &ModelArtifact,
+) -> Result<(), AppError> {
+    let target = safe_model_target(models_root, artifact.target_subpath)?;
+    let backup = target.with_extension("replaced");
+    if !tokio::fs::try_exists(&backup).await? {
+        return Ok(());
+    }
+    if artifact_installed_at(artifact, &target) {
+        remove_install_entry(&backup).await?;
+        return Ok(());
+    }
+    if artifact_installed_at(artifact, &backup) {
+        remove_install_entry(&target).await?;
+        tokio::fs::rename(&backup, &target).await?;
+        crate::util::durable_fs::sync_directory(models_root).await?;
+        tracing::warn!(
+            kind = %artifact.kind.label(),
+            path = %target.display(),
+            "voice_install.recovered_previous_model"
+        );
+    } else {
+        remove_install_entry(&backup).await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn reconcile_install_state(models_root: &Path) -> Result<(), AppError> {
+    tokio::fs::create_dir_all(models_root).await?;
+    cleanup_stale_staging(models_root).await?;
+    for artifact in ARTIFACTS {
+        reconcile_replaced_model(models_root, artifact).await?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[expect(
     clippy::expect_used,
@@ -63,7 +142,10 @@ fn safe_model_target(models_root: &Path, target_subpath: &str) -> Result<PathBuf
     reason = "focused path-validation tests sit next to their private helper"
 )]
 mod tests {
-    use super::safe_model_target;
+    use super::{
+        ARTIFACTS, artifact_installed_at, cleanup_stale_staging, reconcile_install_state,
+        reconcile_replaced_model, safe_model_target,
+    };
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -85,6 +167,63 @@ mod tests {
         ] {
             assert!(safe_model_target(Path::new("/models"), target).is_err());
         }
+    }
+
+    fn create_artifact_files(root: &Path, required: &[&str]) {
+        for relative in required {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent().expect("artifact parent"))
+                .expect("create artifact parent");
+            std::fs::write(path, b"valid").expect("write artifact");
+        }
+    }
+
+    #[tokio::test]
+    async fn recovers_valid_previous_model_before_presence_check() {
+        let models_root =
+            std::env::temp_dir().join(format!("bobe-voice-recovery-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&models_root).expect("models root");
+        let artifact = &ARTIFACTS[0];
+        let target = safe_model_target(&models_root, artifact.target_subpath).unwrap();
+        let backup = target.with_extension("replaced");
+        create_artifact_files(&backup, artifact.required_files);
+        std::fs::create_dir_all(&target).expect("partial target");
+        std::fs::write(target.join("partial"), b"incomplete").expect("partial file");
+
+        reconcile_install_state(&models_root).await.unwrap();
+
+        assert!(artifact_installed_at(artifact, &target));
+        assert!(!backup.exists());
+        assert!(!target.join("partial").exists());
+        std::fs::remove_dir_all(models_root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn valid_target_wins_and_stale_install_directories_are_removed() {
+        let models_root =
+            std::env::temp_dir().join(format!("bobe-voice-stale-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&models_root).expect("models root");
+        let artifact = &ARTIFACTS[0];
+        let target = safe_model_target(&models_root, artifact.target_subpath).unwrap();
+        let backup = target.with_extension("replaced");
+        create_artifact_files(&target, artifact.required_files);
+        create_artifact_files(&backup, artifact.required_files);
+        let staging = models_root.join(".voice-install-interrupted");
+        std::fs::create_dir_all(&staging).expect("staging");
+        std::fs::write(staging.join("archive"), b"partial").expect("staging file");
+        let unrelated = models_root.join("keep");
+        std::fs::create_dir_all(&unrelated).expect("unrelated");
+
+        cleanup_stale_staging(&models_root).await.unwrap();
+        reconcile_replaced_model(&models_root, artifact)
+            .await
+            .unwrap();
+
+        assert!(artifact_installed_at(artifact, &target));
+        assert!(!backup.exists());
+        assert!(!staging.exists());
+        assert!(unrelated.exists());
+        std::fs::remove_dir_all(models_root).unwrap();
     }
 }
 
@@ -117,17 +256,10 @@ impl VoiceInstallService {
         self.state.lock().await.snapshot_rx.clone()
     }
 
-    /// Per-kind on-disk presence check. Doesn't validate file contents —
-    /// the engine load path catches truncated/corrupt models with a clear
-    /// error.
     pub(crate) fn is_installed(&self, kind: VoiceModelKind) -> bool {
         let target = self.target_path(kind);
-        if let Some(art) = ARTIFACTS.iter().find(|a| a.kind == kind) {
-            if art.is_tarball {
-                target.is_dir()
-            } else {
-                target.is_file()
-            }
+        if let Some(art) = ARTIFACTS.iter().find(|artifact| artifact.kind == kind) {
+            artifact_installed_at(art, &target)
         } else {
             false
         }
@@ -147,6 +279,14 @@ impl VoiceInstallService {
     }
 
     pub(crate) async fn start(self: &Arc<Self>) -> Result<(), AppError> {
+        self.start_kinds(VoiceModelKind::all().collect()).await
+    }
+
+    pub(crate) async fn start_kind(self: &Arc<Self>, kind: VoiceModelKind) -> Result<(), AppError> {
+        self.start_kinds(vec![kind]).await
+    }
+
+    async fn start_kinds(self: &Arc<Self>, kinds: Vec<VoiceModelKind>) -> Result<(), AppError> {
         let mut state = self.state.lock().await;
         if let Some(h) = state.in_flight.as_ref()
             && !h.is_finished()
@@ -166,8 +306,11 @@ impl VoiceInstallService {
         let svc = Arc::clone(self);
         let on_complete = Arc::clone(&self.on_complete);
         state.in_flight = Some(tokio::spawn(async move {
-            let result = svc.run(snapshot_tx.clone(), cancel_rx).await;
-            let (final_status, final_error) = match result {
+            let requested_kinds = kinds.clone();
+            let result = Arc::clone(&svc)
+                .run(kinds, snapshot_tx.clone(), cancel_rx)
+                .await;
+            let (mut final_status, mut final_error) = match result {
                 Ok(()) => (InstallStatus::Complete, None),
                 Err(AppError::Canceled(_)) => (InstallStatus::Canceled, None),
                 Err(e) => {
@@ -175,12 +318,19 @@ impl VoiceInstallService {
                     (InstallStatus::Failed, Some(e.to_string()))
                 }
             };
-            // Hot-swap engines BEFORE flipping the snapshot status to
-            // Complete — wizards polling /voice/install/status see
-            // Complete only after the AppState ArcSwap has the new
-            // engines, so the next /voice/stream connect actually works.
             if matches!(final_status, InstallStatus::Complete) {
-                (on_complete)().await;
+                let availability = (on_complete)().await;
+                let requested_engines_ready = requested_kinds.iter().all(|kind| match kind {
+                    VoiceModelKind::Stt => availability.stt,
+                    VoiceModelKind::Tts => availability.tts,
+                });
+                if !requested_engines_ready {
+                    svc.quarantine_invalid_targets(&requested_kinds).await;
+                    final_status = InstallStatus::Failed;
+                    final_error = Some(
+                        "Installed voice model failed to load or pass its readiness probe".into(),
+                    );
+                }
             }
             let snap = snapshot_tx.borrow().clone();
             drop(snapshot_tx.send_replace(VoiceInstallSnapshot {
@@ -192,6 +342,27 @@ impl VoiceInstallService {
         Ok(())
     }
 
+    async fn quarantine_invalid_targets(&self, kinds: &[VoiceModelKind]) {
+        for kind in kinds {
+            let target = self.target_path(*kind);
+            if !tokio::fs::try_exists(&target).await.unwrap_or(false) {
+                continue;
+            }
+            let invalid = target.with_extension("invalid");
+            if tokio::fs::try_exists(&invalid).await.unwrap_or(false) {
+                drop(tokio::fs::remove_dir_all(&invalid).await);
+            }
+            if let Err(error) = tokio::fs::rename(&target, &invalid).await {
+                warn!(
+                    kind = %kind.label(),
+                    path = %target.display(),
+                    %error,
+                    "voice_install.invalid_target_quarantine_failed"
+                );
+            }
+        }
+    }
+
     pub(crate) async fn cancel(&self) {
         let state = self.state.lock().await;
         if let Some(tx) = state.cancel_tx.as_ref() {
@@ -201,12 +372,19 @@ impl VoiceInstallService {
 
     async fn run(
         self: Arc<Self>,
+        kinds: Vec<VoiceModelKind>,
         snapshot_tx: watch::Sender<VoiceInstallSnapshot>,
         cancel_rx: watch::Receiver<bool>,
     ) -> Result<(), AppError> {
-        tokio::fs::create_dir_all(&self.models_root).await?;
+        reconcile_install_state(&self.models_root).await?;
 
-        for art in ARTIFACTS {
+        for kind in kinds {
+            let Some(art) = ARTIFACTS.iter().find(|artifact| artifact.kind == kind) else {
+                return Err(AppError::Internal(format!(
+                    "No artifact is configured for {}",
+                    kind.label()
+                )));
+            };
             if *cancel_rx.borrow() {
                 return Err(AppError::Canceled("Voice install canceled".into()));
             }
@@ -234,7 +412,7 @@ impl VoiceInstallService {
         cancel_rx: &watch::Receiver<bool>,
     ) -> Result<(), AppError> {
         info!(kind = %art.kind.label(), url = art.url, "voice_install.start");
-        let tmp_dir = tempfile_dir()?;
+        let tmp_dir = tempfile_dir(&self.models_root)?;
         let result = self
             .install_one_in(art, snapshot_tx, cancel_rx, &tmp_dir)
             .await;
@@ -314,11 +492,6 @@ impl VoiceInstallService {
             art.max_bytes,
         );
         use tokio::io::AsyncWriteExt;
-        // Throttle progress emission. A 340 MB download produces 5-20k
-        // chunks; without rate limiting that's the same number of
-        // VoiceInstallSnapshot clones and watch-channel sends, all forwarded
-        // to the SSE writer as JSON. Throttle to "percent changed OR ≥250ms
-        // since last emit" — no perceptible UX cost, ~100× fewer events.
         let throttle = Duration::from_millis(250);
         let mut last_emit = Instant::now();
         let mut last_percent: Option<u8> = None;
@@ -353,8 +526,6 @@ impl VoiceInstallService {
                 last_percent = percent;
             }
         }
-        // Force final emit so the UI sees the last bytes even when the last
-        // chunk landed inside the throttle window.
         let final_percent = total.map(|t| ((got as f64 / t as f64) * 100.0).min(100.0) as u8);
         self.update_model(snapshot_tx, art.kind, make_progress(got, final_percent));
         file.flush().await?;
@@ -376,10 +547,6 @@ impl VoiceInstallService {
         });
     }
 
-    /// Wait for any in-flight install to finish — used by shutdown paths.
-    /// We take the handle out under the lock and `.await` it without
-    /// holding the lock. Shutdown is single-flight so the "what if start()
-    /// races" concern doesn't apply here in practice.
     pub(crate) async fn await_idle(&self) {
         let handle = {
             let mut state = self.state.lock().await;

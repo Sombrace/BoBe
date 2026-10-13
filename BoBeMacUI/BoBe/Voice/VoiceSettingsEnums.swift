@@ -1,14 +1,5 @@
 import Foundation
 
-/// Kokoro v1.0 multilingual voice slot table. Mirrored from the daemon's
-/// `BoBeService/src/speech/providers/sherpa/kokoro_tts.rs::voice_id` enum.
-///
-/// **Split-brain warning**: there is no shared schema. Both lists must
-/// update together when Kokoro publishes a new voice. The Rust side is
-/// authoritative (the daemon rejects unknown ids); this Swift list
-/// controls only the UI picker. The `voice_persona_round_trip` integration
-/// test (when it lands) will assert every entry here is accepted by the
-/// daemon.
 enum KokoroVoices {
     static let allSlots: [String] = [
         "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica",
@@ -27,7 +18,6 @@ enum KokoroVoices {
         "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang",
     ]
 
-    /// Friendly display name for a slot (e.g. `af_bella` → "Bella (English ♀)").
     static func displayName(for slot: String) -> String {
         let parts = slot.split(separator: "_", maxSplits: 1).map(String.init)
         guard parts.count == 2 else { return slot }
@@ -35,6 +25,27 @@ enum KokoroVoices {
         let name = parts[1].capitalized
         let lang = self.languageLabel(forPrefix: prefix)
         return "\(name) (\(lang))"
+    }
+
+    static func language(ofSlot slot: String) -> String? {
+        switch slot.first {
+        case "a", "b": "en"
+        case "e": "es"
+        case "f": "fr"
+        case "h": "hi"
+        case "i": "it"
+        case "j": "ja"
+        case "p": "pt"
+        case "z": "zh"
+        default: nil
+        }
+    }
+
+    static func slot(for language: String, like current: String) -> String? {
+        let key = VoiceTtsBackend.languageKey(language)
+        let matches = self.allSlots.filter { self.language(ofSlot: $0) == key }
+        let gender = current.dropFirst().first
+        return matches.first { $0.dropFirst().first == gender } ?? matches.first
     }
 
     private static func languageLabel(forPrefix prefix: String) -> String {
@@ -59,14 +70,8 @@ enum KokoroVoices {
     }
 }
 
-/// Languages exposed in the Settings → Voice picker. English uses
-/// FluidAudio Parakeet EOU; everything else uses Nemotron multilingual
-/// streaming ASR + Silero VAD.
 enum VoiceLanguages {
-    /// BCP-47 codes. Order surfaces shipping languages first.
     static let all: [String] = ["en", "zh", "es", "el", "ko", "ja"]
-
-    static let shipping: Set = Set(VoiceLanguages.all)
 
     static func displayName(for code: String) -> String {
         let base: String = switch code {
@@ -78,6 +83,6 @@ enum VoiceLanguages {
         case "ja": "Japanese"
         default: code
         }
-        return Self.shipping.contains(code) ? base : "\(base)  (coming soon)"
+        return base
     }
 }

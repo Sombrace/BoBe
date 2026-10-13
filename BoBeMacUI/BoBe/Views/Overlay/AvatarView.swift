@@ -1,651 +1,454 @@
+import AppKit
 import SwiftUI
 
-/// Geometry constants for the avatar card stack. Tightly coupled — the
-/// inner-face radial gradient stops at `faceSize / 2`, the message badge
-/// outer ring is twice the badge dot's diameter, etc. Adjust together.
-///
-/// `internal` so callers that need to pin satellites to the rim
-/// (OverlaySections.avatarCluster) compute positions from these same
-/// numbers — when constants change here, the satellites stay aligned.
 enum AvatarMetrics {
-    /// Body of the avatar card (inner circle); also the frame width.
-    static let cardSize: CGFloat = 116
-    /// Card frame height = `cardSize` + vertical breathing room (16) so the
-    /// avatar isn't flush against the BobeLabel below.
-    static let cardFrameHeight: CGFloat = 132
-    /// Full column including the BoBe label below.
-    static let columnWidth: CGFloat = 132
-    static let columnHeight: CGFloat = 146
-    /// Inner face circle (eyes + gradient).
-    static let faceSize: CGFloat = 76
-    /// Radial highlight gradient extent — half the face size.
-    static let faceHighlightRadius: CGFloat = 38
-    /// `ConnectionDot` offset from card center (top-right corner).
-    static let connectionDotOffset: CGFloat = 30
-    /// `MessageBadge` offset from card center (top-right corner, slightly
-    /// further out than the connection dot so the two don't overlap).
-    static let messageBadgeOffset: CGFloat = 34
-    /// Connection-dot inner fill diameter and outer-ring frame.
-    static let connectionDotInner: CGFloat = 10
-    static let connectionDotOuter: CGFloat = 14
-    /// Message-badge inner fill diameter and outer-ring frame.
-    static let messageBadgeInner: CGFloat = 16
-    static let messageBadgeOuter: CGFloat = 20
-    static let satelliteSize: CGFloat = 32
-    /// Voice-presence ring base diameter — sits just outside the avatar card
-    /// stroke. Driven by `VoicePipeline.inputLevel` so the user sees their
-    /// voice modulating the ring while BoBe listens.
-    static let voicePresenceBaseDiameter: CGFloat = 126
-    /// Max additional diameter at peak inputLevel (1.0).
-    static let voicePresenceExpansionRange: CGFloat = 18
-
-    /// Top-leading offset for placing a satellite circle on the avatar
-    /// card's rim. Designed for use inside
-    /// `.overlay(alignment: .topLeading)` on the avatar card itself —
-    /// the only inputs are `cardSize` (the rim) and `satelliteSize` (the
-    /// child). No dependency on column padding, BobeLabel positioning,
-    /// or any other outer-layout decision, so changes to those won't
-    /// silently break alignment.
-    ///
-    /// `angleFrom12` is degrees clockwise from 12 o'clock:
-    ///   0=top, 90=right, 180=bottom, 270=left, 315=10:30, 225=7:30.
-    ///
-    /// `rimOverlap` controls how much of the satellite eats into the
-    /// card. `0` = satellite's inner edge tangent to the outer rim
-    /// (fully outside the card). `satelliteSize/2` = satellite centre
-    /// ON the rim line (half inside, half outside — pre-fix behaviour
-    /// that visually buried the satellite into the inner face). The
-    /// default (`8`) is a small intentional overlap so the satellite
-    /// reads as anchored to the card rather than floating beside it.
-    static func rimOffset(
-        angleFrom12: Double,
-        satelliteSize: CGFloat,
-        rimOverlap: CGFloat = 8
-    ) -> CGSize {
-        let cardR = self.cardSize / 2
-        let satR = satelliteSize / 2
-        let theta = angleFrom12 * .pi / 180
-        // Distance from card centre to satellite centre. Larger than
-        // cardR pushes the satellite OUTSIDE the rim; `rimOverlap`
-        // pulls it back in by that many points.
-        let centreDistance = cardR + satR - rimOverlap
-        // Card centre in overlay coords is (cardR, cardR).
-        return CGSize(
-            width: cardR + centreDistance * sin(theta) - satR,
-            height: cardR - centreDistance * cos(theta) - satR
-        )
-    }
+    static let ringSize: CGFloat = 80
+    static let cardSize: CGFloat = 100
+    static let satelliteSize: CGFloat = 30
+    static let satelliteOrbit: CGFloat = cardSize / 2 + satelliteSize / 2 - 7
+    static let clusterWidth: CGFloat = 132
+    static let clusterHeight: CGFloat = 146
+    static let center = CGPoint(x: 72, y: 86)
+    static let restAngle: Double = 38
+    static let chatAngle: Double = 222
+    static let micAngle: Double = 264
+    static let menuAngle: Double = 306
+    static let pipAngle: Double = 184
+    static let toolAngle: Double = 140
+    static let sleepDelaySeconds: TimeInterval = 75
+    static let celebrationSeconds: TimeInterval = 1.25
+    static let satelliteLingerMilliseconds = 450
 }
 
-/// AvatarView — purely visual.
-///
-/// Renders BoBe's face, the per-state rings (thinking / speaking /
-/// wantsToSpeak), the breathing animation, the connection dot, the
-/// message badge, the status pill above the head, and the BoBe label
-/// below. **No interaction** — clicks pass through. The chat-toggle and
-/// mic buttons that visually sit on the rim are now composed as
-/// peers in `OverlaySections.avatarCluster`, not inside this view.
-///
-/// History: AvatarView used to accept a `cardSatellites: @ViewBuilder`
-/// closure (generic on a `Satellites: View` type parameter) AND an
-/// `onClick`/`isAvatarActionEnabled` pair that wrapped the entire card
-/// in a Button. Two issues with that design:
-///   1. The Button's `.contentShape(Circle())` constrained hit-testing
-///      to the inner circle, but the satellites — positioned at the rim
-///      via `AvatarMetrics.rimOffset` with an 8pt overlap — sat OUTSIDE
-///      that circle, so they were visible but unclickable.
-///   2. AvatarView mixed visual + interactive concerns. Three callers
-///      filled the satellite hole; one filled the click action.
-/// Both go away once the avatar body click is dropped. The chat lives
-/// behind its own affordance (the chat-toggle satellite, plus floating
-/// bubble taps); we don't need the avatar body as an additional target.
-struct AvatarView: View {
-    let stateType: BobeStateType
-    let isConnected: Bool
-    let hasMessage: Bool
-    var showInput: Bool = false
-    var statusOverride: String?
-    /// When `true`, the small typewriter pill above the avatar head shows
-    /// the current status ("Thinking...", "Capturing", etc.). When
-    /// `false`, the label is suppressed because some other surface — the
-    /// AvatarStatusBubble — is carrying the status duty instead. Avoids
-    /// having two "thinking" indicators stacked on top of each other when
-    /// the chat is collapsed and the bubble is active.
-    var showStatusLabel: Bool = true
-    /// True when the AvatarStatusBubble above the avatar is currently
-    /// showing the latest BoBe message. In that case the top-right
-    /// MessageBadge pulse becomes redundant (the bubble already carries
-    /// the unread signal AND the actual content), so we suppress it to
-    /// avoid two indicators saying the same thing.
-    var bubbleShowingMessage: Bool = false
+struct OverlayAvatar: View {
+    let mood: BobeMood
+    let isEngaged: Bool
+    let wantsAttention: Bool
+    let celebrationToken: Int
+    let onTap: () -> Void
+    let onSecondaryTap: (NSEvent, NSView) -> Void
 
     @Environment(\.theme) private var theme
-    @State private var breathingExpanded = false
-}
+    @State private var isPressed = false
+    @State private var isHovered = false
+    @State private var pipeline = VoicePipeline.shared
+    @State private var pointer = PointerTracker.shared
+    @State private var isAsleep = false
+    @State private var isCelebrating = false
+    @State private var isTracking = false
+    @State private var speechBeat = 0.0
 
-extension AvatarView {
+    private var displayMood: BobeMood {
+        guard self.mood == .idle else { return self.mood }
+        if self.isCelebrating { return .happy }
+        return self.isAsleep && !self.isEngaged ? .asleep : .idle
+    }
+
+    private var gaze: CGSize {
+        guard self.isTracking, OverlayWindowManager.shared.panel != nil else { return .zero }
+        return PointerTracker.gaze(from: OverlayWindowManager.shared.anchor, to: self.pointer.location)
+    }
+
+    private var voiceLevel: Double {
+        switch self.displayMood {
+        case .listening: Double(self.pipeline.inputLevel)
+        case .speaking: max(Double(self.pipeline.ttsOutputLevel), self.speechBeat * 0.35)
+        default: 0
+        }
+    }
+
+    private var mouthLevel: Double {
+        guard self.displayMood == .speaking else { return 0 }
+        return min(1, self.speechBeat * 0.2 + Double(self.pipeline.ttsOutputLevel) * 1.2)
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                self.avatarCard
-                    .overlay(alignment: .top) {
-                        if self.showStatusLabel, self.stateType != .speaking {
-                            StatusLabel(stateType: self.stateType, textOverride: self.statusOverride)
-                                .offset(y: -14)
-                        }
-                    }
-
-                ConnectionDot(isConnected: self.isConnected)
-                    .offset(x: AvatarMetrics.connectionDotOffset, y: AvatarMetrics.connectionDotOffset)
-
-                if self.hasMessage, !self.showInput, !self.bubbleShowingMessage {
-                    MessageBadge()
-                        .offset(x: AvatarMetrics.messageBadgeOffset, y: -AvatarMetrics.messageBadgeOffset)
-                }
-            }
-            .padding(.top, self.showStatusLabel ? 16 : 0)
-            .frame(
-                width: AvatarMetrics.cardSize,
-                height: AvatarMetrics.cardFrameHeight,
-                alignment: .top
-            )
-
-            BobeLabel()
-                .padding(.top, -11)
-        }
-        .frame(
-            width: AvatarMetrics.columnWidth,
-            height: AvatarMetrics.columnHeight,
-            alignment: .top
+        BobeCharacter(
+            mood: self.displayMood,
+            size: AvatarMetrics.ringSize,
+            palette: self.theme.avatar,
+            gaze: self.gaze,
+            voiceLevel: self.voiceLevel,
+            mouthLevel: self.mouthLevel,
+            wantsAttention: self.wantsAttention
         )
-        .task(id: self.shouldBreathe) {
-            // Reset MUST be in a no-animation transaction. Without this,
-            // any ambient `withAnimation` in a parent (`OverlaySections`
-            // stacks three on the avatar section) can capture the
-            // `breathingExpanded = false` write and tween it across the
-            // shouldBreathe transition — which read as the avatar
-            // snapping mid-state-change.
-            withTransaction(Transaction(animation: nil)) {
-                self.breathingExpanded = false
+        .frame(width: AvatarMetrics.cardSize, height: AvatarMetrics.cardSize)
+        .bobeRaised(in: Circle(), elevation: .lifted, fill: self.theme.colors.background)
+        .overlay(alignment: .topTrailing) {
+            if self.displayMood == .asleep {
+                BobeSleepNotes(color: self.theme.avatar.orbit)
+                    .offset(x: 6, y: -10)
+                    .transition(.opacity)
             }
-            guard self.shouldBreathe, OverlayMotionRuntime.shouldAnimate else { return }
+        }
+        .overlay {
+            if self.displayMood == .thinking || self.displayMood == .working, !BobeMotion.isReduced {
+                BobeWorkingRim(shape: Circle(), lineWidth: 2)
+                    .transition(.opacity)
+            }
+        }
+        .animation(BobeMotion.soft, value: self.displayMood)
+        .scaleEffect(self.isPressed ? 0.95 : (self.isHovered ? 1.03 : 1))
+        .animation(BobeMotion.body, value: self.isPressed)
+        .animation(BobeMotion.standard, value: self.isHovered)
+        .overlay {
+            AvatarPressSurface(
+                onClick: self.onTap,
+                onSecondaryClick: self.onSecondaryTap,
+                onPressChange: { self.isPressed = $0 }
+            )
+            .frame(width: AvatarMetrics.cardSize, height: AvatarMetrics.cardSize)
+        }
+        .onHover { self.isHovered = $0 }
+        .onChange(of: self.displayMood.followsPointer, initial: true) { _, follows in
+            self.setTracking(follows)
+        }
+        .onDisappear { self.setTracking(false) }
+        .task(id: "\(self.mood)|\(self.isEngaged)") {
+            if self.mood != .idle || self.isEngaged {
+                self.isAsleep = false
+                return
+            }
+            try? await Task.sleep(for: .seconds(AvatarMetrics.sleepDelaySeconds))
+            guard !Task.isCancelled else { return }
+            self.isAsleep = true
+        }
+        .onChange(of: self.celebrationToken) { _, _ in
+            self.isCelebrating = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(AvatarMetrics.celebrationSeconds))
+                self.isCelebrating = false
+            }
+        }
+        .task(id: self.displayMood == .speaking) {
+            self.speechBeat = 0
+            guard self.displayMood == .speaking, !BobeMotion.isReduced else { return }
+            let beats: [Double] = [0.7, 0.3, 1.0, 0.5, 0.85, 0.2, 0.6, 0.95]
+            var index = 0
             while !Task.isCancelled {
-                withAnimation(OverlayMotionRuntime.animation(for: .breathing)) {
-                    self.breathingExpanded.toggle()
-                }
-                try? await Task.sleep(for: .seconds(3.2))
+                self.speechBeat = beats[index % beats.count]
+                index &+= 1
+                try? await Task.sleep(for: .milliseconds(180))
             }
         }
-    }
-
-    private var shouldBreathe: Bool {
-        switch self.stateType {
-        case .idle, .capturing, .wantsToSpeak:
-            true
-        default:
-            false
-        }
-    }
-
-    private var breathingScale: CGFloat {
-        self.shouldBreathe
-            ? OverlayMotionRuntime.breathingScale(isExpanded: self.breathingExpanded)
-            : 1.0
-    }
-
-    /// The avatar card itself — voice-presence ring, the circular body,
-    /// the per-state ring overlay, and the inner face. No interactivity,
-    /// no hit shape: clicks pass straight through to whatever is layered
-    /// above (the chat-toggle and mic satellites in `OverlaySections.
-    /// avatarCluster`). The accessibility element bundles the children
-    /// so VoiceOver reads "BoBe is thinking" / etc. as one node.
-    private var avatarCard: some View {
-        ZStack {
-            // Voice-presence ring sits BEHIND the card so the card's solid
-            // fill + border still reads as the avatar surface. Driven by
-            // `VoicePipeline.inputLevel`; rendered only when mic is open.
-            AvatarVoicePresenceRing()
-
-            Circle()
-                .fill(self.theme.colors.background)
-                .frame(width: AvatarMetrics.cardSize, height: AvatarMetrics.cardSize)
-                .overlay(
-                    Circle().stroke(self.theme.colors.border, lineWidth: 2)
-                )
-                .shadow(color: self.theme.colors.text.opacity(0.12), radius: 10, y: 4)
-
-            if self.stateType == .thinking {
-                ThinkingNumbersRing()
-            }
-
-            if self.stateType == .speaking {
-                SpeakingWaveRing()
-            }
-
-            if self.stateType == .wantsToSpeak {
-                AttentionPulse()
-            }
-
-            self.innerFace
-        }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement()
         .accessibilityLabel(L10n.tr("overlay.avatar.accessibility_format", self.stateAccessibilityText))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { self.onTap() }
+        .accessibilityIdentifier("overlay.avatar")
     }
 
-    private var innerFace: some View {
-        ZStack {
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [self.theme.colors.avatarFaceLight, self.theme.colors.avatarFaceDark],
-                        startPoint: .init(x: 0.15, y: 0.0),
-                        endPoint: .init(x: 0.85, y: 1.0)
-                    )
-                )
-                .frame(width: AvatarMetrics.faceSize, height: AvatarMetrics.faceSize)
-                .overlay(
-                    Circle().stroke(self.theme.colors.avatarRing, lineWidth: 2)
-                )
-                .shadow(color: self.theme.colors.text.opacity(0.14), radius: 4, y: 2)
-                .overlay(
-                    Circle()
-                        .fill(
-                            RadialGradient(
-                                colors: [.white.opacity(0.25), .clear],
-                                center: .init(x: 0.35, y: 0.25),
-                                startRadius: 0,
-                                endRadius: AvatarMetrics.faceHighlightRadius
-                            )
-                        )
-                        .frame(width: AvatarMetrics.faceSize, height: AvatarMetrics.faceSize)
-                )
-
-            EyesIndicator(state: self.stateType, chatOpen: self.showInput)
+    private func setTracking(_ tracking: Bool) {
+        guard tracking != self.isTracking else { return }
+        self.isTracking = tracking
+        if tracking {
+            self.pointer.retain()
+        } else {
+            self.pointer.release()
         }
-        .scaleEffect(self.breathingScale)
-        .zIndex(10)
     }
 
     private var stateAccessibilityText: String {
-        switch self.stateType {
-        case .loading: L10n.tr("overlay.avatar.state.loading")
-        case .error: L10n.tr("overlay.avatar.state.error")
-        case .idle: L10n.tr("overlay.avatar.state.idle")
-        case .capturing: L10n.tr("overlay.avatar.state.capturing")
-        case .thinking: L10n.tr("overlay.avatar.state.thinking")
+        switch self.displayMood {
+        case .waking: L10n.tr("overlay.avatar.state.loading")
+        case .worried: L10n.tr("overlay.avatar.state.error")
+        case .asleep, .idle, .happy: L10n.tr("overlay.avatar.state.idle")
+        case .watching: L10n.tr("overlay.avatar.state.watching")
+        case .thinking, .working: L10n.tr("overlay.avatar.state.thinking")
         case .speaking: L10n.tr("overlay.avatar.state.speaking")
-        case .wantsToSpeak: L10n.tr("overlay.avatar.state.wants_to_speak")
-        case .shuttingDown: L10n.tr("overlay.avatar.state.shutting_down")
+        case .eager: L10n.tr("overlay.avatar.state.wants_to_speak")
+        case .listening: L10n.tr("overlay.voice.presence_ring.accessibility")
         }
     }
 }
 
-// MARK: - Voice Presence Ring
-
-/// Turbulent, voice-modulated ring around the avatar. Replaces the
-/// mic-button's pulsing input ring so BoBe itself reads as the listener;
-/// the mic becomes a quiet on/off toggle.
-///
-/// The ring is NOT a perfect circle. Its radius is a parametric function
-/// of angle θ and time t:
-///
-///   r(θ, t) = R + low(θ, t) + mid(θ, t, level) + high(θ, t, level²)
-///
-/// where each band is `aᵢ · sin(fᵢ·θ + ωᵢ·t + φᵢ)`. Three bands give the
-/// blob personality:
-///   • low  (f=2, slow ω) — always-on breathing wobble, alive at silence
-///   • mid  (f=5, medium ω, amplitude ∝ level) — the user's voice
-///   • high (f=11, fast ω, amplitude ∝ level²) — turbulent edge under speech
-///
-/// Transparency-safe: rendered as two stacked strokes (tinted halo + brand
-/// primary) so the silhouette holds against any desktop wallpaper.
-/// On reduce-motion we render a still, slightly noisy outline at midpoint
-/// level so the affordance is still legible without animation.
-struct AvatarVoicePresenceRing: View {
-    private let pipeline = VoicePipeline.shared
-    @State private var wakeStarted: Date?
-    @State private var hasShownWake = false
-    @Environment(\.theme) private var theme
-
-    /// Visible only when the daemon could plausibly be hearing audio. While
-    /// BoBe thinks / speaks / is idle the avatar uses its own state rings
-    /// (`ThinkingNumbersRing`, `SpeakingWaveRing`) — stacking another ring
-    /// on top would be noise.
-    private var isVisible: Bool {
-        switch self.pipeline.state {
-        case .listening, .capturing: true
-        default: false
-        }
-    }
+struct BobeSleepNotes: View {
+    let color: Color
+    @State private var cycle = 0
 
     var body: some View {
-        Group {
-            if self.isVisible {
-                if OverlayMotionRuntime.shouldAnimate {
-                    self.animatedRing
-                } else {
-                    self.staticRing
-                }
-            }
-        }
-        .onChange(of: self.isVisible) { _, newValue in
-            if newValue, !self.hasShownWake, OverlayMotionRuntime.shouldAnimate {
-                self.hasShownWake = true
-                self.wakeStarted = .now
-            }
-        }
-        // Make the ring meaningful to screen readers and to anyone who
-        // hovers (NSPanel tooltip). The ring is silent decoration if you
-        // don't tell users "this is BoBe hearing you" somewhere.
-        .accessibilityElement()
-        .accessibilityLabel(L10n.tr("overlay.voice.presence_ring.accessibility"))
-        .help(L10n.tr("overlay.voice.presence_ring.tooltip"))
-    }
-
-    /// Live render: `TimelineView(.animation)` drives the phase off the
-    /// system clock so the wobble is smooth at whatever refresh rate the
-    /// display delivers (60 / 120 / ProMotion). We deliberately read
-    /// `pipeline.inputLevel` each tick rather than animating to it — the
-    /// pipeline already smooths the RMS, and a SwiftUI `withAnimation`
-    /// layer would just add lag.
-    private var animatedRing: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
-            let level = CGFloat(self.pipeline.inputLevel)
-            let wakeBoost = self.wakeBoost(now: context.date)
-            // Resting state still breathes via the low-frequency band, so we
-            // floor `level` at a small idle value to keep the mid-band
-            // contributing a hint of motion even in silence.
-            let effectiveLevel = max(level, 0.08)
-            self.ringStack(phase: t, level: effectiveLevel, wakeBoost: wakeBoost)
-        }
-    }
-
-    private var staticRing: some View {
-        // Reduce-motion: hold at midpoint with a small phase so the blob is
-        // visibly non-circular but doesn't move.
-        self.ringStack(phase: 1.5, level: 0.3, wakeBoost: 0)
-    }
-
-    /// Eases the wake "expand and settle" pulse over ~900ms after the
-    /// first listen of the session. After that, returns 0.
-    private func wakeBoost(now: Date) -> CGFloat {
-        guard let started = self.wakeStarted else { return 0 }
-        let elapsed = now.timeIntervalSince(started)
-        guard elapsed < 0.9 else { return 0 }
-        // 0 → 1 (out-quart) over 0..0.35s, then 1 → 0 (out-quint) over 0.35..0.9s.
-        if elapsed < 0.35 {
-            let p = elapsed / 0.35
-            return CGFloat(1 - pow(1 - p, 4)) * 14
-        } else {
-            let p = (elapsed - 0.35) / 0.55
-            return CGFloat(1 - pow(p, 5)) * 14
-        }
-    }
-
-    @ViewBuilder
-    private func ringStack(phase: Double, level: CGFloat, wakeBoost: CGFloat) -> some View {
-        let diameter = AvatarMetrics.voicePresenceBaseDiameter
-            + level * AvatarMetrics.voicePresenceExpansionRange
-            + wakeBoost
         ZStack {
-            TurbulentRingShape(phase: phase, level: level)
-                .stroke(self.theme.colors.text.opacity(0.22), lineWidth: 4)
-                .frame(width: diameter, height: diameter)
-            TurbulentRingShape(phase: phase, level: level)
-                .stroke(
-                    self.theme.colors.primary.opacity(0.5 + Double(level) * 0.5),
-                    lineWidth: 2.5
+            ForEach(0 ..< 3, id: \.self) { index in
+                SleepNote(color: self.color, index: index, cycle: self.cycle)
+            }
+        }
+        .frame(width: 34, height: 40)
+        .task {
+            guard !BobeMotion.isReduced else { return }
+            while !Task.isCancelled {
+                self.cycle &+= 1
+                try? await Task.sleep(for: .seconds(9))
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct SleepNote: View {
+    let color: Color
+    let index: Int
+    let cycle: Int
+    @State private var progress = 0.0
+
+    var body: some View {
+        Text(verbatim: "z")
+            .font(.system(size: 9 + CGFloat(self.index) * 2.5, weight: .bold, design: .rounded))
+            .foregroundStyle(self.color)
+            .offset(
+                x: -8 + self.progress * (10 + CGFloat(self.index) * 5),
+                y: 14 - self.progress * (18 + CGFloat(self.index) * 6)
+            )
+            .opacity(sin(.pi * self.progress) * 0.9)
+            .onChange(of: self.cycle) { _, _ in
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { self.progress = 0 }
+                withAnimation(.easeOut(duration: 2.4).delay(Double(self.index) * 0.5)) {
+                    self.progress = 1
+                }
+            }
+    }
+}
+
+@Animatable
+struct OrbitPlacement: ViewModifier {
+    var angle: Double
+    var radius: CGFloat
+
+    func body(content: Content) -> some View {
+        let radians = self.angle * .pi / 180
+        content.offset(x: self.radius * cos(radians), y: self.radius * sin(radians))
+    }
+}
+
+struct OrbitSlot<Content: View>: View {
+    let angle: Double
+    let isShown: Bool
+    var index = 0
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        self.content
+            .scaleEffect(self.isShown ? 1 : 0.35)
+            .opacity(self.isShown ? 1 : 0)
+            .modifier(
+                OrbitPlacement(
+                    angle: self.isShown ? self.angle : self.angle - 70,
+                    radius: self.isShown ? AvatarMetrics.satelliteOrbit : AvatarMetrics.satelliteOrbit - 22
                 )
-                .frame(width: diameter, height: diameter)
-        }
-        .transition(.opacity)
-    }
-}
-
-/// Per-vertex angular sample for `TurbulentRingShape`. Holding `theta`
-/// plus its pre-computed cos / sin saves ~194 trig calls per frame (the
-/// ring renders at 60+ Hz with two stacked strokes). A named struct here
-/// reads more clearly than a 3-tuple and dodges SwiftLint's tuple-arity
-/// warning at no runtime cost.
-private struct RingThetaSample {
-    let theta: Double
-    let cos: Double
-    let sin: Double
-}
-
-private let ringSegmentCount = 96
-private let ringThetaTable: [RingThetaSample] = {
-    var entries: [RingThetaSample] = []
-    entries.reserveCapacity(ringSegmentCount + 1)
-    for i in 0 ... ringSegmentCount {
-        let theta = Double(i) / Double(ringSegmentCount) * 2 * .pi
-        entries.append(RingThetaSample(theta: theta, cos: cos(theta), sin: sin(theta)))
-    }
-    return entries
-}()
-
-/// Parametric blob whose radius is a sum of three sine bands. Drawn as a
-/// closed `Path` with 96 vertices around the circumference; that's dense
-/// enough that the high-frequency band (f=11) doesn't alias visibly, and
-/// cheap enough to render at 120 Hz without breaking a sweat on M-series.
-struct TurbulentRingShape: Shape {
-    var phase: Double
-    var level: CGFloat
-
-    /// Animate phase + level smoothly when the shape is wrapped in an
-    /// implicit animation. `TimelineView` updates `phase` directly, so this
-    /// mostly matters for the level-driven amplitude changes.
-    var animatableData: AnimatablePair<Double, CGFloat> {
-        get { AnimatablePair(self.phase, self.level) }
-        set {
-            self.phase = newValue.first
-            self.level = newValue.second
-        }
-    }
-
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let center = CGPoint(x: rect.midX, y: rect.midY)
-        // Reserve space for the wobble amplitude so the shape stays inside
-        // its frame even at peak displacement.
-        let baseRadius = Double(min(rect.width, rect.height) / 2) - 4
-        let levelD = Double(self.level)
-
-        // Per-band amplitudes. Tuned by eye:
-        //   • low: always-present breathing; 1.4pt amplitude.
-        //   • mid: scales linearly with voice level up to ~2.6pt.
-        //   • high: scales quadratically with level for the turbulent edge
-        //     under loud speech, capped at ~3.6pt to avoid spikes.
-        let lowAmp = 1.4
-        let midAmp = 2.6 * levelD
-        let highAmp = 3.6 * (levelD * levelD)
-
-        // Per-band angular frequencies (number of bumps around the ring)
-        // and time frequencies (how fast each band rotates its phase).
-        let lowAng = 2.0
-        let midAng = 5.0
-        let highAng = 11.0
-        let lowOmega = 0.5
-        let midOmega = 1.3
-        let highOmega = 2.4
-
-        // Static phase offsets break the three bands out of lockstep so they
-        // never align into a clean symmetric petal pattern.
-        let lowPhi = 0.0
-        let midPhi = 1.7
-        let highPhi = 3.1
-
-        for (i, entry) in ringThetaTable.enumerated() {
-            let low = lowAmp * sin(lowAng * entry.theta + lowOmega * self.phase + lowPhi)
-            let mid = midAmp * sin(midAng * entry.theta + midOmega * self.phase + midPhi)
-            let high = highAmp * sin(highAng * entry.theta + highOmega * self.phase + highPhi)
-            let radius = baseRadius + low + mid + high
-            let point = CGPoint(
-                x: center.x + CGFloat(radius * entry.cos),
-                y: center.y + CGFloat(radius * entry.sin)
             )
-            if i == 0 {
-                path.move(to: point)
-            } else {
-                path.addLine(to: point)
-            }
-        }
-        path.closeSubpath()
-        return path
+            .allowsHitTesting(self.isShown)
+            .animation(BobeMotion.stagger(self.index, step: 0.045), value: self.isShown)
     }
 }
 
-// MARK: - Connection Dot
-
-struct ConnectionDot: View {
-    let isConnected: Bool
+struct SatelliteChrome: View {
+    let systemName: String
+    var isActive = false
+    var isDimmed = false
     @Environment(\.theme) private var theme
+    @State private var isHovered = false
 
     var body: some View {
-        Circle()
-            .fill(self.isConnected ? self.theme.colors.secondary : self.theme.colors.primary)
-            .frame(width: AvatarMetrics.connectionDotInner, height: AvatarMetrics.connectionDotInner)
-            .overlay(
-                Circle().stroke(self.theme.colors.background, lineWidth: 2)
-            )
-            .frame(width: AvatarMetrics.connectionDotOuter, height: AvatarMetrics.connectionDotOuter)
-            .accessibilityLabel(
-                self.isConnected
-                    ? L10n.tr("overlay.connection.connected")
-                    : L10n.tr("overlay.connection.disconnected")
-            )
+        Image(systemName: self.systemName)
+            .font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(self.foreground)
+            .opacity(self.isDimmed ? 0.5 : 1)
+            .contentTransition(.symbolEffect(.replace))
+            .frame(width: AvatarMetrics.satelliteSize, height: AvatarMetrics.satelliteSize)
+            .bobeRaised(in: Circle(), fill: self.isActive ? self.theme.colors.primary : nil)
+            .scaleEffect(self.isHovered ? 1.1 : 1)
+            .animation(BobeMotion.snappy, value: self.isHovered)
+            .animation(BobeMotion.standard, value: self.isActive)
+            .onHover { self.isHovered = $0 }
+            .contentShape(Circle())
+    }
+
+    private var foreground: Color {
+        if self.isActive { return self.theme.onAccent }
+        return self.isHovered ? self.theme.colors.text : self.theme.colors.textMuted
     }
 }
-
-// MARK: - Message Badge
-
-struct MessageBadge: View {
-    @State private var scale: CGFloat = 1.0
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Circle()
-            .fill(self.theme.colors.primary)
-            .frame(width: AvatarMetrics.messageBadgeInner, height: AvatarMetrics.messageBadgeInner)
-            .overlay(
-                Circle().stroke(self.theme.colors.background, lineWidth: 2)
-            )
-            .frame(width: AvatarMetrics.messageBadgeOuter, height: AvatarMetrics.messageBadgeOuter)
-            .scaleEffect(self.scale)
-            .task {
-                guard OverlayMotionRuntime.shouldAnimate else {
-                    self.scale = 1.0
-                    return
-                }
-                guard let animation = OverlayMotionRuntime.animation(for: .badgePulse) else {
-                    self.scale = 1.0
-                    return
-                }
-                withAnimation(animation.repeatForever(autoreverses: true)) {
-                    self.scale = 1.1
-                }
-            }
-    }
-}
-
-// MARK: - Chat Toggle Button
 
 struct ChatToggleButton: View {
-    var isActive: Bool = false
+    var isActive = false
+    var hasUnread = false
     let action: () -> Void
     @Environment(\.theme) private var theme
 
-    private let bubbleDiameter = AvatarMetrics.satelliteSize
-
     var body: some View {
         Button(action: self.action) {
-            ZStack {
-                Circle()
-                    .fill(self.isActive ? self.theme.colors.secondary : self.theme.colors.border)
-                    .frame(width: self.bubbleDiameter, height: self.bubbleDiameter)
-
-                Circle()
-                    .stroke(self.theme.colors.background, lineWidth: 2)
-                    .frame(width: self.bubbleDiameter, height: self.bubbleDiameter)
-
-                Image(systemName: "message.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(self.isActive ? self.theme.colors.background : self.theme.colors.text)
-            }
+            SatelliteChrome(systemName: self.isActive ? "xmark" : "bubble.left.fill", isActive: self.isActive)
+                .overlay(alignment: .topTrailing) {
+                    if self.hasUnread, !self.isActive {
+                        Circle()
+                            .fill(self.theme.colors.primary)
+                            .frame(width: 9, height: 9)
+                            .overlay { Circle().strokeBorder(self.theme.colors.surface, lineWidth: 1.5) }
+                            .transition(.bobePop())
+                    }
+                }
         }
-        .buttonStyle(.plain)
-        .shadow(color: self.theme.colors.text.opacity(0.10), radius: 3, y: 1)
-        .frame(width: self.bubbleDiameter, height: self.bubbleDiameter)
-        .contentShape(Circle())
+        .buttonStyle(BobePressStyle(scale: 0.9))
         .accessibilityLabel(
             self.isActive
                 ? L10n.tr("overlay.chat_toggle.hide.accessibility")
                 : L10n.tr("overlay.chat_toggle.show.accessibility")
         )
+        .accessibilityValue(self.hasUnread ? L10n.tr("overlay.app_menu.unread") : "")
         .accessibilityIdentifier("overlay.avatar.chat-toggle")
     }
 }
 
-// MARK: - BoBe Label
+struct AvatarPressSurface: NSViewRepresentable {
+    let onClick: () -> Void
+    let onSecondaryClick: (NSEvent, NSView) -> Void
+    let onPressChange: (Bool) -> Void
 
-struct BobeLabel: View {
-    @Environment(\.theme) private var theme
+    func makeNSView(context: Context) -> AvatarPressView {
+        let view = AvatarPressView()
+        self.updateNSView(view, context: context)
+        return view
+    }
 
-    var body: some View {
-        Text(L10n.tr("overlay.avatar.brand_label"))
-            .bobeTextStyle(.brandLabel)
-            .tracking(1.5)
-            .foregroundStyle(self.theme.colors.primary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 1)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(self.theme.colors.background)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(self.theme.colors.border, lineWidth: 1)
-                    )
-            )
-            .zIndex(1)
+    func updateNSView(_ view: AvatarPressView, context: Context) {
+        view.onClick = self.onClick
+        view.onSecondaryClick = self.onSecondaryClick
+        view.onPressChange = self.onPressChange
     }
 }
 
-// MARK: - Previews
+final class AvatarPressView: NSView {
+    var onClick: (() -> Void)?
+    var onSecondaryClick: ((NSEvent, NSView) -> Void)?
+    var onPressChange: ((Bool) -> Void)?
+    private var pressOrigin: NSPoint?
+    private var didDrag = false
 
-#if !SPM_BUILD
-    #Preview("Idle") {
-        AvatarView(stateType: .idle, isConnected: true, hasMessage: false)
-            .environment(\.theme, allThemes[0])
-            .frame(width: 200, height: 200)
-            .background(Color.gray.opacity(0.1))
+    private static let dragThreshold: CGFloat = 3
+
+    override var mouseDownCanMoveWindow: Bool {
+        false
     }
 
-    #Preview("Thinking") {
-        AvatarView(stateType: .thinking, isConnected: true, hasMessage: false)
-            .environment(\.theme, allThemes[0])
-            .frame(width: 200, height: 200)
-            .background(Color.gray.opacity(0.1))
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
     }
 
-    #Preview("Speaking") {
-        AvatarView(stateType: .speaking, isConnected: true, hasMessage: true)
-            .environment(\.theme, allThemes[0])
-            .frame(width: 200, height: 200)
-            .background(Color.gray.opacity(0.1))
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let superview else { return nil }
+        let local = self.convert(point, from: superview)
+        let radius = min(self.bounds.width, self.bounds.height) / 2
+        let distance = hypot(local.x - self.bounds.midX, local.y - self.bounds.midY)
+        return distance <= radius ? self : nil
     }
 
-    #Preview("Error + Message") {
-        AvatarView(stateType: .error, isConnected: false, hasMessage: true)
-            .environment(\.theme, allThemes[0])
-            .frame(width: 200, height: 200)
-            .background(Color.gray.opacity(0.1))
+    override func mouseDown(with event: NSEvent) {
+        self.pressOrigin = NSEvent.mouseLocation
+        self.didDrag = false
+        self.onPressChange?(true)
+        OverlayWindowManager.shared.beginAvatarDrag()
     }
 
-    #Preview("Wants to Speak") {
-        AvatarView(stateType: .wantsToSpeak, isConnected: true, hasMessage: false)
-            .environment(\.theme, allThemes[0])
-            .frame(width: 200, height: 200)
-            .background(Color.gray.opacity(0.1))
+    override func mouseDragged(with event: NSEvent) {
+        guard let origin = self.pressOrigin else { return }
+        let current = NSEvent.mouseLocation
+        let travel = CGSize(width: current.x - origin.x, height: current.y - origin.y)
+        if !self.didDrag {
+            guard hypot(travel.width, travel.height) > Self.dragThreshold else { return }
+            self.didDrag = true
+            self.onPressChange?(false)
+        }
+        OverlayWindowManager.shared.dragAvatar(by: travel)
     }
-#endif
+
+    override func mouseUp(with event: NSEvent) {
+        defer { self.pressOrigin = nil }
+        self.onPressChange?(false)
+        OverlayWindowManager.shared.endAvatarDrag()
+        guard self.pressOrigin != nil, !self.didDrag else { return }
+        self.onClick?()
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        self.onSecondaryClick?(event, self)
+    }
+}
+
+struct ReachoutPip: View {
+    let count: Int
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Text(self.count > 9 ? "9+" : "\(self.count)")
+            .font(.system(size: 10.5, weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .contentTransition(.numericText())
+            .foregroundStyle(self.theme.onAccent)
+            .padding(.horizontal, 5)
+            .frame(minWidth: 18, minHeight: 18)
+            .background(Capsule(style: .circular).fill(self.theme.colors.primary))
+            .overlay(Capsule(style: .circular).strokeBorder(self.theme.colors.surface, lineWidth: 1.5))
+            .shadow(color: self.theme.shadowTint.opacity(0.22), radius: 3, x: 0, y: 1.5)
+            .accessibilityLabel(L10n.tr("overlay.reachout.waiting_format", self.count))
+    }
+}
+
+enum ToolGlyph {
+    private static let table: [(keys: [String], symbol: String)] = [
+        (["search", "grep", "find", "glob", "lookup"], "magnifyingglass"),
+        (["bash", "shell", "exec", "command", "terminal", "run"], "terminal.fill"),
+        (["web", "fetch", "http", "browse", "url"], "globe"),
+        (["write", "edit", "patch", "create"], "pencil"),
+        (["read", "file", "list", "ls", "open"], "doc.text.fill"),
+        (["memory", "recall", "remember"], "brain.head.profile"),
+        (["goal"], "flag.fill"),
+        (["schedule", "remind", "timer", "clock"], "clock.fill"),
+        (["delegate", "agent", "task", "job"], "person.2.fill"),
+        (["skill"], "wand.and.stars"),
+        (["git"], "arrow.triangle.branch"),
+        (["screen", "capture", "vision", "image"], "viewfinder"),
+    ]
+
+    static func symbol(for toolName: String) -> String {
+        let name = toolName.lowercased()
+        return self.table.first { entry in entry.keys.contains { name.contains($0) } }?.symbol
+            ?? "wrench.and.screwdriver.fill"
+    }
+}
+
+struct ToolBadge: View {
+    let toolName: String
+    let count: Int
+
+    @Environment(\.theme) private var theme
+
+    private static let side: CGFloat = 26
+
+    var body: some View {
+        Image(systemName: ToolGlyph.symbol(for: self.toolName))
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(self.theme.colors.primary)
+            .contentTransition(.symbolEffect(.replace))
+            .frame(width: Self.side, height: Self.side)
+            .bobeRaised(in: Circle())
+            .overlay {
+                BobeSpinner(size: Self.side - 3, lineWidth: 1.6, color: self.theme.glow[1])
+            }
+            .overlay(alignment: .topTrailing) {
+                if self.count > 1 {
+                    Text(verbatim: "\(min(self.count, 9))")
+                        .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                        .foregroundStyle(self.theme.onAccent)
+                        .frame(width: 12, height: 12)
+                        .background(Circle().fill(self.theme.colors.primary))
+                        .offset(x: 3, y: -3)
+                        .transition(.bobePop())
+                }
+            }
+            .animation(BobeMotion.snappy, value: self.count)
+            .accessibilityElement()
+            .accessibilityLabel(L10n.tr("overlay.status.using_tool_format", ToolChip.displayName(self.toolName)))
+    }
+}

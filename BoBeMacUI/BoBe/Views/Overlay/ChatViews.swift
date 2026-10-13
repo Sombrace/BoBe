@@ -1,253 +1,474 @@
+import AppKit
 import SwiftUI
 import Textual
 
-// MARK: - Chat Stack
+private struct ThreadScrollState: Equatable {
+    var top: CGFloat
+    var bottom: CGFloat
+    var content: CGFloat
+    var container: CGFloat
+}
 
-struct ChatStack: View {
-    let messages: [ChatMessage]
+struct ConversationSheet: View {
+    let earlier: [ChatMessage]
+    let current: [ChatMessage]
+    let isExpanded: Bool
+    let onToggleExpanded: () -> Void
+    let activity: String?
+    let tools: [ToolExecution]
     var maxViewportHeight: CGFloat = WindowSizes.heightChatViewportMax
+    var onPresented: @MainActor (String) async -> Void = { _ in }
 
-    @State private var isNearBottom = true
+    @State private var contentHeight: CGFloat = 0
+    @State private var rowHeights: [String: CGFloat] = [:]
+    @State private var activityHeight: CGFloat = 0
     @State private var isAtTop = true
+    @State private var isAtBottom = true
+    @State private var followsLatest = true
+    @State private var holdsBottomUntil: Date = .distantPast
+    @State private var ignoresScrollUntil: Date = .distantPast
+    @State private var settlesUntil: Date = .distantPast
     @Environment(\.theme) private var theme
+    @Environment(\.overlayPlacement) private var placement
 
-    private var displayableMessages: [ChatMessage] {
-        self.messages.filter(\.belongsInConversationTrace)
+    private static let bottomAnchor = "conversation-bottom"
+    private static let rowSpacing: CGFloat = 12
+    private static let bottomMarker: CGFloat = 0.5
+    private static let compactEarlierWindow = 10
+    private static let earlierPeek: CGFloat = 14
+    private static let nearBottomSlack: CGFloat = 48
+    private static let fadeHeight: CGFloat = 16
+
+    private var shownEarlier: [ChatMessage] {
+        self.isExpanded ? self.earlier : Array(self.earlier.suffix(Self.compactEarlierWindow))
+    }
+
+    private var showsActivity: Bool {
+        self.activity != nil || !self.tools.isEmpty
+    }
+
+    private func height(of messages: some Collection<ChatMessage>) -> CGFloat {
+        let rows = messages.reduce(CGFloat(0)) { $0 + (self.rowHeights[$1.id] ?? 0) }
+        let items = messages.count + (self.showsActivity ? 1 : 0)
+        return rows + (self.showsActivity ? self.activityHeight : 0)
+            + CGFloat(items) * Self.rowSpacing + Self.bottomMarker
+    }
+
+    private var question: ChatMessage? {
+        self.current.last { $0.sender == .user }
+    }
+
+    private var answerHeight: CGFloat {
+        guard let question, let index = self.current.firstIndex(where: { $0.id == question.id }) else {
+            return self.height(of: self.current)
+        }
+        return self.height(of: self.current[index...])
+    }
+
+    private var restingHeight: CGFloat {
+        self.isExpanded || self.shownEarlier.isEmpty
+            ? self.contentHeight
+            : self.height(of: self.current) + Self.earlierPeek
+    }
+
+    private var viewportHeight: CGFloat {
+        min(max(24, self.restingHeight), self.maxViewportHeight)
+    }
+
+    private var showsHandle: Bool {
+        !self.earlier.isEmpty || self.isExpanded
+    }
+
+    private var sizeAnchor: UnitPoint {
+        if self.followsLatest { return .bottom }
+        return self.placement.growth == .up && Date.now < self.holdsBottomUntil ? .bottom : .top
     }
 
     var body: some View {
-        self.readerView
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(self.theme.colors.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(self.theme.colors.border.opacity(0.75), lineWidth: 1)
-        )
-        .shadow(color: self.theme.colors.text.opacity(0.07), radius: 5, y: 2)
-        .padding(.bottom, 4)
+        VStack(spacing: 0) {
+            if self.showsHandle {
+                self.historyHandle
+            }
+            self.thread
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, self.showsHandle ? 4 : 12)
+        .padding(.bottom, 12)
+        .bobeRaised(cornerRadius: BobeRadius.card, elevation: .lifted)
     }
 
-    private var readerView: some View {
+    private var historyHandle: some View {
+        Button(action: self.onToggleExpanded) {
+            Image(systemName: self.isExpanded ? "chevron.compact.down" : "chevron.compact.up")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(self.theme.colors.textMuted.opacity(0.75))
+                .frame(maxWidth: .infinity)
+                .frame(height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(BobePressStyle())
+        .accessibilityLabel(self.handleLabel)
+        .accessibilityIdentifier("overlay.composer.history")
+        .help(self.handleLabel)
+    }
+
+    private var handleLabel: String {
+        L10n.tr(
+            self.isExpanded
+                ? "overlay.input.history.hide.accessibility"
+                : "overlay.input.history.show.accessibility"
+        )
+    }
+
+    private var thread: some View {
         ScrollViewReader { proxy in
-            ScrollView(showsIndicators: true) {
-                LazyVStack(spacing: 0) {
-                    ForEach(self.displayableMessages) { message in
-                        ChatBubble(message: message)
-                        .id(message.id)
+            ScrollView(showsIndicators: self.contentHeight > self.viewportHeight + 1) {
+                VStack(alignment: .leading, spacing: Self.rowSpacing) {
+                    ForEach(self.shownEarlier + self.current) { message in
+                        MessageRow(message: message, onPresented: self.onPresented)
+                            .onGeometryChange(for: CGFloat.self) { geometry in
+                                ceil(geometry.size.height)
+                            } action: { height in
+                                self.rowHeights[message.id] = height
+                            }
+                            .id(message.id)
+                            .transition(.bobeRise)
                     }
-                    GeometryReader { geometry in
-                        Color.clear.preference(
-                            key: ChatBottomPreferenceKey.self,
-                            value: geometry.frame(in: .named("chatScroll")).maxY
-                        )
+                    if self.showsActivity {
+                        LiveActivityLine(activity: self.activity, tools: self.tools)
+                            .onGeometryChange(for: CGFloat.self) { geometry in
+                                ceil(geometry.size.height)
+                            } action: { height in
+                                self.activityHeight = height
+                            }
+                            .transition(.bobeRise)
                     }
-                    .frame(height: 1)
+                    Color.clear
+                        .frame(height: Self.bottomMarker)
+                        .id(Self.bottomAnchor)
                 }
-                .padding(.vertical, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .animation(BobeMotion.standard, value: self.current.last?.id)
+                .animation(BobeMotion.standard, value: self.showsActivity)
+                .onGeometryChange(for: CGFloat.self) { geometry in
+                    ceil(geometry.size.height)
+                } action: { height in
+                    self.contentHeight = height
+                }
             }
-            .coordinateSpace(name: "chatScroll")
-            .onPreferenceChange(ChatBottomPreferenceKey.self) { bottomY in
-                self.isNearBottom = bottomY <= self.maxViewportHeight + 48
-            }
-            .onScrollGeometryChange(for: Bool.self) { geometry in
-                geometry.visibleRect.minY <= 1
-            } action: { _, isAtTop in
-                self.isAtTop = isAtTop
-            }
-            .accessibilityIdentifier("overlay.chat.scroll")
-            .frame(maxHeight: self.maxViewportHeight, alignment: .bottom)
+            .frame(height: self.viewportHeight)
+            .animation(BobeMotion.standard, value: self.viewportHeight)
             .scrollBounceBehavior(.basedOnSize)
             .defaultScrollAnchor(.bottom)
-            .overlay(alignment: .top) {
-                if !self.isAtTop {
-                    LinearGradient(
-                        stops: [
-                            .init(color: self.theme.colors.surface, location: 0),
-                            .init(color: self.theme.colors.surface, location: 0.35),
-                            .init(color: self.theme.colors.surface.opacity(0), location: 1),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 12)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
+            .defaultScrollAnchor(self.sizeAnchor, for: .sizeChanges)
+            .accessibilityIdentifier("overlay.chat.scroll")
+            .onScrollGeometryChange(for: ThreadScrollState.self) { geometry in
+                ThreadScrollState(
+                    top: geometry.visibleRect.minY,
+                    bottom: geometry.visibleRect.maxY,
+                    content: geometry.contentSize.height,
+                    container: geometry.containerSize.height
+                )
+            } action: { old, new in
+                self.scrolled(from: old, to: new)
+            }
+            .mask { self.edgeFade }
+            .overlay(alignment: .bottom) {
+                if !self.followsLatest, !self.isAtBottom {
+                    self.latestButton(proxy)
+                        .transition(.bobePop(anchor: .bottom))
                 }
             }
+            .animation(BobeMotion.snappy, value: self.followsLatest || self.isAtBottom)
             .onAppear {
-                self.scrollToBottom(proxy, animated: false)
+                self.settlesUntil = .now.addingTimeInterval(1)
+                self.position(proxy, animated: false)
             }
-            .onChange(of: self.displayableMessages.last?.id) { _, _ in
-                if self.isNearBottom { self.scrollToBottom(proxy, animated: true) }
+            .onChange(of: self.contentHeight) { _, _ in
+                if Date.now < self.settlesUntil {
+                    self.position(proxy, animated: false)
+                }
             }
-            .onChange(of: self.displayableMessages.last?.content) { _, _ in
-                if self.isNearBottom { self.scrollToBottom(proxy, animated: true) }
+            .onChange(of: self.current.last?.id) { _, _ in
+                let known = Set((self.earlier + self.current).map(\.id))
+                self.rowHeights = self.rowHeights.filter { known.contains($0.key) }
+                if self.current.last?.sender == .user {
+                    self.followsLatest = true
+                }
+                self.follow(proxy)
+            }
+            .onChange(of: self.current.last?.content) { _, _ in
+                self.follow(proxy)
+            }
+            .onChange(of: self.activity) { _, _ in
+                self.follow(proxy)
+            }
+            .onChange(of: self.isExpanded) { _, expanded in
+                self.holdsBottomUntil = .now.addingTimeInterval(0.8)
+                self.ignoresScrollUntil = .now.addingTimeInterval(0.8)
+                if !expanded {
+                    self.jumpToLatest(proxy, animated: false)
+                }
             }
         }
     }
 
-    private func scrollToBottom(_ proxy: ScrollViewProxy, animated: Bool) {
-        guard let last = self.displayableMessages.last else { return }
-        if animated {
-            withAnimation(OverlayMotionRuntime.reduceMotion ? nil : .linear(duration: 0.12)) {
-                proxy.scrollTo(last.id, anchor: .bottom)
+    private var edgeFade: some View {
+        let fade = min(0.5, Self.fadeHeight / max(self.viewportHeight, 1))
+        return LinearGradient(
+            stops: [
+                .init(color: .black.opacity(self.isAtTop ? 1 : 0), location: 0),
+                .init(color: .black, location: fade),
+                .init(color: .black, location: 1 - fade),
+                .init(color: .black.opacity(self.isAtBottom ? 1 : 0), location: 1),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    private func latestButton(_ proxy: ScrollViewProxy) -> some View {
+        Button {
+            self.jumpToLatest(proxy, animated: true)
+        } label: {
+            Image(systemName: "arrow.down")
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(self.theme.colors.text)
+                .frame(width: 28, height: 28)
+                .bobeRaised(in: Circle(), elevation: .lifted)
+        }
+        .buttonStyle(BobePressStyle(scale: 0.9))
+        .padding(.bottom, 6)
+        .accessibilityLabel(L10n.tr("overlay.chat.jump_latest"))
+        .accessibilityIdentifier("overlay.chat.jump-latest")
+        .help(L10n.tr("overlay.chat.jump_latest"))
+    }
+
+    private func scrolled(from old: ThreadScrollState, to new: ThreadScrollState) {
+        self.isAtTop = new.top <= 1
+        self.isAtBottom = new.bottom >= new.content - 1
+        guard Date.now >= self.ignoresScrollUntil,
+              abs(new.content - old.content) < 0.5,
+              abs(new.container - old.container) < 0.5
+        else { return }
+        if new.bottom >= new.content - Self.nearBottomSlack {
+            if new.top > old.top + 0.5 {
+                self.followsLatest = true
             }
-        } else {
-            proxy.scrollTo(last.id, anchor: .bottom)
+        } else if new.top < old.top - 0.5 {
+            self.followsLatest = false
+            if !self.isExpanded, !self.earlier.isEmpty {
+                self.onToggleExpanded()
+            }
+        }
+    }
+
+    private func jumpToLatest(_ proxy: ScrollViewProxy, animated: Bool) {
+        self.followsLatest = true
+        self.ignoresScrollUntil = .now.addingTimeInterval(0.4)
+        withAnimation(animated ? BobeMotion.standard : nil) {
+            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+        }
+    }
+
+    private func follow(_ proxy: ScrollViewProxy) {
+        guard self.followsLatest else { return }
+        self.position(proxy, animated: true)
+    }
+
+    private func position(_ proxy: ScrollViewProxy, animated: Bool) {
+        self.ignoresScrollUntil = .now.addingTimeInterval(0.3)
+        if let question, self.answerHeight > self.maxViewportHeight {
+            self.followsLatest = false
+            withAnimation(animated ? BobeMotion.standard : nil) {
+                proxy.scrollTo(question.id, anchor: .top)
+            }
+            return
+        }
+        self.followsLatest = true
+        withAnimation(animated && !BobeMotion.isReduced ? .linear(duration: 0.12) : nil) {
+            proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
         }
     }
 }
 
-private struct ChatBottomPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-// MARK: - Chat Bubble
-
-struct ChatBubble: View {
+struct MessageRow: View {
     let message: ChatMessage
+    var onPresented: @MainActor (String) async -> Void = { _ in }
 
+    @State private var visible = false
+    @State private var appActive = NSApp.isActive
     @Environment(\.theme) private var theme
+
     private var isUser: Bool {
         self.message.sender == .user
     }
 
-    private var isPending: Bool {
-        self.message.isPending
-    }
-
-    private var accentColor: Color {
-        self.isUser ? self.theme.colors.secondary : self.theme.colors.primary
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 0) {
-                Text(self.isUser ? L10n.tr("overlay.chat.sender.you") : L10n.tr("overlay.chat.sender.bobe"))
-                    .bobeTextStyle(.chatSender)
-                    .tracking(0.8)
-                    .textCase(.uppercase)
-                    .foregroundStyle(self.accentColor)
-                if self.isPending {
-                    Text(L10n.tr("overlay.chat.pending_suffix"))
-                        .bobeTextStyle(.chatPending)
-                        .italic()
-                        .foregroundStyle(self.theme.colors.textMuted)
-                }
-                if !self.isUser, !self.message.isComplete {
-                    Text(L10n.tr("overlay.chat.interrupted_suffix"))
-                        .bobeTextStyle(.chatPending)
-                        .foregroundStyle(self.theme.colors.error)
-                }
+        Group {
+            if self.isUser {
+                self.userBubble
+            } else {
+                self.reply
             }
-            .padding(.bottom, 1)
+        }
+        .onScrollVisibilityChange(threshold: 0.5) { self.visible = $0 }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            self.appActive = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            self.appActive = false
+        }
+        .task(id: self.presentationKey) {
+            if self.visible, self.appActive, !self.isUser, self.message.isComplete, !self.message.isStreaming {
+                await self.onPresented(self.message.id)
+            }
+        }
+    }
 
-            HStack(spacing: 0) {
-                if self.message.isStreaming {
-                    Text(self.message.content)
-                        .bobeTextStyle(.chatBody)
-                        .lineSpacing(2)
-                        .foregroundStyle(self.theme.colors.text)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    StructuredText(markdown: self.message.content)
-                        .textual.structuredTextStyle(.gitHub)
-                        .textual.textSelection(.enabled)
-                        .foregroundStyle(self.theme.colors.text)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+    private var presentationKey: String {
+        "\(self.message.id):\(self.visible):\(self.appActive):\(self.message.isComplete):\(self.message.isStreaming)"
+    }
 
-                if self.message.isStreaming {
-                    StreamingCursor(color: self.theme.colors.primary)
-                }
+    private var userBubble: some View {
+        HStack(alignment: .bottom, spacing: 6) {
+            Spacer(minLength: 44)
+            if self.message.isPending {
+                Image(systemName: "clock")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(self.theme.colors.textMuted)
+                    .accessibilityLabel(L10n.tr("overlay.chat.pending_suffix"))
+            }
+            Text(self.message.content)
+                .bobeTextStyle(.chatBody)
+                .lineSpacing(2)
+                .foregroundStyle(self.theme.colors.text)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: 17, bottomLeadingRadius: 17, bottomTrailingRadius: 6, topTrailingRadius: 17,
+                        style: .continuous
+                    )
+                    .fill(self.theme.accentSoft)
+                )
+                .opacity(self.message.isPending ? 0.65 : 1)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(L10n.tr("overlay.chat.sender.you")): \(self.message.content)")
+    }
+
+    private var reply: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if self.message.isStreaming {
+                StreamingText(content: self.message.content)
+            } else {
+                StructuredText(markdown: self.message.content)
+                    .textual.structuredTextStyle(.gitHub)
+                    .textual.textSelection(.enabled)
+                    .foregroundStyle(self.theme.colors.text)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !self.message.isComplete, !self.message.isStreaming {
+                Label(L10n.tr("overlay.chat.interrupted"), systemImage: "exclamationmark.circle")
+                    .bobeTextStyle(.chatPending)
+                    .foregroundStyle(self.theme.colors.error)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 4)
-        .padding(.vertical, 9)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(self.theme.colors.border.opacity(0.45))
-                .frame(height: 0.5)
-        }
-        .transition(.opacity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(L10n.tr("overlay.chat.sender.bobe")): \(self.message.content)")
     }
 }
 
-struct StreamingCursor: View {
-    let color: Color
+struct StreamingText: View {
+    let content: String
+    @Environment(\.theme) private var theme
 
     var body: some View {
-        Text("|")
+        let caret = Text(Image(systemName: "circle.fill"))
+            .font(.system(size: 7))
+            .foregroundStyle(self.theme.colors.primary)
+        return Text("\(Text(verbatim: self.content))  \(caret)")
             .bobeTextStyle(.chatBody)
-            .fontWeight(.semibold)
-            .foregroundStyle(self.color)
-            .accessibilityHidden(true)
+            .lineSpacing(3)
+            .foregroundStyle(self.theme.colors.text)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-// MARK: - Previews
+struct LiveActivityLine: View {
+    let activity: String?
+    let tools: [ToolExecution]
+    @Environment(\.theme) private var theme
 
-#if !SPM_BUILD
-    #Preview("Chat Bubble - User") {
-        ChatBubble(message: ChatMessage(sender: .user, content: "Hello BoBe, how are you?"))
-            .environment(\.theme, allThemes[0])
-            .padding()
-            .frame(width: 500)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if !self.tools.isEmpty {
+                FlowLayout(spacing: 6) {
+                    ForEach(self.tools) { tool in
+                        ToolChip(tool: tool)
+                            .transition(.bobePop(anchor: .leading))
+                    }
+                }
+                .animation(BobeMotion.snappy, value: self.tools.map(\.id))
+            }
+            if let activity {
+                HStack(spacing: 7) {
+                    BobeBreathingDot()
+                    BobeShimmerText(text: activity)
+                        .id(activity)
+                        .transition(.bobeRise)
+                }
+                .frame(height: 20)
+                .animation(BobeMotion.snappy, value: activity)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct ToolChip: View {
+    let tool: ToolExecution
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 5) {
+            self.mark
+                .frame(width: 12, height: 12)
+            Text(Self.displayName(self.tool.toolName))
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(self.theme.colors.textMuted)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 24)
+        .bobeWell(in: .bobePill)
     }
 
-    #Preview("Chat Bubble - BoBe") {
-        ChatBubble(
-            message: ChatMessage(sender: .bobe, content: "I'm doing great! I've been observing your workflow and noticed some interesting patterns.")
-        )
-        .environment(\.theme, allThemes[0])
-        .padding()
-        .frame(width: 500)
+    @ViewBuilder
+    private var mark: some View {
+        switch self.tool.status {
+        case .running:
+            BobeSpinner(size: 10, lineWidth: 1.6, color: self.theme.glow[1])
+        case .success:
+            Image(systemName: "checkmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(self.theme.colors.success)
+                .transition(.bobePop())
+        case .error:
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(self.theme.colors.error)
+                .transition(.bobePop())
+        }
     }
 
-    #Preview("Chat Bubble - Markdown") {
-        ChatBubble(
-            message: ChatMessage(sender: .bobe, content: """
-            **Code & Development**
-            - Write, refactor, debug code across any language
-            - Explore unfamiliar codebases and explain how things work
-            - Run tests, builds, linters
-
-            **Git & Collaboration**
-            - Commits, branches, PRs via `gh` or `tea`
-            """)
-        )
-        .environment(\.theme, allThemes[0])
-        .padding()
-        .frame(width: 500)
+    static func displayName(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ")
     }
-
-    #Preview("Chat Bubble - Streaming") {
-        ChatBubble(message: ChatMessage(sender: .bobe, content: "Thinking about this", isStreaming: true))
-            .environment(\.theme, allThemes[0])
-            .padding()
-            .frame(width: 500)
-    }
-
-    #Preview("Chat Stack") {
-        ChatStack(messages: [
-            ChatMessage(sender: .bobe, content: "Hey! I noticed you've been working on the settings panel."),
-            ChatMessage(sender: .user, content: "Yeah, I'm trying to get the theme picker working."),
-            ChatMessage(sender: .bobe, content: "I can see that! The colors are looking great so far."),
-            ChatMessage(sender: .user, content: "Thanks! Any suggestions?"),
-            ChatMessage(sender: .bobe, content: "You might want to add a preview for the avatar in each theme card."),
-        ])
-        .environment(\.theme, allThemes[0])
-        .frame(width: 540, height: 400)
-        .background(allThemes[0].colors.background)
-    }
-#endif
+}

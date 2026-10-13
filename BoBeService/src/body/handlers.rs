@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::{Extension, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use futures::{SinkExt, StreamExt};
@@ -11,15 +11,15 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::gateway::{AdapterInputDisposition, BodyGateway};
+use super::identity::BodyPeerIdentity;
 use super::outbound::{OutboundReceiver, OutboundSender, send_json, send_message};
 use super::protocol::{
-    ADAPTER_SUBPROTOCOL_V1, AUDIO_FRAME_DURATION_MS, AdapterAudioFormat, AdapterInbound,
-    AdapterMediaHeader, AdapterMediaKind, AdapterWelcome, BODY_SUBPROTOCOL_V1, BodyHello,
-    BodyWelcome, CAPTURE_CHANNELS, CAPTURE_CODEC, CAPTURE_SAMPLE_RATE_HZ, CaptureCancel,
-    CaptureDecision, CaptureRequest, MAX_CONTROL_BYTES, MediaHeader, PROTOCOL_MAJOR,
-    PROTOCOL_MINOR, PlaybackCredit, RouteDescriptor, RoutedStreamControl, SPEAKER_CHANNELS,
-    SPEAKER_CODEC, SPEAKER_SAMPLE_RATE_HZ, TTS_CHANNELS, TTS_CODEC, TTS_SAMPLE_RATE_HZ,
-    control_type,
+    ADAPTER_PROTOCOL_MINOR, ADAPTER_SUBPROTOCOL_V1, AUDIO_FRAME_DURATION_MS, AdapterAudioFormat,
+    AdapterInbound, AdapterWelcome, BODY_SUBPROTOCOL_V1, BodyBatteryState, BodyHealthReport,
+    BodyHello, BodyWelcome, CAPTURE_CHANNELS, CAPTURE_CODEC, CAPTURE_SAMPLE_RATE_HZ, CaptureCancel,
+    CaptureDecision, CaptureRequest, MAX_CONTROL_BYTES, MediaHeader, OfferDecision, PROTOCOL_MAJOR,
+    PlaybackCredit, RouteDescriptor, RoutedStreamControl, UpdateStateReport, control_type,
+    negotiate_protocol_minor,
 };
 
 const CHANNEL_CAPACITY: usize = 64;
@@ -76,16 +76,25 @@ fn select_subprotocol(mut upgrade: WebSocketUpgrade, expected: &str) -> Option<W
 pub(crate) async fn body_stream(
     upgrade: WebSocketUpgrade,
     State(gateway): State<Arc<BodyGateway>>,
+    Extension(identity): Extension<BodyPeerIdentity>,
+    Extension(endpoints): Extension<Arc<crate::db::endpoint_repo::EndpointRepo>>,
+    Extension(registry_lock): Extension<Arc<tokio::sync::Mutex<()>>>,
 ) -> Response {
     let Some(upgrade) = select_subprotocol(upgrade, BODY_SUBPROTOCOL_V1) else {
         return StatusCode::UPGRADE_REQUIRED.into_response();
     };
     upgrade
-        .on_upgrade(move |socket| handle_body(socket, gateway))
+        .on_upgrade(move |socket| handle_body(socket, gateway, identity, endpoints, registry_lock))
         .into_response()
 }
 
-async fn handle_body(socket: WebSocket, gateway: Arc<BodyGateway>) {
+async fn handle_body(
+    socket: WebSocket,
+    gateway: Arc<BodyGateway>,
+    identity: BodyPeerIdentity,
+    endpoints: Arc<crate::db::endpoint_repo::EndpointRepo>,
+    registry_lock: Arc<tokio::sync::Mutex<()>>,
+) {
     let (sink, mut stream) = socket.split();
     let Some(hello_text) = first_text(&mut stream).await else {
         return;
@@ -96,23 +105,67 @@ async fn handle_body(socket: WebSocket, gateway: Arc<BodyGateway>) {
     if control_type(&value) != Some("hello") {
         return;
     }
-    let Ok(hello) = serde_json::from_value::<BodyHello>(value) else {
+    let Ok(hello) = serde_json::from_str::<BodyHello>(&hello_text) else {
         return;
     };
-    if !valid_hello(&hello) {
+    let Some(negotiated_minor) = negotiate_protocol_minor(&hello) else {
         return;
+    };
+    let registry_guard = registry_lock.lock().await;
+    let (capabilities, limits) = (hello.capabilities.clone(), hello.limits.clone());
+    let Ok(Some(endpoint)) = endpoints.active_by_id(&hello.device_id).await else {
+        return;
+    };
+    let Ok(approved) = serde_json::from_str::<serde_json::Value>(&endpoint.capabilities_json)
+    else {
+        return;
+    };
+    if !valid_hello(&hello)
+        || identity.endpoint_id != hello.device_id
+        || endpoint.kind != "physical_body"
+        || endpoint.certificate_sha256.as_deref() != Some(identity.certificate_sha256.as_slice())
+        || !capabilities.validates_registration(negotiated_minor, &limits)
+        || !capabilities.authorized_by(negotiated_minor, &approved)
+    {
+        return;
+    }
+    if !(endpoint.protocol_min..=endpoint.protocol_max).contains(&i64::from(negotiated_minor)) {
+        return;
+    }
+    let Ok(capabilities_json) = serde_json::to_string(&serde_json::json!({
+        "capabilities": capabilities,
+        "limits": limits,
+    })) else {
+        return;
+    };
+    match endpoints
+        .update_observed_capabilities(&hello.device_id, &capabilities_json)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) | Err(_) => return,
     }
 
     let (sender, receiver) = mpsc::channel(CHANNEL_CAPACITY);
     let disconnect = CancellationToken::new();
-    let registration =
-        match gateway.register_body(hello.device_id.clone(), sender.clone(), disconnect.clone()) {
-            Ok(registration) => registration,
-            Err(reason) => {
-                warn!(device_id = %hello.device_id, reason, "body.registration_rejected");
-                return;
-            }
-        };
+    let registration = match gateway.register_body(
+        hello.device_id.clone(),
+        hello.boot_id.clone(),
+        sender.clone(),
+        disconnect.clone(),
+        capabilities.clone(),
+        limits,
+    ) {
+        Ok(registration) => registration,
+        Err(reason) => {
+            warn!(device_id = %hello.device_id, reason, "body.registration_rejected");
+            return;
+        }
+    };
+    drop(registry_guard);
+    if let Some(route) = registration.superseded_route.as_ref() {
+        gateway.release_route(route, "body_rebooted", true).await;
+    }
     let writer = spawn_writer(sink, receiver, disconnect.clone());
     let session_id = registration.session_id.to_string();
     if !send_json(
@@ -120,7 +173,7 @@ async fn handle_body(socket: WebSocket, gateway: Arc<BodyGateway>) {
         &BodyWelcome {
             r#type: "welcome",
             protocol_major: PROTOCOL_MAJOR,
-            protocol_minor: PROTOCOL_MINOR,
+            protocol_minor: negotiated_minor,
             session_id: &session_id,
             connection_generation: registration.generation,
             heartbeat_interval_ms: HEARTBEAT_INTERVAL_MS,
@@ -128,6 +181,17 @@ async fn handle_body(socket: WebSocket, gateway: Arc<BodyGateway>) {
         },
     )
     .await
+    {
+        gateway
+            .unregister_body(&hello.device_id, registration.generation)
+            .await;
+        writer.abort();
+        return;
+    }
+    if capabilities.display.is_some()
+        && !gateway
+            .send_current_theme_to_body(&hello.device_id, registration.generation)
+            .await
     {
         gateway
             .unregister_body(&hello.device_id, registration.generation)
@@ -180,7 +244,7 @@ async fn handle_body(socket: WebSocket, gateway: Arc<BodyGateway>) {
                 };
                 if route.capture_stream_id != header.stream_id
                     || !gateway
-                        .forward_microphone(&route, header.sequence, &bytes)
+                        .forward_microphone(&route, header.sequence, header.flags, &bytes)
                         .await
                 {
                     break;
@@ -210,9 +274,7 @@ async fn handle_body(socket: WebSocket, gateway: Arc<BodyGateway>) {
 }
 
 fn valid_hello(hello: &BodyHello) -> bool {
-    hello.protocol_major == PROTOCOL_MAJOR
-        && hello.protocol_minor == PROTOCOL_MINOR
-        && !hello.device_id.is_empty()
+    !hello.device_id.is_empty()
         && hello.device_id.len() <= 64
         && hello.boot_id.len() == 32
         && hello.firmware.len() <= 64
@@ -240,6 +302,11 @@ async fn handle_body_control(
         return false;
     };
     match kind.as_str() {
+        "input.text" | "input.action" | "input.cancel" | "sensor.sample" => {
+            gateway
+                .handle_device_input(device_id, generation, &kind, text)
+                .await
+        }
         "ping" => {
             let nonce = value
                 .get("nonce")
@@ -256,6 +323,16 @@ async fn handle_body_control(
             .await
         }
         "capture.request" => {
+            if !gateway
+                .interaction_connection(device_id, Some(generation))
+                .is_some_and(|connection| {
+                    connection
+                        .capabilities
+                        .validates_audio_turn(&connection.limits)
+                })
+            {
+                return false;
+            }
             let Ok(request) = serde_json::from_value::<CaptureRequest>(value) else {
                 return false;
             };
@@ -267,10 +344,53 @@ async fn handle_body_control(
             {
                 return false;
             }
+            if request.trigger == "wake_word" {
+                match gateway
+                    .arbitrate_wake(device_id, &request.request_id, request.wake.as_ref())
+                    .await
+                {
+                    crate::body::wake_arbitrator::WakeDecision::Winner => {}
+                    crate::body::wake_arbitrator::WakeDecision::Lost => {
+                        return send_json(
+                            sender,
+                            &CaptureDecision {
+                                r#type: "capture.denied",
+                                protocol_major: PROTOCOL_MAJOR,
+                                request_id: &request.request_id,
+                                stream_id: request.stream_id,
+                                lease_id: None,
+                                turn_id: None,
+                                lease_ttl_ms: None,
+                                reason: Some("wake_arbitration_lost"),
+                            },
+                        )
+                        .await;
+                    }
+                    crate::body::wake_arbitrator::WakeDecision::ExplicitCapturePreempted => {
+                        return send_json(
+                            sender,
+                            &CaptureDecision {
+                                r#type: "capture.denied",
+                                protocol_major: PROTOCOL_MAJOR,
+                                request_id: &request.request_id,
+                                stream_id: request.stream_id,
+                                lease_id: None,
+                                turn_id: None,
+                                lease_ttl_ms: None,
+                                reason: Some("explicit_capture_preempted"),
+                            },
+                        )
+                        .await;
+                    }
+                }
+            } else {
+                gateway.preempt_pending_wake().await;
+            }
             match gateway.acquire_lease(
                 device_id,
                 generation,
                 &request.request_id,
+                &request.trigger,
                 request.stream_id,
             ) {
                 Ok(grant) => {
@@ -299,7 +419,7 @@ async fn handle_body_control(
                     if !gateway.attach_expiry_abort(&route, abort) {
                         expiry.abort();
                     }
-                    drop(expiry); // Detached but cancellable through the lease's AbortHandle.
+                    drop(expiry);
                     true
                 }
                 Err(reason) => {
@@ -399,7 +519,49 @@ async fn handle_body_control(
                     .playback_failed(&route, control.stream_id, reason)
                     .await
         }
-        "health.report" | "battery.state" | "button.event" => true,
+        "health.report" => {
+            let Ok(health) = serde_json::from_value::<BodyHealthReport>(value) else {
+                return false;
+            };
+            match gateway.record_health_report(device_id, generation, health) {
+                OfferDecision::Send => gateway.send_update_offer(device_id, generation).await,
+                OfferDecision::AlreadyOffered
+                | OfferDecision::NotNewer
+                | OfferDecision::NotConfigured
+                | OfferDecision::NoHealthYet
+                | OfferDecision::StaleConnection => true,
+            }
+        }
+        "battery.state" => {
+            let Ok(battery) = serde_json::from_value::<BodyBatteryState>(value) else {
+                return false;
+            };
+            if battery.percent > 100 {
+                return false;
+            }
+            gateway.record_battery_state(device_id, generation, battery);
+            true
+        }
+        "update.state" => {
+            let Ok(report) = serde_json::from_value::<UpdateStateReport>(value) else {
+                return false;
+            };
+            if !report.fields_are_valid() {
+                return false;
+            }
+            if !report.has_known_phase() {
+                tracing::warn!(
+                    device_id,
+                    connection_generation = generation,
+                    phase = %report.phase,
+                    "body.update_state_unknown_phase"
+                );
+                return true;
+            }
+            gateway.record_update_state(device_id, generation, report);
+            true
+        }
+        "button.event" => true,
         _ => false,
     }
 }
@@ -429,19 +591,11 @@ async fn handle_adapter(socket: WebSocket, gateway: Arc<BodyGateway>) {
         protocol_major,
         protocol_minor,
         capture_format,
-        tts_format,
-        speaker_format,
     }) = serde_json::from_str::<AdapterInbound>(&hello_text)
     else {
         return;
     };
-    if !valid_adapter_contract(
-        protocol_major,
-        protocol_minor,
-        &capture_format,
-        &tts_format,
-        &speaker_format,
-    ) {
+    if !valid_adapter_contract(protocol_major, protocol_minor, &capture_format) {
         return;
     }
     let (sender, receiver) = mpsc::channel(CHANNEL_CAPACITY);
@@ -465,7 +619,7 @@ async fn handle_adapter(socket: WebSocket, gateway: Arc<BodyGateway>) {
         &AdapterWelcome {
             r#type: "adapter.welcome",
             protocol_major: PROTOCOL_MAJOR,
-            protocol_minor: PROTOCOL_MINOR,
+            protocol_minor: ADAPTER_PROTOCOL_MINOR,
             adapter_generation: generation,
         },
     )
@@ -496,26 +650,9 @@ async fn handle_adapter(socket: WebSocket, gateway: Arc<BodyGateway>) {
                     AdapterInputDisposition::Invalid => false,
                 }
             }
-            Message::Binary(bytes) => {
-                let Some((header, payload)) = AdapterMediaHeader::parse(&bytes) else {
-                    break;
-                };
-                if header.kind == AdapterMediaKind::SpeakerPcm {
-                    match gateway.receive_speaker_pcm(header, payload).await {
-                        AdapterInputDisposition::Accepted => true,
-                        AdapterInputDisposition::Stale => {
-                            tracing::debug!("body.stale_adapter_pcm_dropped");
-                            true
-                        }
-                        AdapterInputDisposition::Invalid => false,
-                    }
-                } else {
-                    false
-                }
-            }
             Message::Ping(payload) => send_message(&sender, Message::Pong(payload)).await,
             Message::Pong(_) => true,
-            Message::Close(_) | Message::Text(_) => false,
+            Message::Binary(_) | Message::Close(_) | Message::Text(_) => false,
         };
         if !valid {
             break;
@@ -533,36 +670,13 @@ fn valid_adapter_contract(
     protocol_major: u8,
     protocol_minor: u8,
     capture: &AdapterAudioFormat,
-    tts: &AdapterAudioFormat,
-    speaker: &AdapterAudioFormat,
 ) -> bool {
     protocol_major == PROTOCOL_MAJOR
-        && protocol_minor == PROTOCOL_MINOR
-        && format_matches(
-            capture,
-            CAPTURE_CODEC,
-            CAPTURE_SAMPLE_RATE_HZ,
-            CAPTURE_CHANNELS,
-        )
-        && format_matches(tts, TTS_CODEC, TTS_SAMPLE_RATE_HZ, TTS_CHANNELS)
-        && format_matches(
-            speaker,
-            SPEAKER_CODEC,
-            SPEAKER_SAMPLE_RATE_HZ,
-            SPEAKER_CHANNELS,
-        )
-}
-
-fn format_matches(
-    format: &AdapterAudioFormat,
-    codec: &str,
-    sample_rate_hz: u32,
-    channels: u8,
-) -> bool {
-    format.codec == codec
-        && format.sample_rate_hz == sample_rate_hz
-        && format.channels == channels
-        && format.frame_duration_ms == AUDIO_FRAME_DURATION_MS
+        && protocol_minor == ADAPTER_PROTOCOL_MINOR
+        && capture.codec == CAPTURE_CODEC
+        && capture.sample_rate_hz == CAPTURE_SAMPLE_RATE_HZ
+        && capture.channels == CAPTURE_CHANNELS
+        && capture.frame_duration_ms == AUDIO_FRAME_DURATION_MS
 }
 
 async fn handle_adapter_control(gateway: &Arc<BodyGateway>, text: &str) -> AdapterInputDisposition {
@@ -628,16 +742,10 @@ mod tests {
     #[test]
     fn adapter_contract_rejects_version_and_media_drift() {
         let capture = format("pcm_s16le", 16_000);
-        let tts = format("opus", 24_000);
-        let speaker = format("pcm_s16le", 24_000);
-        assert!(valid_adapter_contract(1, 1, &capture, &tts, &speaker));
-        assert!(!valid_adapter_contract(1, 0, &capture, &tts, &speaker));
-        assert!(!valid_adapter_contract(
-            1,
-            1,
-            &format("pcm_s16le", 24_000),
-            &tts,
-            &speaker,
-        ));
+        assert!(valid_adapter_contract(1, 1, &capture));
+        assert!(!valid_adapter_contract(1, 0, &capture));
+        assert!(!valid_adapter_contract(2, 1, &capture));
+        assert!(!valid_adapter_contract(1, 1, &format("pcm_s16le", 24_000)));
+        assert!(!valid_adapter_contract(1, 1, &format("opus", 16_000)));
     }
 }

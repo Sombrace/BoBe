@@ -1,0 +1,120 @@
+menu "BoBe voice runtime"
+
+config BOBE_ENABLE_TEXT_INPUT
+    bool "Keyboard/text input on the voice body"
+    default n
+    help
+        Requires owner enrollment granting text_input and BodyLink minor 2.
+
+config BOBE_ENABLE_TEXT_OUTPUT
+    bool "Plain-text output callback on the voice body"
+    default n
+    help
+        Register esp_bobe_set_event_handler before starting the runtime.
+        Requires owner enrollment granting text_output and BodyLink minor 2.
+
+config BOBE_ENABLE_ACTION_INPUT
+    bool "Application action buttons on the voice body"
+    default n
+
+config BOBE_ENABLE_SENSOR_REPORTS
+    bool "Application sensor reports on the voice body"
+    default n
+
+config BOBE_BODY_ENDPOINT_URI
+    string "BodyLink WebSocket URI"
+    default ""
+    help
+        Use wss:// for real deployments. An empty value keeps the body in
+        offline mode while board, display, audio, and controls remain active.
+
+config BOBE_ENABLE_DEV_WIFI_BOOTSTRAP
+    bool "Embed development Wi-Fi credentials"
+    default n
+    help
+        Development-only bootstrap for seeding Wi-Fi NVS on a test device.
+        Product builds must keep this disabled.
+
+config BOBE_WIFI_SSID
+    string "Development Wi-Fi SSID"
+    default ""
+    depends on BOBE_ENABLE_DEV_WIFI_BOOTSTRAP
+    help
+        Development-only bootstrap. Product builds use secure provisioning.
+        The generated sdkconfig is ignored and must never be committed.
+
+config BOBE_WIFI_PASSWORD
+    string "Development Wi-Fi password"
+    default ""
+    depends on BOBE_ENABLE_DEV_WIFI_BOOTSTRAP
+    help
+        Development-only bootstrap. Product builds use secure provisioning.
+        The generated sdkconfig is ignored and must never be committed.
+
+config BOBE_ALLOW_INSECURE_WS
+    bool "Allow unencrypted ws:// endpoints"
+    default n
+    help
+        Development escape hatch. Production must use authenticated TLS.
+
+config BOBE_ENABLE_ESP_SR
+    bool "Enable ESP-SR audio front end"
+    default n
+    help
+        Enables the optional AFE, VAD, pre-roll, and WakeNet edge profile.
+
+config BOBE_ENABLE_SECURE_PROVISIONING
+    bool "Enable Security 2 provisioning"
+    default n
+    select ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
+    help
+        Requires per-device Security 2 credentials generated with
+        tools/generate_provisioning_credentials.sh. The generated source and
+        password manifest stay under private/ and are never committed.
+
+choice BOBE_PROVISIONING_TRANSPORT
+    prompt "Security 2 provisioning transport"
+    default BOBE_PROVISIONING_TRANSPORT_SOFTAP
+    depends on BOBE_ENABLE_SECURE_PROVISIONING
+
+config BOBE_PROVISIONING_TRANSPORT_SOFTAP
+    bool "WPA2 SoftAP and HTTP"
+    help
+        Starts a per-device WPA2 SoftAP for provisioning. Select the
+        transport supported by your board and provisioning client.
+
+config BOBE_PROVISIONING_TRANSPORT_BLE
+    bool "Bluetooth LE"
+    select BT_ENABLED
+    help
+        Use NimBLE provisioning on hardware with a verified BLE radio.
+        BT_HOST is a Kconfig choice and cannot be selected here; include
+        a board-specific defaults file with CONFIG_BT_NIMBLE_ENABLED=y.
+
+endchoice
+
+config BOBE_PROVISIONING_WINDOW_SECONDS
+    int "Provisioning window duration"
+    range 60 1800
+    default 600
+    depends on BOBE_ENABLE_SECURE_PROVISIONING
+
+config BOBE_BUILD_NUMBER
+    int "Monotonic firmware build number"
+    range 1 2147483647
+    default 2
+    help
+        Must increase for every firmware release. Signed OTA manifests with an
+        equal or lower build number are rejected before download.
+
+config BOBE_UI_FPS
+    int "Maximum active face frame rate"
+    range 15 60
+    default 30
+
+config BOBE_AUDIO_PLAYBACK_CREDIT_MS
+    int "Maximum queued playback audio in milliseconds"
+    range 120 300
+    default 300
+
+endmenu

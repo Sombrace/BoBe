@@ -1,0 +1,16 @@
+{
+  "calibration_id": "00000000000000000000000000000000",
+  "expires_at": "2030-01-01T00:00:00+00:00",
+  "fixture_id": "replace-with-acoustic-fixture-id",
+  "input_device_name": "replace-with-exact-input-name",
+  "output_device_name": "replace-with-exact-output-name",
+  "sample_rate": 48000,
+  "schema_version": 1,
+  "target": "wb12-audio",
+  "thresholds": {
+    "max_clipped_samples": 0,
+    "max_dropout_frames_20ms": 0,
+    "max_latency_ms": 0.0,
+    "min_normalized_correlation": 0.0
+  }
+}

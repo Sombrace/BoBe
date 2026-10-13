@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Sombrace/BoBe/security/advisories/new
+    about: Please report security problems privately, not in a public issue.
+  - name: Guides and troubleshooting
+    url: https://github.com/Sombrace/BoBe/blob/main/docs/README.md
+    about: Getting started, everyday use, the command line and common problems.

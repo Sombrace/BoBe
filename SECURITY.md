@@ -13,7 +13,7 @@ Only the latest release receives security updates.
 
 **Please do not open a public issue for security vulnerabilities.**
 
-Instead, report them privately via **[GitHub Security Advisories](https://github.com/athatheo/BoBe/security/advisories/new)**.
+Instead, report them privately via **[GitHub Security Advisories](https://github.com/Sombrace/BoBe/security/advisories/new)**.
 
 Include:
 
@@ -28,7 +28,7 @@ We will acknowledge receipt within 48 hours and aim to provide a fix or mitigati
 
 The following are in scope:
 
-- **Rust backend** (`src/`) — API handlers, LLM orchestration, tool execution, file access, config/secrets handling
+- **Rust backend** (`BoBeService/src/`) — API handlers, LLM orchestration, tool execution, file access, config/secrets handling
 - **Swift frontend** (`BoBeMacUI/`) — backend communication, credential handling
 - **Build and release tooling** — code signing, notarization, packaging, and update distribution
 - **MCP server integration** — command validation, environment handling
@@ -47,7 +47,7 @@ BoBe is designed with the following security properties:
 - Host validation middleware on every owner-facing HTTP route; the separate
   BodyLink listeners use mTLS device identity or a scoped loopback adapter token
 - Secrets are stored through the platform secret-store abstraction and handled in-memory with the `secrecy` crate
-- Shell and arbitrary file-write requests are denied; memory and goal mutations use exact allowlisted daemon-owned tools
+- Tools run with the owner's user account and start in BoBe's workspace. This is a single-owner boundary, not an operating-system sandbox. The owner can disable a tool with `bobe agent tools disable <tool>`. Memory and goal changes go through daemon-owned tools
 - MCP commands are validated against a configurable blocklist
 - CORS defaults to localhost origins and is not treated as authentication
 - The optional BodyLink listener requires both CA validation and an exact

@@ -1,49 +1,53 @@
 import Darwin
 import Foundation
 
-// Cross-language pairs are locked by check-cross-language-constants.sh.
 
-enum DaemonEndpoint: Sendable {
-    case managedLocal
-    case remote(baseURL: URL, bearerToken: String)
-
-    static func load(environment: [String: String] = ProcessInfo.processInfo.environment) -> Self {
-        guard let rawURL = environment["BOBE_DAEMON_URL"], !rawURL.isEmpty else {
-            return .managedLocal
-        }
-        guard let url = URL(string: rawURL),
-              url.scheme?.lowercased() == "https",
-              let host = url.host,
-              !host.isEmpty,
-              !Self.isLoopbackHost(host),
-              url.user == nil,
-              url.password == nil,
-              url.query == nil,
-              url.fragment == nil,
-              let token = environment["BOBE_DAEMON_TOKEN"],
-              !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            fatalError("Remote BOBE_DAEMON_URL requires an https non-loopback URL and BOBE_DAEMON_TOKEN")
-        }
-        return .remote(baseURL: url, bearerToken: token)
-    }
+enum DaemonEndpoint: Sendable, Equatable {
+    case unavailable
+    case managedLocal(bearerToken: String?)
+    case attachedLocal(baseURL: URL, bearerToken: String?)
+    case remote(baseURL: URL, bearerToken: String, tlsSPKISha256: Data? = nil)
 
     var baseURL: URL {
         switch self {
+        case .unavailable:
+            return URL(fileURLWithPath: "/dev/null")
         case .managedLocal:
-            return URL(string: "http://127.0.0.1:\(DaemonConfig.defaultPort)")
+            return URL(string: "http://127.0.0.1:\(DaemonConfig.managedPort)")
                 ?? URL(fileURLWithPath: "/")
-        case let .remote(baseURL, _):
+        case let .attachedLocal(baseURL, _), let .remote(baseURL, _, _):
             return baseURL
         }
     }
 
     var bearerToken: String? {
-        guard case let .remote(_, token) = self else { return nil }
-        return token
+        switch self {
+        case .unavailable:
+            return nil
+        case let .managedLocal(token): return token
+        case let .attachedLocal(_, token): return token
+        case let .remote(_, token, _): return token
+        }
+    }
+
+    var tlsSPKISha256: Data? {
+        if case let .remote(_, _, pin) = self { return pin }
+        return nil
     }
 
     var managesLocalProcess: Bool {
+        if case .managedLocal = self { return true }
+        return false
+    }
+
+    var canRestartRuntime: Bool { self.managesLocalProcess }
+
+    var isLoopbackRuntime: Bool {
+        guard let host = self.baseURL.host else { return false }
+        return Self.isLoopbackHost(host)
+    }
+
+    var daemonFilesystemIsLocalToApp: Bool {
         if case .managedLocal = self { return true }
         return false
     }
@@ -71,14 +75,45 @@ enum DaemonEndpoint: Sendable {
 
 enum DaemonConfig {
     static let defaultHost = "127.0.0.1"
-    /// Mirror: Rust `DEFAULT_DAEMON_PORT`.
     static let defaultPort = 8766
-    static let endpoint = DaemonEndpoint.load()
-    static let baseURL = endpoint.baseURL.absoluteString
+
+    static var managedPort: Int {
+        self.managedPort(environment: ProcessInfo.processInfo.environment)
+    }
+
+    static func managedPort(environment: [String: String]) -> Int {
+        guard environment["BOBE_DEV"] == "1",
+              let raw = environment["BOBE_MANAGED_PORT"],
+              let port = Int(raw),
+              (1 ... Int(UInt16.max)).contains(port)
+        else { return self.defaultPort }
+        return port
+    }
+
+    static var managedDataDirectory: URL {
+        self.managedDataDirectory(
+            environment: ProcessInfo.processInfo.environment,
+            homeDirectory: FileManager.default.homeDirectoryForCurrentUser
+        )
+    }
+
+    static func managedDataDirectory(
+        environment: [String: String],
+        homeDirectory: URL
+    ) -> URL {
+        if environment["BOBE_DEV"] == "1",
+           let path = environment["BOBE_MANAGED_DATA_DIR"],
+           path.hasPrefix("/") {
+            return URL(fileURLWithPath: path, isDirectory: true).standardizedFileURL
+        }
+        return homeDirectory.appendingPathComponent(BobePaths.dataDirName, isDirectory: true)
+    }
+
+    static var endpoint: DaemonEndpoint { EndpointStore.shared.endpoint ?? .unavailable }
+    static var baseURL: String { self.endpoint.baseURL.absoluteString }
 }
 
 enum PrivacyWire {
-    /// Mirror: Rust `constants::privacy::CLIENT_TIMEOUT_SECS`.
     static let purgeRequestTimeoutSeconds: TimeInterval = 60
 }
 
@@ -114,48 +149,31 @@ enum OllamaDefaults {
     static let v1URL = "http://127.0.0.1:11434/v1"
 }
 
-/// Mirror: Rust `engine_kind::*`.
-enum EngineKind {
-    static let copilotCloud = "copilot_cloud"
-    static let local = "local"
-}
-
-/// `~/$HOME` subdir. Mirror: Rust `BOBE_DATA_DIR_NAME`. `$BOBE_DATA_DIR`
-/// env override on the Rust side; Swift mirrors only the relative name.
 enum BobePaths {
     static let dataDirName = ".bobe"
 }
 
-/// Mirror: Rust `tool_call_status::*`.
 enum ToolCallStatusWire {
     static let start = "start"
     static let complete = "complete"
 }
 
-/// EOU debounce ms per `voice.pause_sensitivity`. Mirror: Rust
-/// `pause_sensitivity_ms::*`.
-///
-/// Values are tuned for the FluidAudio Parakeet streaming EOU model, which
-/// already does linguistic + acoustic end-of-turn prediction before the
-/// debounce timer starts — the debounce is just a safety wait for trailing
-/// silence. The previous 1280ms balanced default (the model's published
-/// reference value) felt sluggish in practice; 800ms is the FluidAudio
-/// reference VAD-EOU value used by the Nemotron path and matches what shipping
-/// voice agents like Whisper-based pipelines use.
 enum PauseSensitivityMs {
     static let tight: Int = 400
     static let balanced: Int = 800
     static let patient: Int = 1500
 }
 
+enum VoiceSttEngineId {
+    static let appleSpeechAnalyzer = "apple_speech_analyzer"
+    static let fluidAudioParakeet = "fluidaudio_parakeet_eou"
+    static let fluidAudioNemotron = "fluidaudio_nemotron"
+}
+
 enum VoiceSttTuning {
-    /// Nemotron's trained 1.12s tier halves multilingual partial latency from
-    /// the 2.24s throughput default without using the most aggressive 560ms tier.
     static let nemotronChunkMs = 1_120
 }
 
-/// Wire form for both `/voice/install/status` and `/local-runtime/status`.
-/// Mirror: Rust `InstallStatus` (serde snake_case).
 enum InstallStatusWire: String, Codable, Sendable, Equatable {
     case idle
     case running
@@ -164,43 +182,42 @@ enum InstallStatusWire: String, Codable, Sendable, Equatable {
     case failed
 }
 
-/// Mirror: Rust `voice_wire::*`.
 enum VoiceWire {
     static let ttsOutputSampleRate = 24_000
     static let kokoroModelDir = "kokoro-multi-lang-v1_0"
+    static let streamingSttModelDir = "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17"
     static let defaultPersona = "af_bella"
     static let modelKindTts = "tts"
-    /// WS subprotocol — advertised in the client's Sec-WebSocket-Protocol
-    /// header, echoed by the daemon. Reserves the rev hook for a future v2.
-    static let subprotocolV1 = "bobe.voice.v1"
+    static let modelKindStt = "stt"
+    static let subprotocolV2 = "bobe.voice.v2"
 }
 
-/// Mirror: Rust `mcp_status::*`. MCPServersPanel.statusBadge has a
-/// `.default` fallback for unknown future statuses.
 enum McpServerStatusWire {
     static let connected = "connected"
     static let failed = "failed"
-    static let needsAuth = "needs-auth"
     static let pending = "pending"
-    static let disabled = "disabled"
-    static let notConfigured = "not-configured"
-    static let unknown = "unknown"
+    static let stopped = "stopped"
 }
 
 enum WindowSizes {
-    static let widthCollapsed: CGFloat = 184
-    static let widthComposer: CGFloat = 430
-    static let widthExpanded: CGFloat = 540
-    static let heightCollapsed: CGFloat = 196
-    static let heightAvatar: CGFloat = 180
-    static let heightInput: CGFloat = 70
-    static let heightExpandedChrome: CGFloat = 56
+    static let margin: CGFloat = 16
+    static let shadowInset: CGFloat = 26
+    static let clusterTrailing: CGFloat = 18
+    static let clusterBottom: CGFloat = 18
+    static let columnAmbient: CGFloat = 304
+    static let columnAsk: CGFloat = 364
+    static let columnConversation: CGFloat = 428
+    static let columnBaseline: CGFloat = 37
+    static let heightCollapsed: CGFloat = 164
+    static let heightAmbient: CGFloat = 430
+    static let heightAsk: CGFloat = 620
+    static let heightConversation: CGFloat = 760
+    static let heightThreadChrome: CGFloat = 115
     static let heightChatViewportMin: CGFloat = 48
     static let heightChatViewportMax: CGFloat = 560
     static let heightAmbientMessageViewport: CGFloat = 240
-    static let heightAmbientAnswer: CGFloat = 500
     static let heightMax: CGFloat = 900
-    static let margin: CGFloat = 16
+    static let settleMilliseconds = 560
 }
 
 enum StoreTiming {
@@ -208,14 +225,12 @@ enum StoreTiming {
     static let lastMessageClearSeconds: TimeInterval = 30
     static let toolCompletionLingerSeconds: TimeInterval = 5
     static let conversationClearSeconds: TimeInterval = 3
-    static let captureRetryBaseMilliseconds = 350
-    /// How long the SSE may be disconnected before the "Reconnecting…"
-    /// label appears. Sized to absorb the typical sub-second instant
-    /// reconnect after a transient drop so the user never sees flicker.
     static let reconnectStatusDelayMilliseconds = 1500
+    static let screenGlanceMilliseconds = 1200
 }
 
 enum InactivityTiming {
     static let timeoutSeconds: TimeInterval = 10 * 60
+    static let settleSeconds: TimeInterval = 90
     static let checkIntervalSeconds: TimeInterval = 30
 }

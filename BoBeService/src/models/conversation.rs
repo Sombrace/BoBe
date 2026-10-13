@@ -1,12 +1,12 @@
 use chrono::{DateTime, Utc};
 
-use super::ids::{ConversationId, ConversationTurnId};
+use super::ids::{ConversationChannelId, ConversationId, ConversationTurnId};
 use super::types::{ConversationState, TurnRole};
 
-/// Invariant: only one conversation open (`PENDING` or `ACTIVE`) at a time.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub(crate) struct Conversation {
     pub(crate) id: ConversationId,
+    pub(crate) channel_id: ConversationChannelId,
     pub(crate) state: ConversationState,
     pub(crate) closed_at: Option<DateTime<Utc>>,
     pub(crate) summary: Option<String>,
@@ -19,6 +19,7 @@ impl Conversation {
         let now = Utc::now();
         Self {
             id: ConversationId::new(),
+            channel_id: ConversationChannelId::OWNER,
             state: ConversationState::Pending,
             closed_at: None,
             summary: None,
@@ -31,6 +32,7 @@ impl Conversation {
         let now = Utc::now();
         Self {
             id: ConversationId::new(),
+            channel_id: ConversationChannelId::OWNER,
             state: ConversationState::Active,
             closed_at: None,
             summary: None,
@@ -43,13 +45,15 @@ impl Conversation {
         self.state == ConversationState::Pending
     }
 
+    pub(crate) fn in_channel(mut self, channel_id: ConversationChannelId) -> Self {
+        self.channel_id = channel_id;
+        self
+    }
+
     pub(crate) fn is_closed(&self) -> bool {
         self.state == ConversationState::Closed
     }
 
-    /// Lighter variant: takes the last user-turn timestamp directly so
-    /// callers can sidestep loading every turn row just to find the most
-    /// recent user message.
     pub(crate) fn is_stale_since(
         &self,
         auto_close_minutes: i64,

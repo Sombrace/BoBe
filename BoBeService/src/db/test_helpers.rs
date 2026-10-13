@@ -1,5 +1,3 @@
-//! Per-test in-memory SQLite pool with the production schema applied.
-
 #![allow(
     clippy::expect_used,
     reason = "test setup panics on precondition failures"
@@ -10,7 +8,6 @@ use std::str::FromStr;
 
 const SCHEMA: &str = include_str!("../../migrations/schema.sql");
 
-/// Single-connection on purpose: sqlx gives each `:memory:` connection its own DB.
 pub(crate) async fn in_memory_pool() -> SqlitePool {
     let opts = SqliteConnectOptions::from_str("sqlite::memory:")
         .expect("test setup: in-memory sqlite url is well-formed")

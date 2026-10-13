@@ -1,46 +1,29 @@
-//! Per-WS voice session state. Mode B (client owns ASR) — daemon never
-//! decodes audio. Session tracks the per-WS preferences from Hello plus
-//! the in-flight turn handle.
-
 use std::time::Instant;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::app_state::AppState;
+use crate::speech::SpeechPlan;
 
-/// Outbound TTS Opus sample rate (Kokoro native). Single source at
-/// `crate::constants::voice_wire::TTS_OUTPUT_SAMPLE_RATE`; re-exported
-/// here so existing imports keep working.
-pub(crate) use crate::constants::voice_wire::TTS_OUTPUT_SAMPLE_RATE;
-
-/// Per-WS voice preferences carried in the Hello handshake. Stored on
-/// `VoiceSession` and read by the kokoro task. Falls back to the daemon's
-/// `voice.persona` / `voice.speed` defaults from `Config`.
 #[derive(Clone)]
 pub(crate) struct SessionVoiceConfig {
-    pub(crate) voice_id: String,
     pub(crate) speed: f32,
-    pub(crate) client_tts: bool,
+    pub(crate) speech_plan: SpeechPlan,
 }
 
 impl SessionVoiceConfig {
     pub(crate) fn new(
-        voice_id: Option<String>,
         speed: Option<f32>,
-        tts_backend: Option<&str>,
+        speech_plan: SpeechPlan,
         defaults: &VoiceDefaults,
     ) -> Self {
         Self {
-            voice_id: voice_id.unwrap_or_else(|| defaults.persona.clone()),
             speed: speed.unwrap_or(defaults.speed).clamp(0.5, 2.0),
-            client_tts: tts_backend == Some("client_supertonic"),
+            speech_plan,
         }
     }
 }
 
-/// Snapshot of the daemon's voice defaults captured at WS-accept time.
-/// Decoupled from `Config` so the WS scope doesn't hold an `ArcSwap` guard
-/// across an `await`.
 #[derive(Clone)]
 pub(crate) struct VoiceDefaults {
     pub(crate) enabled: bool,
@@ -63,31 +46,38 @@ impl VoiceDefaults {
     }
 }
 
-/// Per-WS state — one struct, lives in the handle_socket future scope.
 pub(crate) struct VoiceSession {
     pub(crate) session_id: String,
-    /// JoinHandle on the spawned per-turn task plus the turn_id it owns.
-    /// `None` outside a turn; populated when `TranscriptFinal` admits a
-    /// new turn, taken when barge-in or natural completion releases it.
     pub(crate) current_turn: Option<TurnInFlight>,
-    /// Client-requested mute — the client should stop forwarding transcripts
-    /// while true. The daemon still acknowledges the control message for
-    /// UX symmetry, and incoming `TranscriptPartial`/`TranscriptFinal` are
-    /// dropped while muted.
     pub(crate) muted: bool,
-    /// Latest `played_ms` from PlaybackAck. Used as a tighter floor for
-    /// truncate offsets in barge-in when WS jitter delays the client's
-    /// `barge_in.playback_ms_played` value.
     pub(crate) last_acked_played_ms: u64,
-    /// Per-WS voice preferences from the Hello handshake. Falls through to
-    /// defaults if the client didn't specify any.
     pub(crate) voice_cfg: SessionVoiceConfig,
-    /// Most recent client-pushed partial transcript. Drives the cancel-phrase
-    /// regex + MinWords barge-in gate.
     pub(crate) last_partial_text: String,
-    /// BCP-47 language from Hello (defaults to `"en"`). Carried for
-    /// observability / tracing — daemon is language-agnostic otherwise.
-    pub(crate) language: String,
+    pub(crate) capture: Option<VoiceCaptureState>,
+    pub(crate) pending_barge_in: Option<PendingBargeIn>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PendingBargeIn {
+    pub(crate) heard_at: Instant,
+    pub(crate) played_ms: u64,
+    pub(crate) playhead_chunk: u64,
+}
+
+impl PendingBargeIn {
+    const WINDOW: std::time::Duration = std::time::Duration::from_millis(2_000);
+
+    pub(crate) fn is_live(&self, now: Instant) -> bool {
+        now.duration_since(self.heard_at) <= Self::WINDOW
+    }
+}
+
+pub(crate) struct VoiceCaptureState {
+    pub(crate) stream_id: u32,
+    pub(crate) next_sequence: u32,
+    pub(crate) credit_frames: u32,
+    pub(crate) turn_id: String,
+    pub(crate) stt: Box<dyn crate::speech::SttStream>,
 }
 
 pub(crate) struct TurnInFlight {
@@ -95,10 +85,23 @@ pub(crate) struct TurnInFlight {
     pub(crate) join: JoinHandle<()>,
     pub(crate) started_at: Instant,
     pub(crate) playback_complete: Option<oneshot::Sender<()>>,
+    pub(crate) script: std::sync::Arc<crate::voice::spoken::SpokenScript>,
 }
 
 impl VoiceSession {
-    pub(crate) fn new(session_id: String, voice_cfg: SessionVoiceConfig, language: String) -> Self {
+    pub(crate) fn begin_turn(&mut self, turn: TurnInFlight) {
+        self.last_partial_text.clear();
+        self.last_acked_played_ms = 0;
+        self.pending_barge_in = None;
+        self.current_turn = Some(turn);
+    }
+
+    pub(crate) fn finish_turn(&mut self) -> Option<TurnInFlight> {
+        self.pending_barge_in = None;
+        self.current_turn.take()
+    }
+
+    pub(crate) fn new(session_id: String, voice_cfg: SessionVoiceConfig) -> Self {
         Self {
             session_id,
             current_turn: None,
@@ -106,7 +109,70 @@ impl VoiceSession {
             last_acked_played_ms: 0,
             voice_cfg,
             last_partial_text: String::new(),
-            language,
+            capture: None,
+            pending_barge_in: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::{PendingBargeIn, SessionVoiceConfig, TurnInFlight, VoiceDefaults, VoiceSession};
+
+    fn session() -> VoiceSession {
+        let defaults = VoiceDefaults {
+            enabled: true,
+            persona: "af_heart".into(),
+            speed: 1.0,
+        };
+        let plan = crate::speech::SpeechPlan::body_v1(&defaults);
+        VoiceSession::new(
+            "session".into(),
+            SessionVoiceConfig::new(None, plan, &defaults),
+        )
+    }
+
+    fn turn(turn_id: &str) -> TurnInFlight {
+        TurnInFlight {
+            turn_id: turn_id.into(),
+            join: tokio::spawn(async {}),
+            started_at: Instant::now(),
+            playback_complete: None,
+            script: std::sync::Arc::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_overlap_never_outlives_the_turn_it_was_heard_in() {
+        let overlap = PendingBargeIn {
+            heard_at: Instant::now(),
+            played_ms: 900,
+            playhead_chunk: 4,
+        };
+        let mut session = session();
+        session.begin_turn(turn("voice_one"));
+        session.pending_barge_in = Some(overlap);
+        assert!(session.finish_turn().is_some());
+        assert!(session.pending_barge_in.is_none());
+
+        session.pending_barge_in = Some(overlap);
+        session.last_partial_text = "yeah".into();
+        session.begin_turn(turn("voice_two"));
+        assert!(session.pending_barge_in.is_none());
+        assert!(session.last_partial_text.is_empty());
+    }
+
+    #[test]
+    fn unresolved_overlap_expires() {
+        let heard_at = Instant::now();
+        let pending = PendingBargeIn {
+            heard_at,
+            played_ms: 1_200,
+            playhead_chunk: 0,
+        };
+        assert!(pending.is_live(heard_at + Duration::from_millis(1_500)));
+        assert!(!pending.is_live(heard_at + Duration::from_millis(2_500)));
     }
 }

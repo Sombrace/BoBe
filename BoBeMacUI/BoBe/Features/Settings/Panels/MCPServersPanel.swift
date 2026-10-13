@@ -11,12 +11,7 @@ struct MCPServersPanel: View {
     @State private var lastValidSecretMap: [String: [String]]?
     @Environment(ExpertMode.self) private var expertMode
     @Environment(SettingsStore.self) private var store
-    @State private var restartBannerDismissed = false
     @Environment(\.theme) private var theme
-
-    private var visibleRestartFields: Set<String> {
-        self.restartBannerDismissed ? [] : self.store.restartFields
-    }
 
     private var isJsonEmpty: Bool {
         self.rawJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -29,18 +24,13 @@ struct MCPServersPanel: View {
                     .bobeTextStyle(.helper)
                     .foregroundStyle(self.theme.colors.textMuted)
 
-                if !self.visibleRestartFields.isEmpty {
+                if !self.store.restartFields.isEmpty {
                     RestartRequiredBanner(
-                        fields: self.visibleRestartFields,
-                        onDismiss: { self.restartBannerDismissed = true }
+                        fields: self.store.restartFields,
+                        onDismiss: { self.store.clearRestartFields() }
                     )
                 }
 
-                // Settings-side errors (mcp_enabled toggle PATCH failures)
-                // surface here. JSON-editor errors render inline below the
-                // editor — they're conceptually different surfaces. Showing
-                // both at their natural locations is clearer than collapsing
-                // them into one banner that hides the cause.
                 if let storeError = self.store.error {
                     SettingsErrorBanner(message: storeError)
                 }
@@ -60,11 +50,7 @@ struct MCPServersPanel: View {
                 if self.expertMode.isEnabled {
                     CodeEditor(text: self.$rawJson, theme: self.theme, fontSize: 12)
                         .frame(height: 260)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(self.theme.colors.surface)
-                                .stroke(self.theme.colors.border, lineWidth: 1)
-                        )
+                        .bobeRaised(cornerRadius: 16)
 
                     HStack(spacing: 8) {
                         Button(L10n.tr("settings.mcp.action.reload")) { self.reloadConfig() }
@@ -127,7 +113,7 @@ struct MCPServersPanel: View {
                     self.noviceEditorHidden
                 }
 
-                Divider()
+                BobeHairline()
 
                 self.discoverySection
             }
@@ -142,9 +128,6 @@ struct MCPServersPanel: View {
         .onDisappear { self.store.cancelToast() }
     }
 
-    /// Top-of-panel switch for MCP at the daemon level. Lives here (rather
-    /// than its old home in Advanced) so the toggle that gates everything
-    /// below it is the first control the user sees.
     private var enableToggleRow: some View {
         SettingsRow(
             label: L10n.tr("settings.mcp.enable"),
@@ -161,9 +144,6 @@ struct MCPServersPanel: View {
         self.store.binding(\.mcpEnabled, fallback: false)
     }
 
-    /// Shown when Expert mode is off. Explains that there's a powerful
-    /// raw-JSON editor available and points the user at the toggle so they
-    /// know the door isn't locked, just hidden.
     private var noviceEditorHidden: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
@@ -181,14 +161,7 @@ struct MCPServersPanel: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(self.theme.colors.surface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(self.theme.colors.border.opacity(0.6), lineWidth: 1)
-                )
-        )
+        .bobeRaised(cornerRadius: 16)
     }
 
     private var discoverySection: some View {
@@ -244,7 +217,6 @@ struct MCPServersPanel: View {
                         .background(RoundedRectangle(cornerRadius: 6).fill(self.theme.colors.surface))
                     }
 
-                    // Status comes from `session.mcp.list` RPC; absent until session spawns.
                     if self.servers.contains(where: { $0.status == nil }) {
                         Text(L10n.tr("settings.mcp.discovery.runtime_state_pending"))
                             .font(.system(size: 10).italic())
@@ -270,17 +242,12 @@ struct MCPServersPanel: View {
                     text: L10n.tr("settings.mcp.runtime.failed"),
                     color: self.theme.colors.error
                 )
-            case McpServerStatusWire.needsAuth:
-                self.badge(
-                    text: L10n.tr("settings.mcp.runtime.needs_auth"),
-                    color: self.theme.colors.warning
-                )
             case McpServerStatusWire.pending:
                 self.badge(
                     text: L10n.tr("settings.mcp.runtime.pending"),
                     color: self.theme.colors.textMuted
                 )
-            case McpServerStatusWire.disabled, McpServerStatusWire.notConfigured:
+            case McpServerStatusWire.stopped:
                 EmptyView()
             default:
                 self.badge(text: status, color: self.theme.colors.textMuted)

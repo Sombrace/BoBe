@@ -60,6 +60,12 @@ final class SettingsEditCoordinator {
     }
 }
 
+func reconcileSavedDraft<Value: Equatable>(
+    current: Value, submitted: Value, saved: Value
+) -> Value {
+    current == submitted ? saved : current
+}
+
 struct SettingsEditorState<SelectionID: Hashable>: Equatable {
     var selectedId: SelectionID?
     var isDirty = false

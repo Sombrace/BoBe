@@ -2,6 +2,10 @@
 **/target/
 **/node_modules/
 
+# Python bytecode
+**/__pycache__/
+*.py[cod]
+
 # SwiftPM build cache
 **/.build/
 
@@ -36,10 +40,19 @@ sparkle_private_key
 sparkle_private_key.pem
 *.sparkle_private_key
 
-# AI assistant config files (local-only)
-CLAUDE.md
+# Apple API keys and signing certificates
+*.p8
+*.p12
+
+# Personal AI assistant config files (local-only)
 .github/copilot-instructions.md
+.github/copilot/settings.json
 
 # Snyk Security Extension
 .github/instructions/snyk_rules.instructions.md
 .claude/
+!/esp32-sdk/examples/wb12/.claude/
+/esp32-sdk/examples/wb12/.claude/*
+!/esp32-sdk/examples/wb12/.claude/skills/
+
+.target/

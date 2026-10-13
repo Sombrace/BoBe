@@ -5,20 +5,34 @@ let package = Package(
     name: "BoBe",
     defaultLocalization: "en",
     platforms: [
-        .macOS(.v15)
+        .macOS("26.0")
     ],
     dependencies: [
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.9.4"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6"),
         .package(url: "https://github.com/gonzalezreal/textual", exact: "0.5.0"),
-        // FluidAudio — Apple Silicon ANE Parakeet/Nemotron ASR + Silero VAD.
-        // Mode B client-side speech recognition.
-        // Exact pin: FluidAudio is pre-1.0 and minor releases remove APIs.
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.5"),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.6"),
     ],
     targets: [
+        .target(
+            name: "PairingClient",
+            path: "PairingClient",
+            exclude: ["PairingClient-Bridging-Header.h"],
+            swiftSettings: [
+                .unsafeFlags([
+                    "-import-objc-header", "PairingClient/PairingClient-Bridging-Header.h",
+                ])
+            ],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-L", "../PairingFFI/target/release",
+                    "-lbobe_pairing_ffi",
+                ])
+            ]
+        ),
         .executableTarget(
             name: "BoBe",
             dependencies: [
+                "PairingClient",
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "Textual", package: "textual"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
@@ -31,19 +45,30 @@ let package = Package(
                 .process("Resources")
             ],
             swiftSettings: [
-                .define("SPM_BUILD")
+                .define("SPM_BUILD"),
+                .unsafeFlags([
+                    "-warnings-as-errors",
+                ])
             ],
             linkerSettings: [
                 .unsafeFlags([
+                    "-framework", "Security",
+                    "-framework", "SystemConfiguration",
                     "-Xlinker", "-rpath",
                     "-Xlinker", "@executable_path/../Frameworks",
                 ])
             ]
         ),
-        .testTarget(
-            name: "BoBeTests",
-            dependencies: ["BoBe"],
-            path: "Tests/BoBeTests"
+        .executableTarget(
+            name: "PairingSmoke",
+            dependencies: ["PairingClient"],
+            path: "PairingSmoke",
+            linkerSettings: [
+                .unsafeFlags([
+                    "-framework", "Security",
+                    "-framework", "SystemConfiguration",
+                ])
+            ]
         )
     ]
 )

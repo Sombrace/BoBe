@@ -3,7 +3,6 @@ import SwiftUI
 private enum LocalDefaults {
     static let chatModel = "qwen2.5:7b-instruct"
     static let batchModel = "qwen2.5:7b-instruct"
-    static let visionModel = "qwen2.5vl:7b"
 }
 
 struct LocalSetupStepView: View {
@@ -17,34 +16,19 @@ struct LocalSetupStepView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(L10n.tr("setup.local.title"))
-                    .bobeTextStyle(.setupTitle)
-                    .foregroundStyle(self.theme.colors.text)
-                Text(L10n.tr("setup.local.body"))
-                    .bobeTextStyle(.setupBody)
-                    .foregroundStyle(self.theme.colors.textMuted)
-            }
+            SetupStepHeader(title: L10n.tr("setup.local.title"), message: L10n.tr("setup.local.body"))
+                .padding(.top, 8)
 
             self.hardwareCard
 
             VStack(spacing: 12) {
-                self.progressRow(
+                self.downloadRow(
                     title: L10n.tr("setup.local.runtime"),
-                    progress: self.snapshot?.runtime,
-                    status: nil
+                    percent: self.snapshot.map { $0.runtime.percent ?? 0 }
                 )
-                self.modelRow(
+                self.downloadRow(
                     title: L10n.tr("setup.local.chat_model"),
-                    pull: self.snapshot?.chatModel
-                )
-                self.modelRow(
-                    title: L10n.tr("setup.local.batch_model"),
-                    pull: self.snapshot?.batchModel
-                )
-                self.modelRow(
-                    title: L10n.tr("setup.local.vision_model"),
-                    pull: self.snapshot?.visionModel
+                    percent: self.snapshot.map { $0.chatModel.percent ?? 0 }
                 )
             }
 
@@ -69,7 +53,7 @@ struct LocalSetupStepView: View {
 
     @ViewBuilder
     private var hardwareCard: some View {
-        if let ramGB = self.ramGB, ramGB < 16 {
+        if DaemonConfig.endpoint.managesLocalProcess, let ramGB = self.ramGB, ramGB < 16 {
             HStack(spacing: 10) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(self.theme.colors.warning)
@@ -85,48 +69,17 @@ struct LocalSetupStepView: View {
         }
     }
 
-    private func progressRow(
-        title: String,
-        progress: LocalRuntimeDownload?,
-        status: String?
-    ) -> some View {
+    private func downloadRow(title: String, percent: Int?) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(title)
                     .bobeTextStyle(.setupHeading)
                 Spacer()
-                Text(progress.map { "\($0.percent ?? 0)%" } ?? "—")
+                Text(percent.map { "\($0)%" } ?? "—")
                     .bobeTextStyle(.helper)
                     .foregroundStyle(self.theme.colors.textMuted)
             }
-            BobeLinearProgressBar(progress: Double(progress?.percent ?? 0) / 100.0, tint: self.theme.colors.secondary)
-            if let status {
-                Text(status)
-                    .bobeTextStyle(.helper)
-                    .foregroundStyle(self.theme.colors.textMuted)
-            }
-        }
-    }
-
-    private func modelRow(
-        title: String,
-        pull: LocalRuntimePull?
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(title)
-                    .bobeTextStyle(.setupHeading)
-                Spacer()
-                Text(pull.map { "\($0.percent ?? 0)%" } ?? "—")
-                    .bobeTextStyle(.helper)
-                    .foregroundStyle(self.theme.colors.textMuted)
-            }
-            BobeLinearProgressBar(progress: Double(pull?.percent ?? 0) / 100.0, tint: self.theme.colors.secondary)
-            if let status = pull?.status, !status.isEmpty {
-                Text(status)
-                    .bobeTextStyle(.helper)
-                    .foregroundStyle(self.theme.colors.textMuted)
-            }
+            BobeLinearProgressBar(progress: Double(percent ?? 0) / 100.0, tint: self.theme.colors.secondary)
         }
     }
 
@@ -165,14 +118,13 @@ struct LocalSetupStepView: View {
     private func startInstall() async {
         self.startError = nil
         let request = LocalRuntimeInstallRequest(
+            profile: "local",
             chatModel: LocalDefaults.chatModel,
-            batchModel: LocalDefaults.batchModel,
-            visionModel: LocalDefaults.visionModel
+            batchModel: LocalDefaults.batchModel
         )
         do {
-            _ = try await DaemonClient.shared.startLocalRuntimeInstall(request)
+            try await DaemonClient.shared.startLocalRuntimeInstall(request)
         } catch {
-            // 409 = install already in flight; still subscribe to status.
             if !error.localizedDescription.lowercased().contains("conflict") {
                 self.startError = error.localizedDescription
             }
@@ -201,7 +153,7 @@ struct LocalSetupStepView: View {
         self.startError = L10n.tr("setup.local.canceling")
         Task {
             do {
-                _ = try await DaemonClient.shared.cancelLocalRuntimeInstall()
+                try await DaemonClient.shared.cancelLocalRuntimeInstall()
                 await MainActor.run { self.subscribeToStatus() }
             } catch {
                 await MainActor.run { self.startError = error.localizedDescription }

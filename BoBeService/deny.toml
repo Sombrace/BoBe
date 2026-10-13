@@ -8,8 +8,6 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "BSL-1.0",
-    # Pure-Rust bzip2 (`libbz2-rs-sys`) carries the upstream bzip2-1.0.6
-    # terms: BSD-style + a no-defamation clause. SPDX recognized.
     "bzip2-1.0.6",
     "CC0-1.0",
     "CDLA-Permissive-2.0",
@@ -25,6 +23,9 @@ allow = [
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+
+[bans.std-replacements]
+scope = "workspace"
 
 [sources]
 unknown-registry = "deny"

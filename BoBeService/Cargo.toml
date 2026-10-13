@@ -2,112 +2,91 @@
 name = "bobe"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.97.1"
+rust-version = "1.98.1"
 license = "MIT"
 authors = ["The BoBe Authors"]
 homepage = "https://www.bobebot.com"
-repository = "https://github.com/athatheo/BoBe"
+repository = "https://github.com/Sombrace/BoBe"
 publish = false
-
-[features]
-# `just` runtime recipes externalize the CLI into app/helper staging. Keep this
-# default only as a self-contained fallback for direct `cargo build` consumers.
-default = ["bundled-copilot-cli"]
-bundled-copilot-cli = ["github-copilot-sdk/bundled-cli"]
 
 [lints.rust]
 unsafe_code = "deny"
 unreachable_pub = "warn"
 elided_lifetimes_in_paths = "warn"
-let_underscore_drop = "warn"           # Catch silent drops of values with Drop impls
-dead_code_pub_in_binary = "warn"       # Public items in this binary must still be used
+let_underscore_drop = "warn"
+dead_code_pub_in_binary = "warn"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 
-# --- Debug leftovers: these should never ship in a daemon ---
 dbg_macro = "warn"
 todo = "warn"
 print_stdout = "warn"
 print_stderr = "warn"
 
-# --- Restriction lints: cherry-picked for safety ---
-clone_on_ref_ptr = "warn"              # Arc::clone(&x) over x.clone()
-unwrap_used = "warn"                   # No .unwrap() in production
-expect_used = "warn"                   # No .expect() in production
-undocumented_unsafe_blocks = "warn"    # SAFETY comments required on unsafe
-multiple_unsafe_ops_per_block = "warn" # One unsafe op per block, independently justified
-exit = "warn"                          # No process::exit() in daemon
+clone_on_ref_ptr = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+undocumented_unsafe_blocks = "allow"
+multiple_unsafe_ops_per_block = "warn"
+exit = "warn"
 
-# --- Justified allows: architecture-driven (see CLAUDE.md for rationale) ---
 
-# Internal app, not a public crate — naming/docs norms don't apply
-module_name_repetitions = "allow" # config::ConfigManager is normal
-missing_errors_doc = "allow"      # not a public crate
-must_use_candidate = "allow"      # not a library
-doc_markdown = "allow"            # internal docs only
-implicit_hasher = "allow"         # not a library
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
+implicit_hasher = "allow"
 
-# DTOs/config structs match API contracts
-struct_excessive_bools = "allow"  # config/settings DTOs have many bool fields
-struct_field_names = "allow"      # DTO fields match API contracts
-missing_fields_in_debug = "allow" # partial Debug is fine
+struct_excessive_bools = "allow"
+struct_field_names = "allow"
+missing_fields_in_debug = "allow"
 
-# Axum framework requirements
-unused_async = "allow"            # all instances are Axum handler signatures
-unused_self = "allow"             # all instances are trait implementation contracts
+unused_async = "allow"
+unused_self = "allow"
 
-# Design patterns — intentional ownership/clone semantics
-needless_pass_by_value = "allow"  # ~90% intentional ownership for DI/storage/repos
-implicit_clone = "allow"          # all instances intentional — serialization, prompting, API
-unnecessary_wraps = "allow"       # Result<Option<T>> is intentional for idempotent repo ops
+needless_pass_by_value = "allow"
+implicit_clone = "allow"
+unnecessary_wraps = "allow"
 
-# Cast safety — all verified safe in context
-cast_possible_truncation = "allow" # config→bounds expansions, loop counters bounded by config
-cast_sign_loss = "allow"           # expanding types or FFI-required
-cast_precision_loss = "allow"      # f64 precision loss acceptable
-cast_possible_wrap = "allow"       # FFI requirement (libc expects c_int)
-cast_lossless = "allow"            # only 1-2 instances, style-only
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
 
-# Style preferences
-return_self_not_must_use = "allow" # builder patterns
-similar_names = "allow"            # id/idx noisy false positives
-needless_lifetimes = "allow"       # explicit lifetimes sometimes clearer
-items_after_statements = "allow"   # helper closures after use is fine
-too_many_lines = "allow"           # some handlers are legitimately long
-incompatible_msrv = "allow"        # false positives with deps
-trivially_copy_pass_by_ref = "allow" # trait impls and handler signatures
-unnecessary_literal_bound = "allow"  # 56 tool trait impls return &str literals — changing trait sig is churn
+return_self_not_must_use = "allow"
+similar_names = "allow"
+needless_lifetimes = "allow"
+items_after_statements = "allow"
+too_many_lines = "allow"
+incompatible_msrv = "allow"
+trivially_copy_pass_by_ref = "allow"
+unnecessary_literal_bound = "allow"
 
 [profile.release]
 opt-level = 3
 lto = "thin"
 strip = "symbols"
-# Defend against integer-overflow bugs that silently wrap in optimized
-# builds. The performance cost is unmeasurable for daemon-class workloads
-# and the alternative is the class of bug documented in CVE-2018-1000810.
 overflow-checks = true
 
 [dependencies]
-anyhow = "1.0.103"
+anyhow = "1.0.104"
 async-stream = "0.3.6"
 arc-swap = "1.9.2"
-async-trait = "0.1.89"
+async-trait = "0.1"
 axum = { version = "0.8.9", features = ["ws"] }
-axum-server = { version = "0.8", features = ["tls-rustls"] }
+axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 chrono = { version = "0.4.45", features = ["serde"] }
-clap = { version = "4.6.2", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
-toml_edit = "0.25.13"
-futures = "0.3.32"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
-schemars = "1.2.1"
+toml_edit = { version = "0.25.13", features = ["serde"] }
+futures = "0.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+schemars = "1.2.2"
 secrecy = { version = "0.10", features = ["serde"] }
-# SQLite only. TLS and migration-runner features are intentionally omitted:
-# schema application uses `raw_sql`; `derive` provides FromRow/Type without
-# pulling the query-macro backends for MySQL and PostgreSQL.
 sqlx = { version = "0.9.0", default-features = false, features = [
     "runtime-tokio",
     "sqlite",
@@ -115,10 +94,11 @@ sqlx = { version = "0.9.0", default-features = false, features = [
     "chrono",
     "derive",
 ] }
-thiserror = "2.0.18"
-tokio = { version = "1.52.4", features = [
+thiserror = "2.0"
+tokio = { version = "1.53.1", features = [
     "fs",
     "io-util",
+    "io-std",
     "macros",
     "net",
     "process",
@@ -127,79 +107,52 @@ tokio = { version = "1.52.4", features = [
     "sync",
     "time",
 ] }
-tokio-stream = { version = "0.1.18", features = ["sync"] }
-# `rt` feature exposes `CancellationToken` (the modern shutdown
-# coordination primitive that replaces our previous `broadcast::Sender<()>`
-# pattern). 0.7.18's feature naming is unusual — there is no `sync`
-# feature even though the type lives under `tokio_util::sync::`.
-tokio-util = { version = "0.7", features = ["rt"] }
+tokio-stream = { version = "0.1.19", features = ["sync"] }
+tokio-rustls = { version = "0.26.4", default-features = false, features = [
+    "logging",
+    "tls12",
+] }
+tokio-util = { version = "0.7.19", features = ["rt"] }
 tower-http = { version = "0.7.0", features = ["cors", "timeout"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 tracing-appender = "0.2.5"
-uuid = { version = "1.24.0", features = ["v4", "serde"] }
+uuid = { version = "1.25", features = ["v4", "serde"] }
+url = "2.5.8"
 which = "8.0.5"
-libc = "0.2.186"
-base64 = "0.22.1"
+libc = "0.2.189"
+base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 rand = "0.10.2"
-mdns-sd = { version = "0.20.1", features = ["async"] }
+mdns-sd = { version = "0.21", default-features = false }
 dashmap = "6.2.1"
 tower = { version = "0.5.3", features = ["limit"] }
-# Streaming HTTP client. Used for two purposes:
-#   1. Querying the user's Ollama install on `:11434` for available
-#      models (`/api/tags`) when `engine == "local"`.
-#   2. Phase 5a: downloading the Ollama runtime tarball with progress
-#      streaming (so the wizard can show a live progress bar).
-# rustls keeps us off OpenSSL; `stream` lets us consume responses
-# incrementally for the download path. (reqwest 0.13 renamed the
-# `rustls-tls` feature to plain `rustls`.)
 reqwest = { version = "0.13.4", default-features = false, features = [
     "rustls-no-provider",
     "stream",
     "json",
 ] }
-rustls = { version = "0.23.42", default-features = false, features = [
+rustls = { version = "0.23.43", default-features = false, features = [
     "ring",
     "std",
     "tls12",
 ] }
-# Archive handling for the Ollama install path (Phase 5a). The
-# `ollama-darwin.tgz` release tarball ships gzip-compressed.
 flate2 = "1.1.9"
 tar = "0.4.46"
 zstd = "0.13.3"
-# bz2 because sherpa-onnx model releases ship as .tar.bz2 not gzip.
 bzip2 = "0.6.1"
-# Official GitHub Copilot SDK (Rust). Programmatic Copilot CLI control via
-# JSON-RPC over stdio. Spawns + manages the CLI process per Client. We use one
-# shared Client across the daemon and create one Session per worker class.
-#
-# SDK 1.0.7 pins and SHA-verifies its matching Copilot CLI asset. BoBe release/debug
-# recipes disable `bundled-cli`, stage the SDK-extracted executable, and ship
-# it as a separately signed app helper. The root fallback feature still embeds
-# it for direct Cargo consumers; clippy/tests skip the download entirely.
-github-copilot-sdk = { version = "=1.0.7", default-features = false, features = ["derive"] }
-# Stable server-side Kokoro rollback backend. Client STT/VAD and experimental
-# Supertonic TTS run in Swift/FluidAudio; sherpa remains until client TTS meets
-# the production benchmark and compatibility gates.
-sherpa-onnx = "1.13.4"
-# Opus codec for the /voice/stream WS — 20ms frames, VOIP profile, ~24kbps.
-# Vendors libopus through cmake; needs CMAKE_POLICY_VERSION_MINIMUM=3.5 in env
-# to build on toolchains where cmake's minimum-required version is enforced.
-# Maintained libopus 1.6.1 bindings. Replaces `opus`/`audiopus_sys`, which is
-# unmaintained (RUSTSEC-2026-0150) and no longer builds with CMake 4.
+bytes = "1"
+sherpa-onnx = "1.13"
 opusic-c = "1.6.1"
-# Markdown stripping before Kokoro TTS — Kokoro speaks **asterisks** and
-# `backticks` literally otherwise. Used by speech::markdown_strip with
-# precompiled LazyLock regex set.
-regex = "1.13.1"
-# Voice telemetry: LLM TTFT, first-sentence, per-sentence synthesis,
-# transcript-to-first-audio, total-turn latency, barge-in and fillers.
+regex = "1.13"
+rcgen = { version = "0.14", default-features = false, features = ["pem", "ring", "zeroize"] }
+x509-parser = "0.18.1"
+bobe-pairing-core = { path = "../PairingCore", version = "=0.1.0" }
+chacha20poly1305 = { version = "0.11.0", features = ["zeroize"] }
+hkdf = "0.13.0"
+zeroize = "1.9.0"
 metrics = "0.24.6"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
-sha2 = { version = "0.10.9", default-features = false }
-
-# macOS-only: Keychain access via the Security framework (Data Protection
-# Keychain). Linux uses a file-based `FileSecretStore` fallback.
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework = { version = "3.7.0", default-features = false, features = ["OSX_10_15"] }
+sha2 = { version = "0.11.0", default-features = false }
+ed25519-dalek = { version = "3.0.0", default-features = false, features = ["alloc"] }
+serde_ignored = "0.1.14"
+qrcodegen = "1.8.0"

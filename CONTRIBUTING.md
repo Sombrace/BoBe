@@ -1,253 +1,151 @@
 # Contributing to BoBe
 
-Thanks for your interest in contributing! BoBe is an open-source project and we welcome contributions of all kinds.
+BoBe is a Rust daemon, a pi agent host, and a native Swift macOS application. Product context,
+repository gotchas, and reference ownership are in [CLAUDE.md](CLAUDE.md).
 
-## Getting Started
+New here? [Getting started](docs/getting-started.md) gets BoBe running,
+[Using BoBe](docs/using-bobe.md) shows what she does, and
+[the documentation index](docs/README.md) explains how the three programs fit
+together. Bugs and ideas go to
+[Issues](https://github.com/Sombrace/BoBe/issues); security reports go through
+[SECURITY.md](SECURITY.md).
 
-### Prerequisites
+## Setup
 
-- **macOS 15+** (Sequoia)
-- **Rust 1.97.1+** (edition 2024)
-- **Xcode 16+** with Swift 6.0
-- **[just](https://github.com/casey/just)** task runner
-- A GitHub Copilot subscription for cloud inference, or [Ollama](https://ollama.ai) for local inference
+Native Mac requirements:
 
-### Setup
+- macOS 26+
+- Rust 1.98.1+
+- Xcode 26+ with Swift 6
+- A supported provider API key, Rail Relay token, provider subscription, or Ollama for runtime testing
 
 ```bash
-git clone https://github.com/athatheo/BoBe.git
+git clone https://github.com/Sombrace/BoBe.git
 cd BoBe
-
-# Install pinned cargo-deny, cargo-machete, SwiftLint, and XcodeGen binaries
-# under this checkout's ignored .tools/ directory.
-just bootstrap-tools
-
-# Check everything builds and passes
-just check
+scripts/tasks/bootstrap-tools.sh
 ```
 
-`just check` runs Rust formatting, Clippy, Rust and Swift tests, dependency audits, cross-language and localization catalog checks, SwiftLint, a Swift debug build, and runtime-artifact validation.
+Developer tools are pinned under the checkout's ignored `.tools/` directory.
+Do not install project tooling globally.
 
-## Architecture
+The Rust daemon, pi worker and headless CLI can also be developed on Linux.
+Use `scripts/tasks/build-backend.sh debug` or `release`; operate the resulting
+`bobe` executable against a private authority. Mac-only Swift/Xcode/audio gates
+cannot be signed off from a Linux build.
 
-BoBe is two processes that communicate over localhost:
+`scripts/tasks/build-agent.sh` downloads Node 22.22.0 from nodejs.org, verifies
+the pinned platform SHA256, and builds `BoBeAgent` with its lockfile. It stages
+`build/agent-runtime/node` and `build/agent-runtime/agent/`, including all
+production packages, pi assets, and checksum-pinned ripgrep/fd binaries with
+their licenses. Dependency lifecycle scripts are disabled. The checksums and
+supported Node archive targets are in `scripts/lib/agent-runtime.sh`.
 
-```
-bobe-daemon (Rust/Axum, :8766)  ←── SSE + HTTP ──→  BoBe.app (Swift/SwiftUI)
-         │                                                   │
-         ▼                                                   ▼
-   Copilot SDK or Ollama                          Transparent overlay
-                                                    + settings + menu bar
-```
+For a manually launched development daemon, set `BOBE_NODE_PATH` to the staged
+Node executable and `BOBE_AGENT_ENTRY` to the staged `agent/dist/main.js`.
+The backend and app task scripts set these paths. Provider credentials belong
+to the selected daemon authority; signing into another CLI does not sign BoBe
+in. The app may restart its managed-local daemon when saved provider access
+needs to be loaded. Attached-local and remote hosts are never restarted by the
+app; their operator must restart them when requested.
 
-The **Rust daemon** owns conversations, memory, goals, policy, Copilot sessions, MCP, proactive triggers, persistence, server TTS, and the REST/SSE/WebSocket API. It binds to `127.0.0.1:8766` by default and has an explicit authenticated HTTPS remote mode.
+## Common commands
 
-The **Swift app** owns the native macOS overlay, setup/settings windows, menu-bar integration, microphone/STT, playback, permissions, and local daemon supervision.
+| Command | Purpose |
+|---|---|
+| `scripts/tasks/check.sh` | Run the complete Rust, Swift, security, contract, and packaging validation gate |
+| `scripts/tasks/run.sh` | Build and launch the debug app; set `BOBE_DEVELOPMENT_TEAM` to sign it |
+| `scripts/tasks/backend.sh` | Run the daemon for Xcode development |
+| `scripts/tasks/build-agent.sh` | Build and validate the pinned Node/pi distribution |
+| `scripts/check-bodylink-contract.sh` | Check Rust/Swift/current SDK wire constants |
+| `scripts/tasks/xcode.sh` | Regenerate the Xcode project |
+| `scripts/tasks/clean.sh` | Remove Rust, Swift, Xcode and staged build output |
 
-### Architecture Principles
+[Releasing](docs/releasing.md) describes the release scripts.
 
-- **Constructor injection** via `AppState` (Arc-wrapped, Axum State extractor) — no DI framework
-- **Layered architecture**: handlers extract/respond; services and runtime own behavior; repositories own SQLite access
-- **Concrete types by default**, traits only at real substitution or external-I/O seams
-- **Hot-swappable config** via `ArcSwap` — settings changes apply without restart
-- **One personal authority** — Swift presents and captures; the daemon owns durable intelligence and policy
-- **Loopback-safe default**, with remote access requiring allowed hosts, bearer authentication, and TLS
+The [ESP32 SDK](esp32-sdk/README.md) is in `esp32-sdk/`. BodyLink contract checks
+use it directly. `BOBE_ESP_SDK_ROOT` is an optional override for comparing
+another SDK tree. Board development uses the SDK's own tools and local
+dependencies. Building the daemon or Mac app does not require an ESP-IDF
+installation.
 
-## Development Commands
+Release and specialist operations live under `scripts/tasks/`; their checks live
+directly under `scripts/`. Cargo manifests, the Swift package, and lint
+configurations are the policy authorities.
 
-### `just` Recipes
+`scripts/tasks/run.sh` without `BOBE_DEVELOPMENT_TEAM` builds an app with no
+application identifier and no Keychain groups. It keeps its endpoint credential
+in process memory, as [Signed or unsigned](docs/getting-started.md#signed-or-unsigned)
+describes. A build that carries any signing identity must have the exact
+endpoint group or credential operations fail. Work on the Keychain path, or on
+a pairing that has to survive a relaunch, needs a signed build:
+`BOBE_DEVELOPMENT_TEAM=<team-id> scripts/tasks/run.sh`.
 
-| Command | What it does |
-|---------|---------------|
-| `just` | List all available recipes |
-| `just run` | Build backend + frontend (debug) and launch the app |
-| `just backend` / `just run-backend` | Stage the pinned Copilot helper and run only the Rust daemon |
-| `just build` | Build release binaries and bundle `build/BoBe.app`, including the signed Copilot helper |
-| `just profile-startup` | Measure daemon health readiness, Copilot prewarm, RSS, and binary size |
-| `just smoke-copilot-tools` | Opt-in real SDK smoke for memory/goal tools and privacy purge |
-| `just smoke-bodylink` | Opt-in mTLS BodyLink simulator through the real daemon/agent/TTS path |
-| `just smoke-bodylink-swift` | Same BodyLink flow through the real Swift FluidAudio/Opus adapter |
-| `just check-bodylink-contract` | Verify Rust, Swift, and ESP BodyLink constants agree |
-| `just bootstrap-tools` | Install the pinned developer CLI toolchain under `.tools/` |
-| `just release 1.0.0` | Build + sign app + create/sign DMG |
-| `just ship 1.0.0 "Developer ID Application"` | End-to-end ship flow (clean → build → sign → DMG → notarize → staple → Sparkle) |
-| `just clean` | Clean cargo, SwiftPM, and `build/` artifacts |
-| `just check` / `just test` | Run Rust + Swift checks, tests, audits, contract drift checks, and builds |
-| `just xcode` | Regenerate Xcode project files via XcodeGen |
-| `just sparkle-zip 1.0.0` | Create Sparkle update zip from `build/BoBe.app` |
-| `just sparkle-sign-update 1.0.0 /path/to/sparkle-private-key` | Sign Sparkle zip archive with private Sparkle key |
-| `just sparkle-generate-appcast build/sparkle https://example.com/updates /path/to/sparkle-private-key` | Generate/update Sparkle `appcast.xml` |
+## Engineering expectations
 
-Runtime recipes build the daemon without embedding the Copilot CLI archive.
-The SDK downloads and SHA-verifies its pinned asset, stages the executable under
-`build/copilot-cli/runtime`, and app assembly installs it at
-`BoBe.app/Contents/Helpers/copilot`. Static checks skip the CLI download.
-Direct Cargo builds retain the self-contained embedded fallback feature.
+- Follow nearby code rather than generic language doctrine.
+- Rust is an internal binary crate. Prefer crate-scoped visibility, structured
+  errors, constructor injection, and the existing handler/service/repository
+  boundaries.
+- Swift uses `@Observable`, Swift concurrency, and AppKit only where native
+  window or system behavior requires it.
+- Source code contains no prose comments. Keep architectural, unsafe/FFI,
+  lifecycle and protocol constraints in the current documentation. Preserve
+  functional directives such as shebangs, Swift tools versions and linter rules.
+- Wire changes must update Rust, Swift, tests, and cross-language constants
+  together.
+- Preserve loopback-safe defaults and daemon ownership of credentials and
+  durable intelligence.
 
-The Copilot smoke uses `gpt-5.6-sol` by default and consumes AI credits. Override it with `BOBE_SMOKE_MODEL`; use `BOBE_SMOKE_PORT` or `BOBE_PROFILE_PORT` when the default local probe ports are occupied.
+## Test scope
 
-### Backend Commands (Rust)
+Keep tests that protect observable product behavior: authority isolation,
+persistence and recovery, admission and cancellation, protocol compatibility,
+privacy, and audio integrity. Combine repetitive input cases in table-driven
+tests. Do not add tests that merely restate a default, assert incidental wording,
+exercise a dependency's lock implementation, or construct values without an
+assertion. A test-only helper should earn its maintenance cost by protecting a
+real boundary, not make a trivial implementation look covered.
 
-```bash
-cd BoBeService
-cargo fetch --locked          # Download Rust dependencies
-cargo build --locked          # Debug build
-cargo build --release --locked
-cargo run --locked -- serve   # Run backend server on localhost:8766
-cargo fmt --check                  # Rust formatting check
-cargo clippy -q --locked           # Lints (pedantic profile configured in Cargo.toml)
-cargo test -q --locked             # Run backend tests
-../.tools/bin/cargo-deny check     # Dependency policy
-../.tools/bin/cargo-machete        # Unused direct dependencies
-```
+Test fixtures may fail fast with `unwrap`/`expect`; production builds retain
+those Clippy warnings. Passing unit tests does not replace operating the daemon,
+Mac surface, or physical body for the behavior being changed. The model-backed
+STT corpus test is explicitly ignored by default; run it with
+`BOBE_TEST_STT_MODEL_DIR` and `BOBE_TEST_STT_WAV` set using
+`cargo test --manifest-path BoBeService/Cargo.toml real_streaming_model_transcribes_corpus -- --ignored`.
+Native preference fixtures use `EphemeralUserDefaults` with absolute temporary
+suite paths so CFPreferences never writes into the person's real preference
+domain. Preserve that isolation when changing test helpers.
 
-### Frontend Commands (Swift)
+Full-product E2E scripts and frameworks are disposable agent inspection tools.
+Keep their installation, scripts and artifacts in a temporary directory and
+remove them after use. Do not add them to CI, builds or package/test tasks.
+Use the real CLI and current SDK from a disposable inspection when runtime or
+physical-body evidence is needed.
 
-```bash
-cd BoBeMacUI
-swift package resolve      # Resolve Swift dependencies
-swift build -c debug       # Debug build
-swift build -c release     # Release build
-swift test                 # Swift unit tests
-../.tools/bin/swiftlint lint --quiet     # Swift lint checks
-```
+## Workflow
 
-## Project Structure
+1. Inspect the current implementation and tests.
+2. Make the smallest coherent change.
+3. Run checks derived from the changed behavior, including runtime or UI evidence where applicable.
+4. Explain user-visible behavior, schema and wire changes, dependency changes,
+   and remaining uncertainty in the pull request.
 
-```
-BoBeService/                  # Rust backend (bobe-daemon)
-  Cargo.toml                  # Rust dependencies and build config
-  src/
-    main.rs                   # CLI entrypoint (serve, version)
-    api/                      # Axum routes and handlers
-    app_state.rs              # Arc-wrapped DI container
-    bootstrap/                # Dependency wiring and startup
-    config/                   # BOBE_* config, persistence, runtime hot-swap
-    copilot/                  # SDK client, workers, hooks, sessions, skills, domain tools
-    db/                       # SQLite repositories (sqlx)
-    mcp/                      # MCP config and security validation
-    models/                   # Domain structs
-    runtime/                  # Session state, learners, triggers
-    secrets.rs                # macOS Keychain integration
-    services/                 # Domain logic and managed Ollama runtime
-    speech/ and voice/        # Voice protocol and server TTS
-    util/                     # SSE, capture, network and text utilities
-  migrations/                 # SQLite schema (auto-run on startup)
-  deny.toml                   # cargo-deny license/ban policy
+Dependency changes need explicit review when they add proc macros, build scripts,
+FFI or `-sys` crates, new registries, git sources, subprocesses, parsers,
+archives, filesystem access, or network reach.
 
-BoBeMacUI/                    # Swift macOS app (BoBe.app)
-  BoBe/App/                   # App delegate, overlay panel, tray
-  BoBe/Features/Settings/     # Settings panels (AI model, behavior, etc.)
-  BoBe/DTOs/ and BoBe/Stores/ # Wire contracts and presentation state
-  BoBeUITests/                # macOS onboarding/settings regression tests
-  BoBe/Services/              # Backend lifecycle, HTTP + SSE client
-  BoBe/Stores/                # Observable state stores
-  BoBe/Voice/                 # Microphone, STT/VAD/EOU, playback, voice protocol
-  BoBe/Views/                 # Overlay UI + setup wizard
+Release signing, notarization, Sparkle publication, and credentials are local
+maintainer operations. [Releasing](docs/releasing.md) gives the procedure.
+Never commit release secrets or generated key material.
 
-docs/                         # Additional documentation
-```
+## Distribution
 
-## Coding Conventions
+Keep generated output, credentials, dependency caches and device-specific
+recovery material out of distributed source.
 
-### Rust
+Keep the project license and all applicable third-party license and attribution
+notices in source and binary distributions. Provider artwork retains its own
+brand terms; the project license does not replace them.
 
-- **Edition 2024**, MSRV 1.97.1, `unsafe_code = "deny"`
-- **Clippy pedantic** enabled with justified allows (see `Cargo.toml`)
-- Errors via `thiserror`, handlers return `Result<T, AppError>` — no `unwrap()`/`expect()` outside tests
-- LLM prompts: per-class SKILL.md in `copilot/skills/` (loaded by the SDK via `SessionConfig::skill_directories`); inline system-message hints in `copilot/hooks.rs` and `copilot/workers/chat.rs`
-- Configuration via `BOBE_*` env vars, persisted to `~/.bobe/config.toml`
-- API keys stored in macOS Keychain via `security-framework`, handled in-memory with the `secrecy` crate
-- Follow [docs/RUST_GUIDELINES.md](docs/RUST_GUIDELINES.md) for architecture and style
-
-### Swift
-
-- Swift 6.0, macOS 15+ target
-- **SwiftLint** enforced (see `BoBeMacUI/.swiftlint.yml`)
-- `sorted_imports` required, `force_unwrapping` discouraged
-- Split large views into focused subviews
-
-### General
-
-- No global package installs — app dependencies stay in their manifests and
-  developer CLIs stay under the checkout's ignored `.tools/` directory
-- Commit messages: `type: short description` (e.g., `feat:`, `fix:`, `chore:`)
-
-## Domain Model
-
-BoBe persists:
-
-- conversations and cooldowns in SQLite;
-- souls and user profiles in SQLite;
-- one editable `memory.md` document;
-- human-readable goal documents under the data root;
-- runtime and MCP configuration;
-- worker session identifiers used to reconnect to Copilot sessions.
-
-Retention is explicit only where the current code implements it; do not infer lifecycle promises from historical plans.
-
-## API Reference
-
-The backend exposes a REST API on `127.0.0.1:8766`:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/status` | GET | Runtime session state |
-| `/events` | GET | SSE event stream (real-time updates) |
-| `/message` | POST | Send a message to BoBe |
-| `/goals` | GET/POST | List or create goals |
-| `/goals/{id}` | GET/PATCH/DELETE | Goal CRUD |
-| `/goals/{id}/complete`, `/goals/{id}/archive` | POST | Goal lifecycle actions |
-| `/memory` | GET/PUT | Read or replace the memory document |
-| `/souls` | GET/POST | Personality document management |
-| `/user-profiles` | GET/POST | User profile management |
-| `/settings` | GET/PATCH | Runtime configuration |
-| `/models` | GET | List models for the selected engine |
-| `/local-runtime/install`, `/local-runtime/cancel` | POST | Manage local runtime installation |
-| `/local-runtime/status` | GET | Local runtime installation SSE |
-| `/tools/mcp/config` | GET/PUT/DELETE | MCP server configuration |
-| `/voice/stream` | GET | Voice WebSocket |
-| `/voice/install/*` | GET/POST | Voice model installation |
-| `/auth/copilot/login/*` | GET/POST | Copilot device-flow sign-in |
-| `/privacy/data` | DELETE | Purge personal data |
-| `/capture/start` | POST | Enable screen capture |
-| `/capture/stop` | POST | Disable screen capture |
-
-## Development Workflow
-
-1. **Fork and branch** from `main`
-2. **Make your changes** following the coding conventions above
-3. **Run `just check`** to verify everything passes
-4. **Submit a pull request** with a clear description
-
-### Dependency Review
-
-Dependency-changing pull requests get extra scrutiny. Call out any new or materially changed:
-
-- proc-macro crates
-- `build.rs` crates
-- `-sys` / FFI crates
-- git dependencies or new registries
-- crates with broad network, filesystem, archive, parser, or subprocess reach
-
-For supply-chain-sensitive changes, run the local `cargo deny` and locked Cargo commands before review.
-
-Release signing, notarization, Sparkle publishing, and validation are local maintainer operations. Maintainers should read [docs/UpdatingOTA.md](docs/UpdatingOTA.md) before changing release scripts, entitlements, or update behavior.
-
-## Security
-
-BoBe handles screen captures, personal context, and agent credentials. Please be mindful of:
-
-- The daemon binds to loopback by default; remote mode is an explicit authenticated TLS deployment
-- Host validation middleware on all routes
-- Shell and arbitrary file-write permissions are denied; memory/goal changes use exact allowlisted domain tools
-- MCP commands are validated against a blocklist
-- Secrets go through the daemon secret-store abstraction and must never be logged
-- Release signing, notarization, Sparkle, and update-host credentials must stay outside the repository
-
-See [SECURITY.md](SECURITY.md) for our vulnerability reporting policy.
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+Contributions are licensed under the repository's MIT License and governed by
+the [Code of Conduct](CODE_OF_CONDUCT.md).

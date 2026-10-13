@@ -1,0 +1,12 @@
+{
+  "lspServers": {
+    "swift": {
+      "command": "sourcekit-lsp",
+      "fileExtensions": { ".swift": "swift" }
+    },
+    "rust": {
+      "command": "rust-analyzer",
+      "fileExtensions": { ".rs": "rust" }
+    }
+  }
+}

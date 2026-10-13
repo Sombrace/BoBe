@@ -1,5 +1,3 @@
-//! Atomic `.part` rename; interrupted downloads are discarded on next call.
-
 use std::path::Path;
 use std::time::Duration;
 

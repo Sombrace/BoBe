@@ -17,27 +17,23 @@ struct SettingsPatchEncodingTests {
     }
 
     @Test
-    func nullableFieldsEncodeUnchangedValueAndClearDistinctly() throws {
-        let encoder = JSONEncoder()
+    func physicalBodyThemeUsesExactDaemonId() throws {
+        var request = SettingsUpdateRequest()
+        request.bodyTheme = .solarWideAwake
 
-        let unchanged = try #require(
-            JSONSerialization.jsonObject(with: encoder.encode(SettingsUpdateRequest())) as? [String: Any]
+        let encoded = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any]
         )
-        #expect(!unchanged.keys.contains("provider_base_url"))
 
-        var valueRequest = SettingsUpdateRequest()
-        valueRequest.providerBaseUrl = .value("http://localhost:11434/v1")
-        let value = try #require(
-            JSONSerialization.jsonObject(with: encoder.encode(valueRequest)) as? [String: Any]
-        )
-        #expect(value["provider_base_url"] as? String == "http://localhost:11434/v1")
-
-        var clearRequest = SettingsUpdateRequest()
-        clearRequest.providerBaseUrl = .clear
-        let clear = try #require(
-            JSONSerialization.jsonObject(with: encoder.encode(clearRequest)) as? [String: Any]
-        )
-        #expect(clear.keys.contains("provider_base_url"))
-        #expect(clear["provider_base_url"] is NSNull)
+        #expect(encoded["body_theme"] as? String == "solar-wide-awake")
+        #expect(PhysicalBodyTheme.allCases.map(\.rawValue) == [
+            "warm-aperture",
+            "warm-lintel",
+            "warm-ledge",
+            "kettle-tall-bright",
+            "kettle-soft-bowl",
+            "solar-wide-awake",
+            "solar-crown",
+        ])
     }
 }

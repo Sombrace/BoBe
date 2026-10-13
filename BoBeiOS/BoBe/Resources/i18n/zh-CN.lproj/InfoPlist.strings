@@ -1,0 +1,4 @@
+"NSCameraUsageDescription" = "用于扫描 BoBe 的配对码。";
+"NSLocalNetworkUsageDescription" = "用于连接你的 BoBe。";
+"NSMicrophoneUsageDescription" = "用于在你按住说话按钮时听你说话。";
+"NSSpeechRecognitionUsageDescription" = "用于在这台 iPhone 上把你说的话转成文字。";

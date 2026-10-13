@@ -1,6 +1,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::error::AppError;
+use crate::util::text::hex_encode;
 
 pub(crate) struct DownloadIntegrity {
     label: &'static str,
@@ -37,13 +38,7 @@ impl DownloadIntegrity {
     }
 
     pub(crate) fn finish(self) -> Result<u64, AppError> {
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let digest = self.hasher.finalize();
-        let mut actual = String::with_capacity(digest.len() * 2);
-        for byte in digest {
-            actual.push(char::from(HEX[usize::from(byte >> 4)]));
-            actual.push(char::from(HEX[usize::from(byte & 0x0f)]));
-        }
+        let actual = hex_encode(&self.hasher.finalize());
         if actual != self.expected_sha256 {
             return Err(AppError::Config(format!(
                 "{} SHA-256 mismatch: expected {}, got {actual}",

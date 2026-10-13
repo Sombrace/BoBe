@@ -1,5 +1,3 @@
-//! Local TTS via sherpa-onnx Kokoro v1.0 (multilingual, 24kHz mono).
-
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -42,8 +40,6 @@ impl LocalKokoroTts {
             )));
         }
 
-        // Kokoro v1.0 multilingual needs lexicon + dict_dir; v0.19 english-only
-        // doesn't. Auto-detect by checking for the sibling files.
         let dict_dir = sibling(model, "dict");
         let lexicon_us = sibling(model, "lexicon-us-en.txt");
         let lexicon_zh = sibling(model, "lexicon-zh.txt");
@@ -113,8 +109,6 @@ impl TtsEngine for LocalKokoroTts {
             num_steps: 0,
             extra: None,
         };
-        // The callback signature is FnMut(&[f32], f32) -> bool; we don't need
-        // progress notifications, so pass None. Turbofish anchors F=fn(...).
         let audio = tts
             .generate_with_config(text, &gen_cfg, None::<fn(&[f32], f32) -> bool>)
             .ok_or_else(|| AppError::Internal("Kokoro generate failed".into()))?;
@@ -133,8 +127,6 @@ fn sibling(model_path: &Path, name: &str) -> PathBuf {
         .join(name)
 }
 
-/// Kokoro v1.0 multilingual voice slots (0..=52). Numeric input bypasses the table.
-/// Ordering canonicalised against sherpa-onnx `scripts/kokoro/v1.0/gen_cfgerate_voices_bin.py`.
 fn voice_id(voice: &str) -> Result<i32, AppError> {
     if let Ok(n) = voice.parse::<i32>() {
         return Ok(n);

@@ -1,21 +1,17 @@
 import AppKit
 
-/// Passes clicks through transparent areas; only child views receive hits.
 final class PassthroughContentView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard self.bounds.contains(point) else { return nil }
-        for child in subviews.reversed() {
-            let childPoint = child.convert(point, from: self)
-            if let hit = child.hitTest(childPoint) {
-                return hit
-            }
-        }
-        return nil
+        let hit = super.hitTest(point)
+        return hit === self ? nil : hit
     }
 }
 
 final class OverlayPanel: NSPanel {
-    init(contentRect: NSRect) {
+    var onCancel: (() -> Void)?
+    var allowsKey = false
+
+    init(contentRect: NSRect, title: String, identifier: String) {
         super.init(
             contentRect: contentRect,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -25,16 +21,20 @@ final class OverlayPanel: NSPanel {
 
         let passthrough = PassthroughContentView(frame: NSRect(origin: .zero, size: contentRect.size))
         passthrough.autoresizingMask = [.width, .height]
+        passthrough.wantsLayer = true
+        passthrough.layer?.masksToBounds = false
         contentView = passthrough
 
-        title = "BoBe Overlay"
-        setAccessibilityLabel("BoBe Overlay")
+        self.title = title
+        setAccessibilityIdentifier(identifier)
+        setAccessibilityLabel(title)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
         level = .floating
-        isMovable = true
-        isMovableByWindowBackground = true
+        isMovable = false
+        isMovableByWindowBackground = false
+        acceptsMouseMovedEvents = true
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
 
@@ -43,14 +43,18 @@ final class OverlayPanel: NSPanel {
             .fullScreenAuxiliary,
         ]
 
-        ignoresMouseEvents = false
+        ignoresMouseEvents = true
     }
 
     override var canBecomeKey: Bool {
-        true
+        self.allowsKey
     }
 
     override var canBecomeMain: Bool {
         false
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        self.onCancel?()
     }
 }

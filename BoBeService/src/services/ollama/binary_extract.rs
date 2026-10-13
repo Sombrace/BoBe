@@ -1,5 +1,3 @@
-//! Path-traversal: any entry containing `..` is skipped.
-
 use std::path::Path;
 
 use tracing::info;

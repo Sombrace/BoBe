@@ -12,18 +12,6 @@ struct BodyAdapterAudioFormat: Codable, Equatable, Sendable {
         channels: 1,
         frameDurationMs: 20
     )
-    static let tts = Self(
-        codec: "opus",
-        sampleRateHz: 24_000,
-        channels: 1,
-        frameDurationMs: 20
-    )
-    static let speaker = Self(
-        codec: "pcm_s16le",
-        sampleRateHz: 24_000,
-        channels: 1,
-        frameDurationMs: 20
-    )
 
     enum CodingKeys: String, CodingKey {
         case codec
@@ -123,8 +111,6 @@ enum BodyAdapterClientMessage: Encodable {
             try container.encode(1, forKey: .protocolMajor)
             try container.encode(1, forKey: .protocolMinor)
             try container.encode(BodyAdapterAudioFormat.capture, forKey: .captureFormat)
-            try container.encode(BodyAdapterAudioFormat.tts, forKey: .ttsFormat)
-            try container.encode(BodyAdapterAudioFormat.speaker, forKey: .speakerFormat)
         case let .transcriptPartial(route, text):
             try container.encode("transcript.partial", forKey: .type)
             try container.encode(route.connectionGeneration, forKey: .connectionGeneration)
@@ -147,8 +133,6 @@ enum BodyAdapterClientMessage: Encodable {
         case protocolMajor = "protocol_major"
         case protocolMinor = "protocol_minor"
         case captureFormat = "capture_format"
-        case ttsFormat = "tts_format"
-        case speakerFormat = "speaker_format"
         case connectionGeneration = "connection_generation"
         case leaseId = "lease_id"
         case text
@@ -158,8 +142,6 @@ enum BodyAdapterClientMessage: Encodable {
 struct BodyAdapterMediaHeader: Equatable, Sendable {
     enum Kind: UInt8 {
         case microphonePcm = 1
-        case ttsOpus = 2
-        case speakerPcm = 3
     }
 
     static let length = 40
@@ -195,21 +177,6 @@ struct BodyAdapterMediaHeader: Equatable, Sendable {
         )
     }
 
-    func encode(payload: Data) -> Data {
-        var data = Data(capacity: Self.length + payload.count)
-        data.append(1)
-        data.append(self.kind.rawValue)
-        data.append(contentsOf: [0, 0])
-        appendUInt64BE(self.connectionGeneration, to: &data)
-        var uuid = self.leaseId.uuid
-        withUnsafeBytes(of: &uuid) { data.append(contentsOf: $0) }
-        appendUInt32BE(self.streamId, to: &data)
-        appendUInt32BE(self.sequence, to: &data)
-        data.append(contentsOf: [0, 0, 0, 0])
-        data.append(payload)
-        return data
-    }
-
     private static func readUuid(_ data: Data, offset: Int) -> UUID? {
         let bytes = Array(data.dropFirst(offset).prefix(16))
         guard bytes.count == 16 else { return nil }
@@ -238,17 +205,17 @@ struct BodyLinkMicrophoneFrame {
     static func parse(_ data: Data) -> Self? {
         guard data.count == self.headerLength + self.payloadLength,
               data[data.startIndex] == 1,
-              data[data.startIndex + 1] == 1,
-              data[data.startIndex + 2] & 0xFF == 0,
-              data[data.startIndex + 3] & 0xFC == 0
+              data[data.startIndex + 1] == 1
         else {
             return nil
         }
+        let flags = UInt16(data[data.startIndex + 2]) << 8
+            | UInt16(data[data.startIndex + 3])
+        guard flags & ~self.discontinuityFlag == 0 else { return nil }
         let streamId = readUInt32BE(data, offset: 4)
         guard streamId != 0 else { return nil }
         return Self(
-            flags: UInt16(data[data.startIndex + 2]) << 8
-                | UInt16(data[data.startIndex + 3]),
+            flags: flags,
             streamId: streamId,
             sequence: readUInt32BE(data, offset: 8),
             pcm: data.subdata(in: data.startIndex + self.headerLength ..< data.endIndex)
@@ -262,17 +229,4 @@ private func readUInt32BE(_ data: Data, offset: Int) -> UInt32 {
 
 private func readUInt64BE(_ data: Data, offset: Int) -> UInt64 {
     data.dropFirst(offset).prefix(8).reduce(0) { ($0 << 8) | UInt64($1) }
-}
-
-private func appendUInt32BE(_ value: UInt32, to data: inout Data) {
-    data.append(UInt8(truncatingIfNeeded: value >> 24))
-    data.append(UInt8(truncatingIfNeeded: value >> 16))
-    data.append(UInt8(truncatingIfNeeded: value >> 8))
-    data.append(UInt8(truncatingIfNeeded: value))
-}
-
-private func appendUInt64BE(_ value: UInt64, to data: inout Data) {
-    for shift in stride(from: 56, through: 0, by: -8) {
-        data.append(UInt8(truncatingIfNeeded: value >> UInt64(shift)))
-    }
 }

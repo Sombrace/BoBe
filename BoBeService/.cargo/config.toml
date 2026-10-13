@@ -1,30 +1,14 @@
-# Disk-saving build profile overrides for the Rust daemon embedded beside the
-# Swift executable in the macOS app bundle.
-# See: https://doc.rust-lang.org/cargo/reference/profiles.html
-#
-# Background: default `cargo build` writes ~500MB static archives because rustc
-# emits full DWARF debug info for every codegen unit, including all transitive
-# dependencies. With ~3000 .o members per .a, DWARF is ~87% of file size.
-# These overrides cut that to ~10-15% with negligible loss of debugger fidelity.
-#
-# Release builds are UNAFFECTED — only [profile.dev] is overridden. Shipping
-# artifacts produced by `cargo build --release` keep their defaults (no debug).
+
+[target.aarch64-apple-darwin]
+rustflags = ["-C", "link-arg=-mmacosx-version-min=26.0"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-mmacosx-version-min=26.0"]
 
 [profile.dev]
-# Emit only the line-number table, not full type/variable DWARF.
-# Backtraces, panic locations, and lldb/gdb breakpoints by file:line still work.
-# Trade-off: no local-variable inspection at lldb breakpoints (rare in Swift+Rust
-# workflows — you almost never sit in lldb across the FFI boundary anyway).
 debug = "line-tables-only"
 
-# Bundle-safe debug info packaging. Produces a dSYM next to the daemon binary
-# instead of leaving DWARF scattered across dependency object files.
 split-debuginfo = "packed"
 
 [profile.dev.package."*"]
-# Third-party deps (NOT workspace members): no debug info at all.
-# Eliminates ~95% of the DWARF mass — most .o files in your .a are tokio,
-# rustls, sqlite, windows-sys, serde, etc. Backtraces still show dep function
-# names (from the symbol table), just no file:line for dep frames.
-# You will not be able to source-step into a dependency. That is fine.
 debug = false

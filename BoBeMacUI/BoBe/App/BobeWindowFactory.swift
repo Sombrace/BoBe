@@ -1,19 +1,14 @@
 import AppKit
 import SwiftUI
 
-/// Shared NSWindow factory for Bobe's chrome (Settings + Setup). Both windows
-/// share the same titlebar treatment, theme background, hosting-controller
-/// pattern, and movability — extracted here to keep the two window managers
-/// from drifting.
 @MainActor
 enum BobeWindowFactory {
-    /// Build an NSWindow with Bobe's standard titlebar/background/hosting
-    /// treatment. The caller still owns the window lifecycle (delegate
-    /// assignment, ordering front, activation).
     static func make(
         contentRect: NSRect,
         styleMask: NSWindow.StyleMask,
         title: String,
+        titlebarAppearsTransparent: Bool = true,
+        titleVisibility: NSWindow.TitleVisibility = .hidden,
         animationBehavior: NSWindow.AnimationBehavior = .none,
         rootView: some View
     ) -> NSWindow {
@@ -27,8 +22,8 @@ enum BobeWindowFactory {
         )
         window.title = title
         window.isRestorable = false
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = titlebarAppearsTransparent
+        window.titleVisibility = titleVisibility
         window.isMovableByWindowBackground = true
         window.animationBehavior = animationBehavior
         window.backgroundColor = NSColor(theme.colors.background)

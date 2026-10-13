@@ -1,0 +1,5 @@
+PICO_SDK_VERSION=2.3.0
+PICO_SDK_COMMIT=98a542c1a62fb549ffb5d66a3e5892b06276b670
+PICO_SDK_TOOLS_VERSION=v2.3.0-0
+PICO_RISCV_TOOLCHAIN_SHA256=394da9da684da0d7347d57edcdb07144acef81c5667521b5f29cff89f602a4fd
+PICO_RISCV_TOOLCHAIN_URL=https://github.com/raspberrypi/pico-sdk-tools/releases/download/v2.3.0-0/riscv-toolchain-15-mac.zip

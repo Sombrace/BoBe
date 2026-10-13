@@ -1,0 +1,34 @@
+included:
+  - BoBe
+
+disabled_rules:
+  - trailing_comma
+  - identifier_name
+  - type_body_length
+  - function_body_length
+  - cyclomatic_complexity
+  - nesting
+
+opt_in_rules:
+  - closure_spacing
+  - empty_count
+  - force_unwrapping
+  - implicitly_unwrapped_optional
+  - overridden_super_call
+  - private_over_fileprivate
+  - redundant_nil_coalescing
+  - sorted_imports
+  - unowned_variable_capture
+  - vertical_whitespace_closing_braces
+
+line_length:
+  warning: 150
+  error: 200
+
+file_length:
+  warning: 800
+  error: 1000
+
+type_name:
+  min_length: 2
+  max_length: 50

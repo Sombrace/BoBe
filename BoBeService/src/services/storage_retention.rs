@@ -1,5 +1,3 @@
-//! Bounded retention for closed conversations and BoBe-owned daily logs.
-
 use std::path::PathBuf;
 
 use chrono::{Duration, Utc};
@@ -61,7 +59,7 @@ pub(crate) async fn run(pool: &SqlitePool, config: &Config) -> RetentionOutcome 
 async fn prune_closed_conversations(pool: &SqlitePool, config: &Config) -> Result<u64, AppError> {
     let cutoff = Utc::now() - Duration::days(i64::from(config.conversation.closed_retention_days));
     let keep_count = i64::from(config.conversation.closed_retention_count);
-    let mut transaction = pool.begin().await?;
+    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
     let candidate_ids: Vec<(Vec<u8>,)> = sqlx::query_as(
         "SELECT id FROM conversations WHERE state = 'closed' \
          AND (closed_at < ?1 OR id NOT IN (SELECT id FROM conversations WHERE state = 'closed' \
@@ -123,13 +121,17 @@ fn prune_daily_logs(config: &crate::config::LoggingConfig) -> std::io::Result<(u
     let today = Utc::now().date_naive();
     let cutoff = today - Duration::days(i64::from(config.retention_days));
     let owned_prefix = format!("{prefix}.");
+    let owned_suffix = format!(".{}", crate::util::logging::DAILY_LOG_SUFFIX);
     let mut files = Vec::new();
     for entry in entries {
         let entry = entry?;
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        let Some(date_text) = name.strip_prefix(&owned_prefix) else {
+        let Some(date_text) = name
+            .strip_prefix(&owned_prefix)
+            .and_then(|rest| rest.strip_suffix(&owned_suffix))
+        else {
             continue;
         };
         let Ok(date) = chrono::NaiveDate::parse_from_str(date_text, "%Y-%m-%d") else {
@@ -227,6 +229,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pruning_waits_for_concurrent_job_delivery_writes() {
+        let root =
+            std::env::temp_dir().join(format!("bobe-retention-writer-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(root.join("data.sqlite3"))
+                    .create_if_missing(true)
+                    .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                    .busy_timeout(std::time::Duration::from_secs(2)),
+            )
+            .await
+            .unwrap();
+        sqlx::raw_sql(include_str!("../../migrations/schema.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        insert_conversation(&pool, "closed", Utc::now() - Duration::days(365)).await;
+        let mut writer = pool.begin().await.unwrap();
+        sqlx::query("INSERT INTO conversations (id) VALUES (?1)")
+            .bind(uuid::Uuid::new_v4())
+            .execute(&mut *writer)
+            .await
+            .unwrap();
+        let reader_pool = pool.clone();
+        let pruning = tokio::spawn(async move {
+            prune_closed_conversations(&reader_pool, &Config::default()).await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let waited = !pruning.is_finished();
+        writer.commit().await.unwrap();
+        let result = pruning.await.unwrap();
+        pool.close().await;
+        std::fs::remove_dir_all(root).unwrap();
+        assert!(
+            waited,
+            "retention must wait for the existing writer instead of failing a snapshot upgrade"
+        );
+        assert_eq!(result.unwrap(), 1);
+    }
+
+    #[tokio::test]
     async fn pruning_preserves_executable_jobs_and_tombstones_terminal_requests() {
         let pool = test_pool().await;
         let old = Utc::now() - Duration::days(365);
@@ -267,20 +313,37 @@ mod tests {
     }
 
     #[test]
-    fn log_pruning_ignores_unowned_files() {
+    fn log_pruning_deletes_old_daily_files_and_keeps_the_rest() {
         let directory =
             std::env::temp_dir().join(format!("bobe-retention-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&directory).unwrap();
-        let old = Utc::now().date_naive() - Duration::days(30);
-        std::fs::write(directory.join(format!("bobe.log.{old}")), vec![0_u8; 10]).unwrap();
-        std::fs::write(directory.join("other.log.2000-01-01"), b"keep").unwrap();
+        drop(crate::util::logging::daily_appender(&directory, "bobe").unwrap());
+        let today = Utc::now().date_naive().to_string();
+        let current = std::fs::read_dir(&directory)
+            .unwrap()
+            .map(Result::unwrap)
+            .find(|entry| entry.file_type().unwrap().is_file())
+            .unwrap()
+            .file_name()
+            .into_string()
+            .unwrap();
+        assert_eq!(current, format!("bobe.{today}.log"));
+        let old = (Utc::now().date_naive() - Duration::days(30)).to_string();
+        std::fs::write(
+            directory.join(current.replace(&today, &old)),
+            vec![0_u8; 10],
+        )
+        .unwrap();
+        std::fs::write(directory.join("other.2000-01-01.log"), b"keep").unwrap();
         let config = crate::config::LoggingConfig {
-            file: Some(directory.join("bobe.log").to_string_lossy().into_owned()),
+            file: Some(directory.join("bobe").to_string_lossy().into_owned()),
             retention_days: 15,
             ..crate::config::LoggingConfig::default()
         };
         assert_eq!(prune_daily_logs(&config).unwrap(), (1, 10));
-        assert!(directory.join("other.log.2000-01-01").exists());
+        assert!(directory.join(&current).exists());
+        assert!(directory.join("bobe").is_symlink());
+        assert!(directory.join("other.2000-01-01.log").exists());
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

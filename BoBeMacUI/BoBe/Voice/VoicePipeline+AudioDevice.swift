@@ -4,37 +4,9 @@ import OSLog
 
 private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline.AudioDevice")
 
-/// CoreAudio integration: observe the system default-input and default-
-/// output devices and rebuild the AVAudioEngine when either changes.
-///
-/// **Why this matters — input side.** `AVAudioEngine.inputNode.inputFormat`
-/// captures the device's sample rate / channel count / interleaving at
-/// the moment `installTap(...)` is called. When the user plugs in AirPods
-/// (or any USB mic, or switches default input in System Settings), the
-/// engine itself stays running on the OLD format — buffers arrive in the
-/// new format but our `AVAudioConverter` was built for the old one.
-/// Symptom: "I plugged in headphones and BoBe stopped hearing me."
-///
-/// **Why this matters — output side.** VPIO (the AEC AudioUnit) needs the
-/// output reference signal to cancel BoBe's own voice from the mic input.
-/// When the default output changes, the cached reference path in VPIO
-/// can degrade AEC quality. Less critical than input (TTS still plays
-/// through the new device automatically) but the AEC matters for the
-/// next user turn after the route change.
-///
-/// **Approach.** Two CoreAudio property listeners — one for input, one
-/// for output. Both debounce (HAL fires 2-3x per plug/unplug) and route
-/// to the same rebuild path. Rebuilds are deferred while a response is active,
-/// because tearing down the engine would cut playback and strand client-TTS
-/// completion acknowledgements.
 @MainActor
 extension VoicePipeline {
-    // MARK: - Registration
 
-    /// Idempotent registration of both CoreAudio listeners. Called from
-    /// `configureEngine()` so the listeners are wired up as soon as we
-    /// have a running engine. The listener blocks are process-lifetime —
-    /// we never deregister, matching the singleton's lifetime.
     func registerInputDeviceObserverIfNeeded() {
         self.registerDeviceListener(
             selector: kAudioHardwarePropertyDefaultInputDevice,
@@ -50,7 +22,6 @@ extension VoicePipeline {
         )
     }
 
-    /// Distinguishes input vs output in logs.
     private enum DeviceKind: String {
         case input, output
     }
@@ -67,15 +38,6 @@ extension VoicePipeline {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        // Listener runs on the global concurrent queue per Apple's docs.
-        // The block MUST be `@Sendable`: it's declared inside a `@MainActor`
-        // extension, so without the annotation it inherits MainActor
-        // isolation and Swift's runtime inserts an executor assertion at the
-        // block's entry. CoreAudio invokes the block on its OWN queue, so
-        // that assertion trips (`dispatch_assert_queue` fail → EXC_BREAKPOINT)
-        // on every default-device change. `@Sendable` keeps the block
-        // nonisolated; we hop to MainActor explicitly for the state mutation.
-        // It captures only `weak self` (the pipeline singleton) and `kind`.
         let status = AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject),
             &address,
@@ -95,13 +57,7 @@ extension VoicePipeline {
         }
     }
 
-    // MARK: - Change handling
 
-    /// Coalesce HAL device-change notifications and schedule one rebuild.
-    /// The 250 ms debounce window is the empirical "settle time" for HAL
-    /// device transitions — shorter and you race the format-change phase;
-    /// longer and the user notices a gap mid-utterance.
-    ///
     private func handleDefaultDeviceChange(kind: DeviceKind) {
         logger.info("voice: default-\(kind.rawValue, privacy: .public) device changed")
         if self.audioRebuildMustWait {
@@ -113,14 +69,23 @@ extension VoicePipeline {
         self.scheduleDeviceChangeRebuild()
     }
 
+    func handleAudioEngineConfigurationChange() {
+        guard self.isWarm else { return }
+        guard !self.audioEngine.isRunning else {
+            logger.debug("voice: audio-engine configuration changed while running")
+            return
+        }
+        logger.info("voice: audio-engine configuration changed; scheduling rebuild")
+        self.pendingAudioDeviceRebuild = true
+        self.scheduleDeviceChangeRebuild()
+    }
+
     func drainPendingAudioDeviceRebuild() {
         guard self.pendingAudioDeviceRebuild else { return }
         logger.info("voice: response ended; reevaluating deferred audio-device rebuild")
         self.scheduleDeviceChangeRebuild()
     }
 
-    /// Common scheduling path. The debounce coalesces HAL notifications; the
-    /// loop then waits until neither the wire state nor the player owns audio.
     private func scheduleDeviceChangeRebuild() {
         self.deviceChangeReconfigureTask?.cancel()
         self.deviceChangeReconfigureTask = Task { @MainActor [weak self] in
@@ -146,15 +111,6 @@ extension VoicePipeline {
             || self.audioStillPlaying()
     }
 
-    /// Tear down + reconfigure the audio path in place. Does NOT touch
-    /// the WebSocket — the session keeps its turn id and the daemon
-    /// never notices. After the rebuild, the new device's format flows
-    /// through `installTap` to the FluidAudio engines, the converter is
-    /// built fresh against the new input format, and VPIO re-references
-    /// against the new output.
-    ///
-    /// No-op when the engine isn't warm (idle session, mic off) — the
-    /// next user-initiated `prewarm()` picks up the new device anyway.
     private func rebuildAudioEngineForDeviceChange() {
         guard self.isWarm else {
             logger.debug("voice: device change while cold — skipping rebuild")

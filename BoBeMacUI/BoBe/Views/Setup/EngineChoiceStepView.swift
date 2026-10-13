@@ -8,137 +8,66 @@ struct EngineChoiceStepView: View {
     @FocusState private var focused: EngineChoice?
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(alignment: .leading, spacing: 18) {
+            SetupStepHeader(title: L10n.tr("setup.engine.title"))
+                .padding(.top, 8)
+
             VStack(spacing: 10) {
-                Text(L10n.tr("setup.engine.hello"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(2.2)
-                    .textCase(.uppercase)
-                    .foregroundStyle(self.theme.colors.textMuted)
-
-                Text(L10n.tr("setup.engine.title"))
-                    .bobeTextStyle(.setupTitle)
-                    .foregroundStyle(self.theme.colors.text)
-                Text(L10n.tr("setup.engine.body"))
-                    .bobeTextStyle(.setupBody)
-                    .foregroundStyle(self.theme.colors.textMuted)
-                    .multilineTextAlignment(.center)
-            }
-            .padding(.top, 8)
-
-            VStack(spacing: 12) {
-                EngineChoiceCard(
+                SetupChoiceCard(
                     icon: "cloud.fill",
-                    title: L10n.tr("setup.engine.copilot.title"),
-                    subtitle: L10n.tr("setup.engine.copilot.subtitle"),
-                    bestFor: L10n.tr("setup.engine.copilot.best_for"),
-                    isSelected: self.selection == .copilot
-                ) {
-                    self.selection = .copilot
-                }
-                .focused(self.$focused, equals: .copilot)
+                    tint: SettingsCategory.userProfiles.tint,
+                    title: L10n.tr("setup.engine.provider.title"),
+                    subtitle: L10n.tr("setup.engine.provider.subtitle"),
+                    isSelected: self.selection == .provider,
+                    action: { self.selection = .provider }
+                )
+                .focused(self.$focused, equals: .provider)
+                .setupStagger(0)
 
-                EngineChoiceCard(
+                SetupChoiceCard(
                     icon: "macbook",
+                    tint: SettingsCategory.goals.tint,
                     title: L10n.tr("setup.engine.local.title"),
-                    subtitle: L10n.tr("setup.engine.local.subtitle"),
-                    bestFor: L10n.tr("setup.engine.local.best_for"),
-                    isSelected: self.selection == .local
-                ) {
-                    self.selection = .local
-                }
+                    subtitle: DaemonConfig.endpoint.managesLocalProcess
+                        ? L10n.tr("setup.engine.local.subtitle")
+                        : L10n.tr("setup.engine.local.remote_subtitle"),
+                    isSelected: self.selection == .local,
+                    action: { self.selection = .local },
+                    detail: { self.bestFor(L10n.tr("setup.engine.local.best_for")) }
+                )
                 .focused(self.$focused, equals: .local)
+                .setupStagger(1)
             }
             .onKeyPress(.upArrow) {
-                self.selection = .copilot
-                self.focused = .copilot
+                self.selection = .provider
+                self.focused = self.selection
                 return .handled
             }
             .onKeyPress(.downArrow) {
                 self.selection = .local
-                self.focused = .local
+                self.focused = self.selection
                 return .handled
             }
 
-            Text(L10n.tr("setup.engine.footer"))
-                .bobeTextStyle(.helper)
-                .foregroundStyle(self.theme.colors.textMuted)
-                .multilineTextAlignment(.center)
+            Spacer(minLength: 0)
 
-            Spacer()
-
-            Button(L10n.tr("setup.welcome.continue"), action: self.onContinue)
-                .bobeButton(.primary, size: .regular)
-                .keyboardShortcut(.defaultAction)
-                .disabled(self.selection == nil)
+            HStack {
+                Spacer()
+                Button(L10n.tr("setup.welcome.continue"), action: self.onContinue)
+                    .bobeButton(.primary, size: .regular)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(self.selection == nil)
+            }
         }
     }
-}
 
-private struct EngineChoiceCard: View {
-    let icon: String
-    let title: String
-    let subtitle: String
-    let bestFor: String
-    let isSelected: Bool
-    let onTap: () -> Void
-
-    @Environment(\.theme) private var theme
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: self.onTap) {
-            HStack(alignment: .top, spacing: 14) {
-                Image(systemName: self.icon)
-                    .font(.system(size: 24, weight: .light))
-                    .foregroundStyle(self.isSelected ? self.theme.colors.primary : self.theme.colors.textMuted)
-                    .frame(width: 36, height: 36)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(self.title)
-                        .bobeTextStyle(.setupHeading)
-                        .foregroundStyle(self.theme.colors.text)
-                    Text(self.subtitle)
-                        .bobeTextStyle(.helper)
-                        .foregroundStyle(self.theme.colors.textMuted)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                    HStack(spacing: 4) {
-                        Image(systemName: "sparkle")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundStyle(self.theme.colors.primary)
-                        Text(self.bestFor)
-                            .bobeTextStyle(.helper)
-                            .fontWeight(.medium)
-                            .foregroundStyle(self.theme.colors.primary)
-                    }
-                    .padding(.top, 2)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                Image(systemName: self.isSelected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 18))
-                    .foregroundStyle(self.isSelected ? self.theme.colors.primary : self.theme.colors.border)
-                    .padding(.top, 6)
-            }
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(self.isSelected
-                        ? self.theme.colors.primary.opacity(0.08)
-                        : self.theme.colors.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        self.isSelected
-                            ? self.theme.colors.primary
-                            : (self.isHovered ? self.theme.colors.primary.opacity(0.5) : self.theme.colors.border),
-                        lineWidth: self.isSelected ? 1.5 : 1
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { self.isHovered = $0 }
+    private func bestFor(_ text: String) -> some View {
+        Text(text)
+            .bobeTextStyle(.caption)
+            .foregroundStyle(self.theme.colors.primary)
+            .padding(.horizontal, 8)
+            .frame(minHeight: 20)
+            .background(Capsule(style: .circular).fill(self.theme.accentSoft))
+            .padding(.top, 3)
     }
 }

@@ -5,7 +5,6 @@ use chrono::{DateTime, Utc};
 use crate::models::ids::GoalId;
 use crate::models::types::GoalStatus;
 
-/// Injected on every Read so the chat agent treats the file as editable.
 pub(crate) const LIVING_DOCUMENT_PREAMBLE: &str = "> This is a living document. Update any section as you learn more\n\
      > about the user's relationship to this goal.\n";
 
@@ -25,7 +24,6 @@ pub(crate) struct GoalDoc {
     pub(crate) id: GoalId,
     pub(crate) title: String,
     pub(crate) status: GoalStatus,
-    /// 0=low, 5=urgent; `u8` lets agent express finer gradation than an enum.
     pub(crate) priority: u8,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
@@ -36,7 +34,6 @@ pub(crate) struct GoalDoc {
     pub(crate) attitude_feelings: String,
     pub(crate) open_questions: String,
     pub(crate) notes: String,
-    /// Preserves user-invented sections across round-trip.
     pub(crate) extra_sections: Vec<(String, String)>,
 }
 
@@ -130,7 +127,6 @@ fn canonical_sections(doc: &GoalDoc) -> [(&'static str, &str); 7] {
     ]
 }
 
-/// Requires `# title` and `**ID**:` lines; section order is free.
 pub(crate) fn parse(input: &str) -> Result<GoalDoc, GoalParseError> {
     let mut title: Option<String> = None;
     let mut id: Option<GoalId> = None;
@@ -161,7 +157,6 @@ pub(crate) fn parse(input: &str) -> Result<GoalDoc, GoalParseError> {
             continue;
         }
 
-        // Metadata only honored before the first `##` section.
         if current.is_none()
             && let Some((key, value)) = parse_metadata_line(line)
         {

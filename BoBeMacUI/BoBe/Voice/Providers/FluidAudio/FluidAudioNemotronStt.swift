@@ -32,6 +32,7 @@ actor FluidAudioNemotronStt: VoiceSttEngine {
     func loadModels(
         onPartial: @escaping @Sendable (String) async -> Void,
         onEou: @escaping @Sendable (String) async -> Void,
+        onFailure _: @escaping @Sendable (String) async -> Void,
         onProgress: @escaping @Sendable (VoiceSttLoadProgress) -> Void
     ) async throws {
         self.onPartial = onPartial

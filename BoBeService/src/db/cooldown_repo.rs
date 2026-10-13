@@ -6,8 +6,6 @@ use sqlx::SqlitePool;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
-/// Single-row cooldown_state table with in-memory cache.
-/// Uses `tokio::sync::Mutex` since the guard is held across `.await`.
 pub(crate) struct SqliteCooldownRepo {
     pool: SqlitePool,
     state: Mutex<Option<Cooldown>>,
@@ -141,8 +139,6 @@ mod tests {
         repo.load_or_create().await.expect("first load_or_create");
         let id_first = repo.ensure_loaded().await.expect("ensure_loaded #1");
 
-        // Second call should NOT insert a new row — the in-memory cache
-        // and the WHERE-LIMIT-1 SELECT mean we keep the same ID.
         repo.load_or_create().await.expect("second load_or_create");
         let id_second = repo.ensure_loaded().await.expect("ensure_loaded #2");
 
@@ -154,7 +150,6 @@ mod tests {
         let pool = in_memory_pool().await;
         let repo = SqliteCooldownRepo::new(pool);
         repo.load_or_create().await.expect("seed cooldown state");
-        // No engagement recorded yet — cooldown shouldn't gate anything.
         assert!(repo.check_cooldown(5, 30).is_none());
     }
 
@@ -167,7 +162,6 @@ mod tests {
             .await
             .expect("record engagement");
 
-        // Just-now engagement → cooldown active for the next 5 minutes.
         let info = repo.check_cooldown(5, 30);
         assert!(
             info.is_some(),
@@ -180,7 +174,6 @@ mod tests {
         let pool = in_memory_pool().await;
         let repo = SqliteCooldownRepo::new(pool);
         repo.load_or_create().await.expect("seed cooldown state");
-        // Engagement 10 minutes ago, base window = 5 minutes → cleared.
         let past = Utc::now() - ChronoDuration::minutes(10);
         repo.update_last_engagement(past)
             .await

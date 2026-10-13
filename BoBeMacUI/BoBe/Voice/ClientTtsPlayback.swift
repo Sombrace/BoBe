@@ -98,10 +98,20 @@ actor ClientTtsSentenceQueue {
 @MainActor
 extension VoicePipeline {
     func enqueueClientTts(turnId: String, sequence: UInt64, text: String) async {
+        if turnId == self.cancelledClientTtsTurnId {
+            logger.debug("client TTS sentence for a cancelled turn ignored")
+            return
+        }
+        if let activeTurnId = self.clientTtsTurnId, activeTurnId != turnId {
+            logger.debug("stale client TTS sentence ignored")
+            return
+        }
         if self.clientTtsQueue == nil {
             self.startClientTtsTurn(turnId: turnId)
         }
-        guard let queue = self.clientTtsQueue else { return }
+        guard self.clientTtsTurnId == turnId,
+              let queue = self.clientTtsQueue
+        else { return }
         let accepted = await queue.send(
             ClientTtsSentence(turnId: turnId, sequence: sequence, text: text)
         )
@@ -110,20 +120,27 @@ extension VoicePipeline {
         }
     }
 
-    func finishClientTtsTurn(turnId _: String) async {
-        guard let queue = self.clientTtsQueue else { return }
+    func finishClientTtsTurn(turnId: String) async {
+        guard self.clientTtsTurnId == turnId,
+              let queue = self.clientTtsQueue
+        else {
+            logger.debug("stale client TTS end ignored")
+            return
+        }
         self.clientTtsQueue = nil
         await queue.finish()
     }
 
     func cancelClientTtsTurn() {
         guard self.clientTtsActive else { return }
+        self.cancelledClientTtsTurnId = self.clientTtsTurnId
         if let queue = self.clientTtsQueue {
             Task { await queue.cancel() }
         }
         self.clientTtsQueue = nil
         self.clientTtsTask?.cancel()
         self.clientTtsTask = nil
+        self.clientTtsTurnId = nil
         self.clientTtsActive = false
         self.clientTtsFirstAudioSent = false
         self.pendingServerListening = false
@@ -131,6 +148,9 @@ extension VoicePipeline {
         self.scheduledChunks.removeAll(keepingCapacity: true)
         self.nextScheduleFrame = 0
         self.turnFrameBase = 0
+        self.lastPlaybackAckMs = 0
+        self.lastPlaybackAckChunkId = 0
+        self.resetReplyPosition()
         self.sampleTimeBase = self.currentPlayerSampleTime()
         self.playerNode.play()
     }
@@ -139,6 +159,7 @@ extension VoicePipeline {
         self.cancelClientTtsTurn()
         let queue = ClientTtsSentenceQueue()
         self.clientTtsQueue = queue
+        self.clientTtsTurnId = turnId
         self.clientTtsActive = true
         self.clientTtsFirstAudioSent = false
         self.pendingServerListening = false
@@ -182,11 +203,12 @@ extension VoicePipeline {
                     )
                 }
             }
-            while self.audioStillPlaying(), !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(40))
-            }
-            guard !Task.isCancelled else { return }
+            await self.waitForPlaybackDrain()
+            guard !Task.isCancelled, self.clientTtsTurnId == turnId else { return }
+            await self.sendPlaybackAcknowledgement()
             await self.sendClient(.ttsPlaybackComplete(turnId: turnId))
+            guard self.clientTtsTurnId == turnId else { return }
+            self.clientTtsTurnId = nil
             self.clientTtsActive = false
             self.clientTtsTask = nil
             self.clientTtsFirstAudioSent = false
@@ -212,15 +234,18 @@ extension VoicePipeline {
             guard let base = source.baseAddress else { return }
             data.update(from: base, count: source.count)
         }
-        self.scheduledChunks.append(
+        self.noteScheduled(
             ScheduledTtsChunk(
                 chunkId: sequence,
                 buffer: buffer,
-                startFrame: self.nextScheduleFrame
+                startFrame: Playhead.startFrame(
+                    scheduledThrough: self.nextScheduleFrame,
+                    played: self.playedFramesThisTurn()
+                )
             )
         )
-        self.nextScheduleFrame += AVAudioFramePosition(buffer.frameLength)
         self.playerNode.scheduleBuffer(buffer, completionHandler: nil)
+        self.schedulePlaybackAcknowledgement(chunkId: sequence)
         if !self.playerNode.isPlaying {
             self.playerNode.play()
         }

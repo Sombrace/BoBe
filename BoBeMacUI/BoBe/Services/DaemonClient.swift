@@ -9,72 +9,130 @@ private struct DaemonErrorEnvelope: Decodable {
 
 private struct DaemonErrorBody: Decodable {
     let message: String
-    /// Stable machine-readable code from the daemon (e.g. `AUTH_REQUIRED`,
-    /// `NO_ENTITLEMENTS`). Optional because most error variants don't supply one.
     let code: String?
+}
+
+enum RuntimeConnectionState: Sendable, Equatable {
+    case connected
+    case disconnected
+    case repairRequired(RuntimeIssue)
+}
+
+struct EventStreamCommandOrder {
+    private(set) var latest: UInt64 = 0
+
+    mutating func accept(_ generation: UInt64) -> Bool {
+        guard generation > self.latest else { return false }
+        self.latest = generation
+        return true
+    }
 }
 
 actor DaemonClient {
     static let shared = DaemonClient()
 
-    let baseURL = DaemonConfig.endpoint.baseURL
+    private let fixedEndpoint: DaemonEndpoint?
+    var endpoint: DaemonEndpoint { self.fixedEndpoint ?? DaemonConfig.endpoint }
+    var baseURL: URL { self.endpoint.baseURL }
 
-    let session: URLSession
-    /// Dedicated session for the SSE long-poll. Keeping it separate from
-    /// `session` lets SSE inherit URLSession's default 7-day
-    /// `timeoutIntervalForResource` while normal HTTP keeps a 300s cap.
-    /// Without this split, the shared 300s resource cap killed the SSE
-    /// stream every 5 minutes — causing periodic `connection_manager.replacing_connection`
-    /// churn on the daemon and a visible "Reconnecting…" flicker.
-    private let sseSession: URLSession
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
     let fetchTimeout: TimeInterval = 10
 
     private var sseTask: Task<Void, Never>?
-    private var eventHandler: (@Sendable (StreamBundle) async -> Void)?
-    private var connectionHandler: (@Sendable (Bool) async -> Void)?
+    private var eventHandler: (@Sendable (StreamBundle) async -> Bool)?
+    private var connectionHandler: (@Sendable (RuntimeConnectionState) async -> Void)?
     private var reconnectAttempts = 0
     private var isReconnecting = false
+    private var lastProcessedEventId: UInt64?
+    private var runtimeIncarnationId: UUID?
+    private var sseSelection: EndpointSelection?
+    private var sseCommands = EventStreamCommandOrder()
 
-    func endpointURL(_ path: String, queryItems: [URLQueryItem] = []) -> URL {
-        let trimmed = path.hasPrefix("/") ? String(path.dropFirst()) : path
-        let url = self.baseURL.appendingPathComponent(trimmed)
-        return queryItems.isEmpty ? url : url.appending(queryItems: queryItems)
+    static func shouldProcess(
+        eventId: UInt64?,
+        eventIncarnationId: UUID?,
+        lastProcessedEventId: UInt64?,
+        runtimeIncarnationId: UUID?
+    ) -> Bool {
+        guard let eventId,
+              eventIncarnationId == runtimeIncarnationId,
+              let lastProcessedEventId
+        else { return true }
+        return eventId > lastProcessedEventId
     }
 
-    init() {
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 10
-        config.timeoutIntervalForResource = 300
-        self.session = URLSession(configuration: config)
+    func endpointURL(_ path: String, queryItems: [URLQueryItem] = []) -> URL {
+        let segments = path.split(separator: "/").map(String.init)
+        return self.endpointURL(pathSegments: segments, queryItems: queryItems)
+    }
 
-        // SSE config: keep request idle timeout generous (heartbeats arrive
-        // every 15s from the daemon), and let `timeoutIntervalForResource`
-        // stay at the URLSession default of 7 days so the long-poll isn't
-        // forcibly torn down mid-session.
-        let sseConfig = URLSessionConfiguration.default
-        sseConfig.timeoutIntervalForRequest = 60
-        sseConfig.shouldUseExtendedBackgroundIdleMode = true
-        self.sseSession = URLSession(configuration: sseConfig)
+    func endpointURL(pathSegments: [String], queryItems: [URLQueryItem] = []) -> URL {
+        Self.endpointURL(
+            baseURL: self.baseURL,
+            pathSegments: pathSegments,
+            queryItems: queryItems
+        )
+    }
 
+    static func endpointURL(
+        baseURL: URL,
+        pathSegments: [String],
+        queryItems: [URLQueryItem] = []
+    ) -> URL {
+        guard var components = URLComponents(
+            url: baseURL,
+            resolvingAgainstBaseURL: false
+        ) else { return baseURL }
+        let prefix = components.percentEncodedPath.trimmingCharacters(
+            in: CharacterSet(charactersIn: "/")
+        )
+        let encodedSegments = pathSegments.map(Self.encodePathSegment)
+        components.percentEncodedPath = "/" + ([prefix] + encodedSegments)
+            .filter { !$0.isEmpty }
+            .joined(separator: "/")
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
+        return components.url ?? baseURL
+    }
+
+    private static func encodePathSegment(_ segment: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/%?#")
+        return segment.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+    }
+
+    func session(for purpose: DaemonTransportPurpose) -> URLSession {
+        DaemonTransportPolicy.session(for: self.endpoint, purpose: purpose)
+    }
+
+    init(endpoint: DaemonEndpoint? = nil) {
+        self.fixedEndpoint = endpoint
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
     }
 
-    // MARK: - SSE Connection
 
     func connectSSE(
-        onEvent: @escaping @Sendable (StreamBundle) async -> Void,
-        onConnectionChange: @escaping @Sendable (Bool) async -> Void
+        generation: UInt64,
+        selection: EndpointSelection,
+        onEvent: @escaping @Sendable (StreamBundle) async -> Bool,
+        onConnectionChange: @escaping @Sendable (RuntimeConnectionState) async -> Void
     ) {
+        guard self.sseCommands.accept(generation), EndpointStore.shared.selection == selection else { return }
+        if self.sseSelection != selection {
+            self.sseSelection = selection
+            self.lastProcessedEventId = nil
+            self.runtimeIncarnationId = nil
+        }
         self.eventHandler = onEvent
         self.connectionHandler = onConnectionChange
+        self.isReconnecting = false
         self.reconnectAttempts = 0
         self.startSSE()
     }
 
-    func disconnectSSE() {
+    func disconnectSSE(generation: UInt64) {
+        guard self.sseCommands.accept(generation) else { return }
         self.sseTask?.cancel()
         self.sseTask = nil
         self.eventHandler = nil
@@ -90,38 +148,77 @@ actor DaemonClient {
     }
 
     private func runSSELoop() async {
-        let url = self.endpointURL("events")
+        guard !Task.isCancelled, let selection = self.sseSelection,
+              EndpointStore.shared.selection == selection
+        else { return }
+        let endpoint = selection.endpoint
+        let url = Self.endpointURL(baseURL: endpoint.baseURL, pathSegments: ["events"])
         var request = URLRequest(url: url)
-        DaemonConfig.endpoint.authorize(&request)
+        endpoint.authorize(&request)
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        // Set explicitly large rather than 0 (which inherits the session
-        // default request timeout). The session default of 60s would be
-        // fine on its own thanks to heartbeats, but a large explicit value
-        // documents intent and is robust to future session-config changes.
+        request.setValue(BodyRequestWire.offeredActions, forHTTPHeaderField: BodyRequestWire.actionsHeader)
+        if let lastProcessedEventId {
+            request.setValue(String(lastProcessedEventId), forHTTPHeaderField: "Last-Event-ID")
+        }
+        if let runtimeIncarnationId {
+            request.setValue(runtimeIncarnationId.uuidString.lowercased(), forHTTPHeaderField: "BoBe-Runtime-Incarnation")
+        }
         request.timeoutInterval = TimeInterval(7 * 24 * 60 * 60)
 
         do {
-            let (bytes, response) = try await sseSession.bytes(for: request)
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200
-            else {
-                logger.warning("SSE connection failed with non-200 status")
+            let session = DaemonTransportPolicy.session(for: endpoint, purpose: .persistentEventStream)
+            let (bytes, response) = try await session.bytes(for: request)
+            guard !Task.isCancelled else { return }
+            guard let httpResponse = response as? HTTPURLResponse else {
+                logger.warning("SSE connection failed without an HTTP response")
                 await self.handleSSEDisconnect()
+                return
+            }
+            guard httpResponse.statusCode == 200 else {
+                let statusCode = httpResponse.statusCode
+                logger.warning("SSE connection failed with HTTP \(statusCode)")
+                if statusCode == 401 {
+                    await self.handleTerminalSSEFailure(AttachError.unauthorized)
+                } else {
+                    await self.handleSSEDisconnect()
+                }
                 return
             }
 
             logger.info("SSE connected")
-            self.reconnectAttempts = 0
-            await self.connectionHandler?(true)
+            await self.connectionHandler?(.connected)
 
-            for try await line in bytes.lines {
+            streamLoop: for try await line in bytes.lines {
                 if Task.isCancelled { break }
                 guard line.hasPrefix("data: ") else { continue }
                 let jsonStr = String(line.dropFirst(6))
                 guard let data = jsonStr.data(using: .utf8) else { continue }
                 do {
                     let bundle = try decoder.decode(StreamBundle.self, from: data)
-                    await self.eventHandler?(bundle)
+                    if !Self.shouldProcess(
+                        eventId: bundle.eventId,
+                        eventIncarnationId: bundle.runtimeIncarnationId,
+                        lastProcessedEventId: self.lastProcessedEventId,
+                        runtimeIncarnationId: self.runtimeIncarnationId
+                    ) {
+                        continue
+                    }
+                    let processed = await self.eventHandler?(bundle) ?? false
+                    guard !Task.isCancelled else { return }
+                    guard processed else {
+                        logger.error("SSE event recovery failed; reconnecting without advancing the cursor")
+                        break streamLoop
+                    }
+                    if bundle.type == .snapshotRequired,
+                       let gap = try? bundle.payload.decode(as: SnapshotRequiredPayload.self) {
+                        self.runtimeIncarnationId = bundle.runtimeIncarnationId
+                        self.lastProcessedEventId = gap.resumeAfter
+                    } else if let eventId = bundle.eventId,
+                              let incarnationId = bundle.runtimeIncarnationId {
+                        self.runtimeIncarnationId = incarnationId
+                        self.lastProcessedEventId = eventId
+                    }
+                    self.reconnectAttempts = 0
                 } catch {
                     logger.error("Failed to decode SSE event: \(error.localizedDescription, privacy: .public)")
                 }
@@ -129,6 +226,10 @@ actor DaemonClient {
         } catch {
             if !Task.isCancelled {
                 logger.warning("SSE stream error: \(error.localizedDescription, privacy: .public)")
+                if RuntimeIssue.isSecureVerificationFailure(error as NSError) {
+                    await self.handleTerminalSSEFailure(error)
+                    return
+                }
             }
         }
 
@@ -137,17 +238,24 @@ actor DaemonClient {
         }
     }
 
-    private func handleSSEDisconnect() async {
-        guard !self.isReconnecting else { return }
-        self.isReconnecting = true
-        defer { isReconnecting = false }
+    private func handleTerminalSSEFailure(_ error: any Error) async {
+        guard !Task.isCancelled else { return }
+        self.sseTask?.cancel()
+        self.sseTask = nil
+        self.isReconnecting = false
+        await self.connectionHandler?(.repairRequired(RuntimeIssue(error)))
+    }
 
-        await self.connectionHandler?(false)
+    private func handleSSEDisconnect() async {
+        guard !Task.isCancelled, !self.isReconnecting else { return }
+        let generation = self.sseCommands.latest
+        self.isReconnecting = true
+        defer { if generation == self.sseCommands.latest { self.isReconnecting = false } }
+
+        await self.connectionHandler?(.disconnected)
+        guard !Task.isCancelled, generation == self.sseCommands.latest else { return }
         self.reconnectAttempts += 1
 
-        // First attempt is immediate so transient drops are invisible.
-        // Subsequent attempts back off 0.5s, 1s, 2s, 4s, … capped at 15s.
-        // No hard cap on attempt count — daemon may come back hours later.
         let delay: Double = if self.reconnectAttempts == 1 {
             0
         } else {
@@ -157,27 +265,22 @@ actor DaemonClient {
             logger.info("SSE reconnecting in \(delay, privacy: .public)s (attempt \(self.reconnectAttempts))")
             try? await Task.sleep(for: .seconds(delay))
         }
-        if !Task.isCancelled {
+        if !Task.isCancelled, generation == self.sseCommands.latest {
             self.startSSE()
         }
     }
 
-    // MARK: - HTTP Helpers
 
-    /// Send the request, validate `2xx`, return raw bytes. Single point
-    /// of HTTP plumbing (URL build, method, content-type, body, network
-    /// error, status-code check) — `fetch<T>` and `fetchVoid` are thin
-    /// wrappers that decide whether to decode the body.
     private func send(
-        _ path: String,
+        url: URL,
+        routeLabel: String,
         method: String,
         body: (any Encodable)?,
-        queryItems: [URLQueryItem],
-        requestTimeout: TimeInterval?
+        requestTimeout: TimeInterval?,
+        acceptedStatusCodes: Set<Int> = []
     ) async throws -> Data {
-        let url = self.endpointURL(path, queryItems: queryItems)
         var request = URLRequest(url: url)
-        DaemonConfig.endpoint.authorize(&request)
+        self.endpoint.authorize(&request)
         request.httpMethod = method
         request.timeoutInterval = requestTimeout ?? self.fetchTimeout
 
@@ -189,26 +292,49 @@ actor DaemonClient {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await self.session.data(for: request)
+            (data, response) = try await self.session(for: .interactiveHTTP).data(for: request)
         } catch {
-            logger.error("\(method, privacy: .public) \(path, privacy: .public): network error — \(error.localizedDescription, privacy: .public)")
+            let description = error.localizedDescription
+            logger.error(
+                "\(method, privacy: .public) \(routeLabel, privacy: .public): network error — \(description, privacy: .public)"
+            )
             throw error
         }
         guard let httpResponse = response as? HTTPURLResponse else {
-            logger.error("\(method, privacy: .public) \(path, privacy: .public): invalid response (not HTTP)")
+            logger.error("\(method, privacy: .public) \(routeLabel, privacy: .public): invalid response (not HTTP)")
             throw DaemonError.invalidResponse
         }
-        guard (200 ... 299).contains(httpResponse.statusCode) else {
+        guard (200 ... 299).contains(httpResponse.statusCode)
+            || acceptedStatusCodes.contains(httpResponse.statusCode)
+        else {
             let (message, code) = self.errorMessage(from: data)
             let codeLabel = code ?? "no-code"
             let statusCode = httpResponse.statusCode
             logger.error(
                 // swiftlint:disable:next line_length
-                "\(method, privacy: .public) \(path, privacy: .public) failed: HTTP \(statusCode) — \(message, privacy: .public) [\(codeLabel, privacy: .public)]"
+                "\(method, privacy: .public) \(routeLabel, privacy: .public) failed: HTTP \(statusCode) — \(message, privacy: .public) [\(codeLabel, privacy: .public)]"
             )
             throw DaemonError.httpError(statusCode: statusCode, message: message, code: code)
         }
         return data
+    }
+
+    private func send(
+        _ path: String,
+        method: String,
+        body: (any Encodable)?,
+        queryItems: [URLQueryItem],
+        requestTimeout: TimeInterval?,
+        acceptedStatusCodes: Set<Int> = []
+    ) async throws -> Data {
+        try await self.send(
+            url: self.endpointURL(path, queryItems: queryItems),
+            routeLabel: path,
+            method: method,
+            body: body,
+            requestTimeout: requestTimeout,
+            acceptedStatusCodes: acceptedStatusCodes
+        )
     }
 
     func fetch<T: Decodable>(
@@ -233,6 +359,30 @@ actor DaemonClient {
         }
     }
 
+    func fetch<T: Decodable>(
+        pathSegments: [String],
+        method: String = "GET",
+        body: (any Encodable)? = nil,
+        requestTimeout: TimeInterval? = nil
+    ) async throws -> T {
+        let label = "/" + pathSegments.joined(separator: "/")
+        let data = try await self.send(
+            url: self.endpointURL(pathSegments: pathSegments),
+            routeLabel: label,
+            method: method,
+            body: body,
+            requestTimeout: requestTimeout
+        )
+        do {
+            return try self.decoder.decode(T.self, from: data)
+        } catch {
+            logger.error(
+                "\(method, privacy: .public) \(label, privacy: .public): decode error — \(error.localizedDescription, privacy: .public)"
+            )
+            throw error
+        }
+    }
+
     func fetchVoid(
         _ path: String,
         method: String = "POST",
@@ -249,6 +399,22 @@ actor DaemonClient {
         )
     }
 
+    func fetchVoid(
+        pathSegments: [String],
+        method: String = "POST",
+        body: (any Encodable)? = nil,
+        requestTimeout: TimeInterval? = nil
+    ) async throws {
+        let label = "/" + pathSegments.joined(separator: "/")
+        _ = try await self.send(
+            url: self.endpointURL(pathSegments: pathSegments),
+            routeLabel: label,
+            method: method,
+            body: body,
+            requestTimeout: requestTimeout
+        )
+    }
+
     private func errorMessage(from data: Data) -> (message: String, code: String?) {
         if let envelope = try? self.decoder.decode(DaemonErrorEnvelope.self, from: data) {
             return (envelope.error.message, envelope.error.code)
@@ -256,26 +422,39 @@ actor DaemonClient {
         return (String(data: data, encoding: .utf8) ?? "Unknown error", nil)
     }
 
-    // MARK: - Health & Status
 
     func health() async throws -> HealthResponse {
         try await self.fetch("/health")
     }
 
-    // MARK: - Capture
-
-    func startCapture() async throws {
-        try await self.fetchVoid("/capture/start")
+    func readiness() async throws -> ReadinessResponse {
+        let data = try await self.send(
+            "/readyz",
+            method: "GET",
+            body: nil,
+            queryItems: [],
+            requestTimeout: nil,
+            acceptedStatusCodes: [503]
+        )
+        return try self.decoder.decode(ReadinessResponse.self, from: data)
     }
 
-    func stopCapture() async throws {
-        try await self.fetchVoid("/capture/stop")
+    @discardableResult
+    func advanceInitialization(to state: InitializationStateWire) async throws -> InitializationResponse {
+        try await self.fetch(
+            "/initialization",
+            method: "POST",
+            body: InitializationAdvanceRequest(initializationState: state),
+            requestTimeout: 95
+        )
     }
 
-    // MARK: - Messages
 
-    /// `/message` returns the stable message ID plus replay status; new output
-    /// streams separately through SSE.
+    func completeBodyRequest(_ requestId: String, reply: BodyReply) async throws {
+        try await self.fetchVoid(pathSegments: ["body", "requests", requestId], body: reply)
+    }
+
+
     @discardableResult
     func sendMessage(_ content: String, requestId: UUID) async throws -> SendMessageResponse {
         try await self.fetch(
@@ -285,7 +464,6 @@ actor DaemonClient {
         )
     }
 
-    // MARK: - Memory (single document)
 
     func getMemory() async throws -> MemoryResponse {
         try await self.fetch("/memory")
@@ -300,7 +478,6 @@ actor DaemonClient {
         )
     }
 
-    // MARK: - Goals
 
     func listGoals(status: GoalStatus? = nil, includeArchived: Bool = false) async throws -> GoalListResponse {
         var queryItems: [URLQueryItem] = []
@@ -318,22 +495,21 @@ actor DaemonClient {
     }
 
     func updateGoal(_ id: String, _ request: GoalUpdateRequest) async throws -> Goal {
-        try await self.fetch("/goals/\(id)", method: "PATCH", body: request)
+        try await self.fetch(pathSegments: ["goals", id], method: "PATCH", body: request)
     }
 
     func deleteGoal(_ id: String) async throws {
-        try await self.fetchVoid("/goals/\(id)", method: "DELETE")
+        try await self.fetchVoid(pathSegments: ["goals", id], method: "DELETE")
     }
 
-    func completeGoal(_ id: String) async throws -> GoalActionResponse {
-        try await self.fetch("/goals/\(id)/complete", method: "POST")
+    func completeGoal(_ id: String) async throws {
+        try await self.fetchVoid(pathSegments: ["goals", id, "complete"], method: "POST")
     }
 
-    func archiveGoal(_ id: String) async throws -> GoalActionResponse {
-        try await self.fetch("/goals/\(id)/archive", method: "POST")
+    func archiveGoal(_ id: String) async throws {
+        try await self.fetchVoid(pathSegments: ["goals", id, "archive"], method: "POST")
     }
 
-    // MARK: - Souls
 
     func listSouls() async throws -> SoulListResponse {
         try await self.fetch("/souls")
@@ -344,22 +520,21 @@ actor DaemonClient {
     }
 
     func updateSoul(_ id: String, _ request: SoulUpdateRequest) async throws -> Soul {
-        try await self.fetch("/souls/\(id)", method: "PATCH", body: request)
+        try await self.fetch(pathSegments: ["souls", id], method: "PATCH", body: request)
     }
 
     func deleteSoul(_ id: String) async throws {
-        try await self.fetchVoid("/souls/\(id)", method: "DELETE")
+        try await self.fetchVoid(pathSegments: ["souls", id], method: "DELETE")
     }
 
-    func enableSoul(_ id: String) async throws -> SoulActionResponse {
-        try await self.fetch("/souls/\(id)/enable", method: "POST")
+    func enableSoul(_ id: String) async throws {
+        try await self.fetchVoid(pathSegments: ["souls", id, "enable"], method: "POST")
     }
 
-    func disableSoul(_ id: String) async throws -> SoulActionResponse {
-        try await self.fetch("/souls/\(id)/disable", method: "POST")
+    func disableSoul(_ id: String) async throws {
+        try await self.fetchVoid(pathSegments: ["souls", id, "disable"], method: "POST")
     }
 
-    // MARK: - User Profiles
 
     func listUserProfiles() async throws -> UserProfileListResponse {
         try await self.fetch("/user-profiles")
@@ -370,18 +545,18 @@ actor DaemonClient {
     }
 
     func updateUserProfile(_ id: String, _ request: UserProfileUpdateRequest) async throws -> UserProfile {
-        try await self.fetch("/user-profiles/\(id)", method: "PATCH", body: request)
+        try await self.fetch(pathSegments: ["user-profiles", id], method: "PATCH", body: request)
     }
 
     func deleteUserProfile(_ id: String) async throws {
-        try await self.fetchVoid("/user-profiles/\(id)", method: "DELETE")
+        try await self.fetchVoid(pathSegments: ["user-profiles", id], method: "DELETE")
     }
 
-    func enableUserProfile(_ id: String) async throws -> UserProfileActionResponse {
-        try await self.fetch("/user-profiles/\(id)/enable", method: "POST")
+    func enableUserProfile(_ id: String) async throws {
+        try await self.fetchVoid(pathSegments: ["user-profiles", id, "enable"], method: "POST")
     }
 
-    func disableUserProfile(_ id: String) async throws -> UserProfileActionResponse {
-        try await self.fetch("/user-profiles/\(id)/disable", method: "POST")
+    func disableUserProfile(_ id: String) async throws {
+        try await self.fetchVoid(pathSegments: ["user-profiles", id, "disable"], method: "POST")
     }
 }

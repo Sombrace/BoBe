@@ -1,52 +1,143 @@
 import SwiftUI
 
 extension OverlayView {
-    var overlayContent: some View {
-        VStack(spacing: 0) {
-            self.chatHistorySection
-            self.conversationEndingSection
-            self.recoverySection
-            self.composerSection
-            self.softWarningSection
-            self.errorBannerSection
-            self.avatarSection
+    var avatarRoot: some View {
+        self.avatarCluster
+            .frame(
+                width: OverlayCanvas.clusterSize.width,
+                height: OverlayCanvas.clusterSize.height,
+                alignment: self.placement.satellitesBelow ? .bottomLeading : .topLeading
+            )
+    }
+
+    var columnRoot: some View {
+        ZStack(alignment: self.placement.alignment) {
+            if self.presentation != .collapsed {
+                self.conversationColumn
+                    .frame(width: self.presentation.columnWidth, alignment: self.placement.alignment)
+                    .onGeometryChange(for: CGSize.self) { geometry in
+                        CGSize(width: ceil(geometry.size.width), height: ceil(geometry.size.height))
+                    } action: { newSize in
+                        guard newSize.height > 0,
+                              abs(newSize.height - self.measuredColumnSize.height) > 0.5
+                              || abs(newSize.width - self.measuredColumnSize.width) > 0.5
+                        else { return }
+                        self.measuredColumnSize = newSize
+                        self.syncWindow()
+                    }
+                    .transition(self.columnTransition)
+            }
         }
-        .onHover { hovering in
-            // Keep the chat open while the cursor is inside the overlay
-            // bounds — otherwise the inactivity timer dismisses a long
-            // message while the user is still reading it.
-            if self.isChatVisible {
-                self.isPointerOverChat = hovering
-                if hovering {
-                    self.lastMessageActivity = .now
-                }
+        .padding(WindowSizes.shadowInset)
+        .frame(
+            width: OverlayCanvas.columnCanvas.width,
+            height: OverlayCanvas.columnCanvas.height,
+            alignment: self.placement.alignment
+        )
+        .coordinateSpace(.named(OverlayCanvas.space))
+        .animation(BobeMotion.soft, value: self.presentation)
+        .onPreferenceChange(OverlayHitRegionKey.self) { regions in
+            MainActor.assumeIsolated {
+                OverlayWindowManager.shared.setHitRegions(regions)
             }
         }
     }
 
+    private var columnTransition: AnyTransition {
+        guard !BobeMotion.isReduced else { return .opacity }
+        return .scale(scale: 0.9, anchor: self.placement.corner).combined(with: .opacity)
+    }
+
+    private var capsuleTransition: AnyTransition {
+        guard !BobeMotion.isReduced else { return .opacity }
+        return .scale(scale: 0.4, anchor: self.placement.nearEdge).combined(with: .opacity)
+    }
+
+    private var showsThread: Bool {
+        !self.ambientConversationMessages.isEmpty || self.liveActivity != nil || !self.store.toolExecutions.isEmpty
+    }
+
+    var conversationColumn: some View {
+        AnchoredStack(
+            hugsTrailing: self.placement.hugsTrailing,
+            reversed: self.placement.growth == .down,
+            spacing: 8
+        ) {
+            if self.isChatVisible {
+                if self.showsThread {
+                    ConversationSheet(
+                        earlier: self.earlierMessages,
+                        current: self.currentExchange,
+                        isExpanded: self.isRecentConversationVisible,
+                        onToggleExpanded: self.toggleRecentConversation,
+                        activity: self.liveActivity,
+                        tools: self.store.toolExecutions,
+                        maxViewportHeight: self.chatViewportMaxHeight,
+                        onPresented: self.store.markResponsePresented
+                    )
+                    .overlayHitRegion()
+                    .transition(self.overlaySectionTransition)
+                }
+                OwnerQuestionsView(selection: self.store.selection)
+                    .overlayHitRegion()
+                self.conversationEndingSection
+                self.recoverySection
+            } else if self.voiceCoachmarkVisible {
+                VoiceCoachmark(isVisible: Bindable(self.model).voiceCoachmarkVisible)
+                    .overlayHitRegion()
+            } else {
+                AvatarStatusBubble(
+                    mode: self.bubbleMode,
+                    onOpenAnswer: { self.openCurrentAnswer() },
+                    onToggleSilence: { self.toggleProactiveSilence() },
+                    onDismiss: { self.settleFloatingBubble() },
+                    isSilenced: self.store.proactiveSilenced,
+                    isTtsAudible: self.isTtsAudible,
+                    dismissalStyle: self.floatingBubbleDismissalStyle,
+                    recedeProgress: self.floatingBubbleRecedeProgress,
+                    onInteractionChanged: { self.floatingBubbleInteractionActive = $0 },
+                    onStop: self.isVoiceStoppable ? { VoicePipeline.shared.interrupt() } : nil,
+                    reachout: self.floatingBubbleKind,
+                    onReply: { self.openCurrentAnswer() },
+                    onTellMore: { self.tellMeMore() },
+                    onSettle: { self.settleFloatingBubble() }
+                )
+                .padding(self.placement.nearVerticalEdge, self.bubbleMode.isPill ? 9 : 0)
+                .transition(self.overlaySectionTransition)
+            }
+            self.softWarningSection
+            self.screenUnavailableSection
+            self.errorBannerSection
+            if self.isChatVisible {
+                AskCapsule(
+                    text: Bindable(self.model).draftMessage,
+                    onSend: self.handleSendMessage,
+                    onClose: { self.closeChat(userInitiated: true) },
+                    selection: self.store.selection,
+                    feedbackMessage: self.composerFeedback,
+                    isWorking: self.store.composerBlockReason == .thinking,
+                    canStopVoice: self.isVoiceStoppable,
+                    onStopVoice: { VoicePipeline.shared.interrupt() }
+                )
+                .overlayHitRegion()
+                .transition(self.capsuleTransition)
+            }
+        }
+        .animation(BobeMotion.standard, value: self.showsThread)
+        .animation(BobeMotion.standard, value: self.hasAmbientNotice)
+        .animation(BobeMotion.standard, value: self.store.failedSendRecoveries.count)
+        .animation(BobeMotion.standard, value: self.store.conversationEnding)
+    }
+
     @ViewBuilder
     var conversationEndingSection: some View {
-        if self.isChatVisible, self.store.conversationEnding {
-            let theme = self.themeStore.currentTheme
-            HStack(spacing: 6) {
-                Image(systemName: "moon.fill")
-                    .font(.system(size: 9))
-                Text(L10n.tr("overlay.conversation.ending"))
-                    .bobeTextStyle(.overlayStatus)
-                Spacer()
-            }
-            .foregroundStyle(theme.colors.textMuted)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.colors.surface)
+        if self.store.conversationEnding {
+            OverlayNotice(
+                systemName: "moon.fill",
+                tone: .info,
+                message: L10n.tr("overlay.conversation.ending")
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(theme.colors.border, lineWidth: 1)
-            )
-            .padding(.horizontal, 12)
+            .overlayHitRegion()
             .transition(self.overlaySectionTransition)
         }
     }
@@ -54,102 +145,58 @@ extension OverlayView {
     @ViewBuilder
     var softWarningSection: some View {
         if let warning = self.store.softWarning {
-            let theme = self.themeStore.currentTheme
-            HStack(spacing: 6) {
-                Image(systemName: "info.circle.fill")
-                    .font(.system(size: 10))
-                Text(warning)
-                    .bobeTextStyle(.overlayStatus)
-                    .lineLimit(2)
-                Spacer()
-                Button {
-                    self.store.dismissSoftWarning()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(L10n.tr("overlay.input.close.accessibility"))
-            }
-            .foregroundStyle(theme.colors.tertiary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.colors.surface)
+            OverlayNotice(
+                systemName: "info",
+                tone: .info,
+                message: warning,
+                onDismiss: { self.store.dismissSoftWarning() }
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(theme.colors.tertiary.opacity(0.7), lineWidth: 1)
-            )
-            .padding(.horizontal, 12)
+            .overlayHitRegion()
             .transition(self.overlaySectionTransition)
         }
     }
 
     @ViewBuilder
-    var chatHistorySection: some View {
-        if self.isChatVisible,
-           self.isRecentConversationVisible,
-           !self.ambientConversationMessages.isEmpty {
-            ChatStack(
-                messages: self.ambientConversationMessages,
-                maxViewportHeight: self.chatViewportMaxHeight
+    var screenUnavailableSection: some View {
+        if self.store.screenUnavailableNotice {
+            OverlayNotice(
+                systemName: "eye.slash",
+                tone: .info,
+                message: L10n.tr("overlay.screen.unavailable.message"),
+                detail: L10n.tr("setup.permissions.card.screen.denied"),
+                actions: [
+                    OverlayNoticeAction(id: "allow", title: L10n.tr("setup.permissions.grant"), isProminent: true) {
+                        self.store.openScreenRecordingSettings()
+                    },
+                    OverlayNoticeAction(id: "turn-off", title: L10n.tr("overlay.screen.unavailable.turn_off")) {
+                        Task { await self.store.setCapture(false) }
+                    },
+                ],
+                onDismiss: { self.store.dismissScreenUnavailableNotice() }
             )
-            .padding(.horizontal, 12)
+            .overlayHitRegion()
             .transition(self.overlaySectionTransition)
         }
     }
 
     @ViewBuilder
     var recoverySection: some View {
-        if self.isChatVisible, !self.store.failedSendRecoveries.isEmpty {
-            VStack(spacing: 8) {
-                ForEach(self.store.failedSendRecoveries) { recovery in
-                    FailedSendRecoveryBanner(
-                        recovery: recovery,
-                        onRetry: {
+        ForEach(self.store.failedSendRecoveries) { recovery in
+            OverlayNotice(
+                systemName: recovery.canRetry ? "arrow.counterclockwise" : "exclamationmark",
+                tone: .caution,
+                message: recovery.content,
+                detail: recovery.failureMessage,
+                actions: recovery.canRetry
+                    ? [
+                        OverlayNoticeAction(id: "retry", title: L10n.tr("app.common.retry"), isProminent: true) {
                             Task { await self.store.retryFailedSendRecovery(recovery.id) }
                         },
-                        onDismiss: {
-                            self.store.dismissFailedSendRecovery(recovery.id)
-                        }
-                    )
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
-            .transition(self.overlaySectionTransition)
-        }
-    }
-
-    @ViewBuilder
-    var composerSection: some View {
-        if self.isChatVisible {
-            VStack(alignment: .trailing, spacing: 4) {
-                VoicePartialCaption()
-                HStack(alignment: .center, spacing: 8) {
-                    MessageInput(
-                        text: self.$draftMessage,
-                        onSend: self.handleSendMessage,
-                        onClose: { self.closeChat(userInitiated: true) },
-                        showsHistory: self.isRecentConversationVisible,
-                        canShowHistory: !self.ambientConversationMessages.isEmpty,
-                        onToggleHistory: self.toggleRecentConversation,
-                        feedbackMessage: self.composerFeedback,
-                        isBusy: self.store.composerBlockReason != nil
-                    )
-                    .layoutPriority(1)
-                    StopButton()
-                    // MicButton intentionally NOT here — there is exactly
-                    // ONE mic in the UI, anchored to the avatar's lower-left
-                    // circumference, present whether the chat is open or
-                    // closed. Having a second mic in the composer made the
-                    // affordance appear to "teleport" when the chat opened.
-                }
-            }
-            .padding(.horizontal, 12)
-            .zIndex(1)
+                    ]
+                    : [],
+                onDismiss: { self.store.dismissFailedSendRecovery(recovery.id) }
+            )
+            .overlayHitRegion()
             .transition(self.overlaySectionTransition)
         }
     }
@@ -157,257 +204,180 @@ extension OverlayView {
     @ViewBuilder
     var errorBannerSection: some View {
         if self.store.context.daemonError {
-            let theme = self.themeStore.currentTheme
-            let bannerColor = theme.colors.background
-            let errorColor = theme.colors.error
-            HStack(spacing: 8) {
-                Image(systemName: "bolt.slash.fill")
-                    .font(.system(size: 11))
-                Text(L10n.tr("overlay.error.daemon_disconnected"))
-                    .bobeTextStyle(.overlayStatus)
-                    .lineLimit(1)
-                Spacer()
-                Button(L10n.tr("overlay.error.daemon_restart")) {
-                    Task {
-                        try? await BackendService.shared.userRestart()
-                    }
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(errorColor)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(bannerColor)
-                )
-                .accessibilityLabel(L10n.tr("overlay.error.daemon_restart.accessibility"))
-            }
-            .foregroundStyle(bannerColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 8).fill(errorColor))
-            .padding(.horizontal, 12)
+            OverlayNotice(
+                systemName: "bolt.slash.fill",
+                tone: .danger,
+                message: self.store.repairIssue?.message ?? L10n.tr("overlay.error.daemon_disconnected"),
+                actions: [
+                    OverlayNoticeAction(id: "retry", title: L10n.tr("runtime.action.retry_connection"), isProminent: true) {
+                        Task { await self.store.retryRuntimeConnection() }
+                    },
+                    OverlayNoticeAction(id: "repair", title: L10n.tr("runtime.action.repair")) {
+                        self.store.repairRuntimeConnection()
+                    },
+                ]
+            )
+            .overlayHitRegion()
             .transition(self.overlaySectionTransition)
         } else if let error = self.store.errorMessage {
-            let theme = self.themeStore.currentTheme
-            let bannerColor = theme.colors.background
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10))
-                Text(error)
-                    .bobeTextStyle(.overlayStatus)
-                    .lineLimit(2)
-                Spacer()
-                Button {
-                    self.store.dismissError()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(L10n.tr("overlay.input.close.accessibility"))
-            }
-            .foregroundStyle(bannerColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 8).fill(theme.colors.error))
-            .padding(.horizontal, 12)
+            OverlayNotice(
+                systemName: "exclamationmark",
+                tone: .danger,
+                message: error,
+                onDismiss: { self.store.dismissError() }
+            )
+            .overlayHitRegion()
             .transition(self.overlaySectionTransition)
         }
     }
 
-    var avatarSection: some View {
-        // Vertical stack: bubble slot ABOVE the avatar so it has full
-        // horizontal room to grow. Anchored bottom-right of the overlay.
-        // .onHover on the whole stack drives the satellite reveal — the
-        // mic and chat toggle stay hidden at rest, fade in when the
-        // cursor enters the avatar area. .contentShape forces hit-testing
-        // across the whole frame, including transparent gaps between
-        // bubble and avatar.
-        VStack(alignment: .trailing, spacing: 2) {
-            self.satelliteSlot
-                .frame(maxWidth: 340, alignment: .trailing)
-
-            self.avatarCluster
-        }
-        .padding(.trailing, 12)
-        .padding(.bottom, 8)
-        .padding(.top, 0)
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .contentShape(Rectangle())
-        .onHover { isHovering in
-            self.avatarAreaHovered = isHovering
-        }
-        .zIndex(3)
+    private func orbitAngle(_ angle: Double) -> Double {
+        self.placement.satellitesBelow ? 360 - angle : angle
     }
 
-    /// Content above the avatar. Hosts either the voice coachmark (a
-    /// one-shot teaching moment) or the consolidated AvatarStatusBubble
-    /// — never both simultaneously. The bubble itself enforces priority
-    /// across its sub-modes (BoBe message / user STT / status / silenced)
-    /// so this slot only needs the coachmark/bubble choice.
-    @ViewBuilder
-    var satelliteSlot: some View {
-        if self.voiceCoachmarkVisible, !self.isChatVisible {
-            VoiceCoachmark(isVisible: self.$voiceCoachmarkVisible)
-        } else {
-            AvatarStatusBubble(
-                mode: self.bubbleMode,
-                onOpenAnswer: { self.openCurrentAnswer() },
-                onToggleSilence: { self.toggleProactiveSilence() },
-                onDismiss: { self.dismissFloatingBubble() },
-                isSilenced: self.store.proactiveSilenced,
-                isTtsAudible: self.isTtsAudible,
-                dismissalStyle: self.floatingBubbleDismissalStyle,
-                recedeProgress: self.floatingBubbleRecedeProgress,
-                onInteractionChanged: { self.floatingBubbleInteractionActive = $0 }
-            )
-        }
-    }
-
-    /// The avatar + its rim satellites (chat toggle, mic), composed as
-    /// peers. `AvatarView` is purely visual now; the satellites live at
-    /// this layer with their own hit-test scope so rim-positioned
-    /// buttons are reachable (the previous design had them as children
-    /// of the avatar's `.contentShape(Circle())` and they were visible
-    /// but unclickable).
-    ///
-    /// Layout: the satellite container is an `.overlay(alignment: .topLeading)`
-    /// on the AvatarView, framed to the card size. This pins the
-    /// satellite coordinate space to the avatar's top-leading regardless
-    /// of the column's outer padding (which shifts with `showStatusLabel`).
-    ///
-    /// The chat toggle and mic are hover-gated — at rest the avatar
-    /// reads as a single clean circle; on hover the satellites fade in.
-    /// The chat toggle stays visible while chat is open so the user
-    /// never loses the close affordance.
     var avatarCluster: some View {
-        // 32pt diameter satellite buttons. Chat toggle at 10:30, mic
-        // at 7:30 (clockwise from 12 = 315° and 225°). The math runs
-        // entirely on `AvatarMetrics.cardSize` — no column dependencies.
-        let satSize = AvatarMetrics.satelliteSize
-        let chatOffset = AvatarMetrics.rimOffset(angleFrom12: 315, satelliteSize: satSize)
-        let micOffset = AvatarMetrics.rimOffset(angleFrom12: 225, satelliteSize: satSize)
-
-        // Chat-open: leave headroom for the StatusLabel above the
-        // avatar head. Chat-closed: bubble owns status — drop the
-        // headroom so the bubble nestles tight against the avatar.
-        let topInset: CGFloat = 4
-        let leadingPad: CGFloat = 16
-        let clusterHeight = AvatarMetrics.columnHeight + topInset
-
-        return AvatarView(
-            stateType: self.avatarStateType,
-            isConnected: self.store.isConnected,
-            hasMessage: self.hasUnreadMessages,
-            showInput: self.isChatVisible,
-            statusOverride: self.statusTextOverride,
-            showStatusLabel: false,
-            bubbleShowingMessage: self.floatingBubbleMessage != nil
-        )
-        .overlay(alignment: .topLeading) {
-            // Card-local coordinate space for the satellite offsets.
-            // 116×116 anchor matches `AvatarMetrics.cardSize`; the
-            // alignment.topLeading on AvatarView's outer column places
-            // this anchor at (0, statusPadding) within the column frame,
-            // which is exactly where `AvatarMetrics.rimOffset` was
-            // calibrated for. AvatarView's internal status-label padding
-            // shifts both the card AND this anchor by the same amount.
-            ZStack(alignment: .topLeading) {
-                ChatToggleButton(isActive: self.isChatVisible, action: self.toggleChatManually)
-                    .focused(self.$focusedSatellite, equals: .chat)
-                    .offset(chatOffset)
-                    .opacity(self.showChatToggleSatellite || self.focusedSatellite == .chat ? 1 : 0)
-                    .allowsHitTesting(self.showChatToggleSatellite || self.focusedSatellite == .chat)
-
+        ZStack {
+            OverlayAvatar(
+                mood: self.avatarMood,
+                isEngaged: self.isAvatarEngaged,
+                wantsAttention: self.wantsAttention,
+                celebrationToken: self.celebrationToken,
+                onTap: self.handleAvatarTap,
+                onSecondaryTap: { event, view in
+                    OverlayAppMenuController.shared.showContextMenu(for: event, in: view)
+                }
+            )
+            OrbitSlot(
+                angle: self.orbitAngle(AvatarMetrics.chatAngle),
+                isShown: self.showChatToggleSatellite || self.focusedSatellite == .chat,
+                index: 0
+            ) {
+                ChatToggleButton(
+                    isActive: self.isChatVisible,
+                    hasUnread: self.wantsAttention,
+                    action: self.toggleChatManually
+                )
+                .focused(self.$focusedSatellite, equals: .chat)
+            }
+            OrbitSlot(
+                angle: self.orbitAngle(AvatarMetrics.micAngle),
+                isShown: self.showMicSatellite || self.focusedSatellite == .microphone,
+                index: 1
+            ) {
                 MicButton()
                     .focused(self.$focusedSatellite, equals: .microphone)
-                    .offset(micOffset)
-                    .opacity(self.showMicSatellite || self.focusedSatellite == .microphone ? 1 : 0)
-                    .allowsHitTesting(self.showMicSatellite || self.focusedSatellite == .microphone)
             }
-            .frame(
-                width: AvatarMetrics.cardSize,
-                height: AvatarMetrics.cardSize,
-                alignment: .topLeading
-            )
-            .padding(.top, 0)
+            OrbitSlot(
+                angle: self.orbitAngle(AvatarMetrics.menuAngle),
+                isShown: self.satellitesShown || self.focusedSatellite == .menu,
+                index: 2
+            ) {
+                OverlaySettingsButton()
+                    .focused(self.$focusedSatellite, equals: .menu)
+            }
+            if let tool = self.store.runningTools.first {
+                ToolBadge(toolName: tool.toolName, count: self.store.runningTools.count)
+                    .modifier(
+                        OrbitPlacement(
+                            angle: self.orbitAngle(AvatarMetrics.toolAngle),
+                            radius: AvatarMetrics.cardSize / 2 - 1
+                        )
+                    )
+                    .transition(.bobePop())
+                    .allowsHitTesting(false)
+            }
+            if self.waitingReachoutCount > 0 {
+                ReachoutPip(count: self.waitingReachoutCount)
+                    .modifier(OrbitPlacement(angle: AvatarMetrics.pipAngle, radius: AvatarMetrics.cardSize / 2 - 3))
+                    .transition(.bobePop())
+                    .allowsHitTesting(false)
+            }
         }
-        .padding(.top, topInset)
-        .padding(.leading, leadingPad)
-        .frame(width: 148, height: clusterHeight, alignment: .topLeading)
-        .animation(
-            OverlayMotionRuntime.reduceMotion ? nil : .easeOut(duration: 0.15),
-            value: self.showChatToggleSatellite
+        .animation(BobeMotion.snappy, value: self.waitingReachoutCount)
+        .animation(BobeMotion.snappy, value: self.store.runningTools.isEmpty)
+        .frame(width: 0, height: 0)
+        .position(
+            x: AvatarMetrics.center.x,
+            y: self.placement.satellitesBelow
+                ? AvatarMetrics.clusterHeight - AvatarMetrics.center.y
+                : AvatarMetrics.center.y
         )
-        .animation(
-            OverlayMotionRuntime.reduceMotion ? nil : .easeOut(duration: 0.15),
-            value: self.showMicSatellite
-        )
-        .animation(
-            OverlayMotionRuntime.reduceMotion ? nil : .easeOut(duration: 0.2),
-            value: self.isChatVisible
-        )
+        .frame(width: AvatarMetrics.clusterWidth, height: AvatarMetrics.clusterHeight)
+        .zIndex(3)
     }
 }
 
-struct FailedSendRecoveryBanner: View {
-    let recovery: FailedSendRecovery
-    let onRetry: () -> Void
-    let onDismiss: () -> Void
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(
-                systemName: self.recovery.canRetry
-                    ? "exclamationmark.arrow.trianglehead.counterclockwise"
-                    : "exclamationmark.triangle"
-            )
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(self.theme.colors.primary)
-                .padding(.top, 2)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(self.recovery.content)
-                    .bobeTextStyle(.chatBody)
-                    .foregroundStyle(self.theme.colors.text)
-                    .lineLimit(2)
-                if let failureMessage = recovery.failureMessage {
-                    Text(failureMessage)
-                        .bobeTextStyle(.rowMeta)
-                        .foregroundStyle(self.theme.colors.textMuted)
-                        .lineLimit(3)
-                }
-            }
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            if self.recovery.canRetry {
-                Button(L10n.tr("app.common.retry"), action: self.onRetry)
-                    .bobeTextStyle(.rowMeta)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(self.theme.colors.primary)
-            }
-
-            Button(action: self.onDismiss) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(self.theme.colors.textMuted)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(L10n.tr("overlay.input.close.accessibility"))
+extension AvatarStatusBubble.Mode {
+    var isPill: Bool {
+        switch self {
+        case .status, .silenced: true
+        default: false
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(self.theme.colors.surface)
+    }
+}
+
+private struct OverlaySettingsButton: View {
+    var body: some View {
+        Button {
+            BobeCommandRouter.shared.openSettings()
+        } label: {
+            SatelliteChrome(systemName: "gearshape.fill")
+        }
+        .buttonStyle(BobePressStyle(scale: 0.9))
+        .accessibilityLabel(L10n.tr("overlay.settings.accessibility"))
+        .accessibilityIdentifier("overlay.settings")
+        .help(L10n.tr("overlay.settings.accessibility"))
+    }
+}
+
+@MainActor
+final class OverlayAppMenuController: NSObject {
+    static let shared = OverlayAppMenuController()
+
+    private func makeMenu() -> NSMenu {
+        let menu = NSMenu()
+        let settingsItem = NSMenuItem(
+            title: L10n.tr("tray.settings"),
+            action: #selector(self.openSettings),
+            keyEquivalent: ","
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(self.theme.colors.border, lineWidth: 1)
+        settingsItem.target = self
+        settingsItem.identifier = NSUserInterfaceItemIdentifier("overlay.app-menu.settings")
+        menu.addItem(settingsItem)
+
+        let hideItem = NSMenuItem(title: L10n.tr("tray.hide"), action: #selector(self.hideOverlay), keyEquivalent: "")
+        hideItem.target = self
+        hideItem.identifier = NSUserInterfaceItemIdentifier("overlay.app-menu.hide")
+        menu.addItem(hideItem)
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(
+            title: L10n.tr("tray.quit"),
+            action: #selector(self.quitApp),
+            keyEquivalent: "q"
         )
+        quitItem.target = self
+        quitItem.identifier = NSUserInterfaceItemIdentifier("overlay.app-menu.quit")
+        menu.addItem(quitItem)
+        return menu
+    }
+
+    func showContextMenu(for event: NSEvent, in view: NSView) {
+        NSMenu.popUpContextMenu(self.makeMenu(), with: event, for: view)
+    }
+
+    @objc
+    private func openSettings() {
+        BobeCommandRouter.shared.openSettings()
+    }
+
+    @objc
+    private func hideOverlay() {
+        BobeCommandRouter.shared.hideOverlay()
+    }
+
+    @objc
+    private func quitApp() {
+        BobeCommandRouter.shared.quit()
     }
 }

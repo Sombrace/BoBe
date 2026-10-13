@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 enum ThemeId: String, CaseIterable, Sendable {
@@ -20,12 +19,6 @@ struct ThemeColors: Sendable {
     let border: Color
     let text: Color
     let textMuted: Color
-    let avatarFaceLight: Color
-    let avatarFaceDark: Color
-    let avatarRing: Color
-    let avatarIris: Color
-    let avatarEyeOutline: Color
-    let avatarMouth: Color
     let success: Color
     let warning: Color
     let error: Color
@@ -42,6 +35,8 @@ struct ThemeConfig: Identifiable, Sendable {
     let descriptionKey: String
     let isDark: Bool
     let colors: ThemeColors
+    let avatar: BobeAvatarPalette
+    let glow: [Color]
 
     var name: String {
         L10n.tr(self.nameKey)
@@ -67,17 +62,13 @@ let allThemes: [ThemeConfig] = [
             border: Color(hex: "D8C9B4"),
             text: Color(hex: "3A3A3A"),
             textMuted: Color(hex: "62605D"),
-            avatarFaceLight: Color(hex: "E8DCC4"),
-            avatarFaceDark: Color(hex: "B8A99A"),
-            avatarRing: Color(hex: "FAF7F2"),
-            avatarIris: Color(hex: "A69080"),
-            avatarEyeOutline: .white,
-            avatarMouth: Color(hex: "94472E"),
             success: Color(hex: "2F6F48"),
             warning: Color(hex: "805A00"),
             error: Color(hex: "B3261E"),
             destructive: Color(hex: "B3261E")
-        )
+        ),
+        avatar: .terracotta,
+        glow: [Color(rgb: 0xF4C56A), Color(rgb: 0xE88A45), Color(rgb: 0xE0706F)]
     ),
     ThemeConfig(
         themeId: .bauhausPastel,
@@ -93,17 +84,13 @@ let allThemes: [ThemeConfig] = [
             border: Color(hex: "DED3C4"),
             text: Color(hex: "4A4A4A"),
             textMuted: Color(hex: "66625F"),
-            avatarFaceLight: Color(hex: "EDE5D8"),
-            avatarFaceDark: Color(hex: "C9BAA9"),
-            avatarRing: Color(hex: "FDFBF8"),
-            avatarIris: Color(hex: "B8A99A"),
-            avatarEyeOutline: .white,
-            avatarMouth: Color(hex: "865046"),
             success: Color(hex: "2F6F48"),
             warning: Color(hex: "805A00"),
             error: Color(hex: "B3261E"),
             destructive: Color(hex: "B3261E")
-        )
+        ),
+        avatar: .softClay,
+        glow: [Color(rgb: 0xE9C58A), Color(rgb: 0xC98A63), Color(rgb: 0xC97A78)]
     ),
     ThemeConfig(
         themeId: .cute,
@@ -119,17 +106,13 @@ let allThemes: [ThemeConfig] = [
             border: Color(hex: "E9CFD7"),
             text: Color(hex: "3D3D3D"),
             textMuted: Color(hex: "646062"),
-            avatarFaceLight: Color(hex: "FFD4DC"),
-            avatarFaceDark: Color(hex: "FFBAC8"),
-            avatarRing: Color(hex: "FFF8FA"),
-            avatarIris: Color(hex: "E8879C"),
-            avatarEyeOutline: .white,
-            avatarMouth: Color(hex: "A33E5A"),
             success: Color(hex: "2F6F48"),
             warning: Color(hex: "805A00"),
             error: Color(hex: "B3261E"),
             destructive: Color(hex: "B3261E")
-        )
+        ),
+        avatar: .bubblegum,
+        glow: [Color(rgb: 0xFFC27A), Color(rgb: 0xF2789B), Color(rgb: 0xC77BD8)]
     ),
     ThemeConfig(
         themeId: .cutePastel,
@@ -145,17 +128,13 @@ let allThemes: [ThemeConfig] = [
             border: Color(hex: "EBD8DE"),
             text: Color(hex: "4D4D4D"),
             textMuted: Color(hex: "686466"),
-            avatarFaceLight: Color(hex: "D8C4E8"),
-            avatarFaceDark: Color(hex: "C4B0D8"),
-            avatarRing: Color(hex: "FFFCFD"),
-            avatarIris: Color(hex: "B8A4D4"),
-            avatarEyeOutline: .white,
-            avatarMouth: Color(hex: "765988"),
             success: Color(hex: "2F6F48"),
             warning: Color(hex: "805A00"),
             error: Color(hex: "B3261E"),
             destructive: Color(hex: "B3261E")
-        )
+        ),
+        avatar: .cottonCandy,
+        glow: [Color(rgb: 0xF7B8D8), Color(rgb: 0xB08AE0), Color(rgb: 0x7FA8F0)]
     ),
     ThemeConfig(
         themeId: .bauhausDark,
@@ -171,17 +150,13 @@ let allThemes: [ThemeConfig] = [
             border: Color(hex: "3D3D3D"),
             text: Color(hex: "E8E4DF"),
             textMuted: Color(hex: "B3AEA9"),
-            avatarFaceLight: Color(hex: "A89070"),
-            avatarFaceDark: Color(hex: "8A7560"),
-            avatarRing: Color(hex: "2A2A2A"),
-            avatarIris: Color(hex: "3A3A3A"),
-            avatarEyeOutline: .white,
-            avatarMouth: Color(hex: "3A3A3A"),
             success: Color(hex: "82C995"),
             warning: Color(hex: "E4B95A"),
             error: Color(hex: "FF8A80"),
             destructive: Color(hex: "FF8A80")
-        )
+        ),
+        avatar: .midnightClay,
+        glow: [Color(rgb: 0xF4C56A), Color(rgb: 0xE88A45), Color(rgb: 0xE0706F)]
     ),
     ThemeConfig(
         themeId: .cuteDark,
@@ -197,39 +172,52 @@ let allThemes: [ThemeConfig] = [
             border: Color(hex: "3A3A40"),
             text: Color(hex: "F5F0F2"),
             textMuted: Color(hex: "B2ADB0"),
-            avatarFaceLight: Color(hex: "C89098"),
-            avatarFaceDark: Color(hex: "A87080"),
-            avatarRing: Color(hex: "252528"),
-            avatarIris: Color(hex: "3A3A3A"),
-            avatarEyeOutline: .white,
-            avatarMouth: Color(hex: "8A4050"),
             success: Color(hex: "82C995"),
             warning: Color(hex: "E4B95A"),
             error: Color(hex: "FF8A80"),
             destructive: Color(hex: "FF8A80")
-        )
+        ),
+        avatar: .twilightRose,
+        glow: [Color(rgb: 0xFFB3C4), Color(rgb: 0xF2789B), Color(rgb: 0xB79AF0)]
     ),
 ]
 
-@MainActor
-func themeById(_ id: ThemeId) -> ThemeConfig {
-    if id == .system {
-        return systemTheme()
+extension ThemeConfig {
+    var well: Color {
+        self.isDark
+            ? self.colors.background.mix(with: .black, by: 0.32)
+            : self.colors.background.mix(with: self.colors.text, by: 0.055)
     }
-    return allThemes.first { $0.themeId == id } ?? allThemes[0]
-}
 
-@MainActor
-func systemTheme() -> ThemeConfig {
-    let isDark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-    let base = themeById(isDark ? .bauhausDark : .bauhaus)
-    return ThemeConfig(
-        themeId: .system,
-        nameKey: "theme.system.name",
-        descriptionKey: "theme.system.description",
-        isDark: isDark,
-        colors: base.colors
-    )
+    var ground: Color {
+        self.isDark
+            ? self.colors.background.mix(with: .black, by: 0.22)
+            : self.colors.background.mix(with: self.colors.text, by: 0.035)
+    }
+
+    var accentSoft: Color {
+        self.colors.primary.mix(with: self.colors.surface, by: self.isDark ? 0.76 : 0.86)
+    }
+
+    var hairline: Color {
+        self.colors.border.opacity(self.isDark ? 0.8 : 0.65)
+    }
+
+    var shadowTint: Color {
+        self.isDark ? .black : Color(rgb: 0x2D1E0F)
+    }
+
+    var highlight: Color {
+        self.isDark ? Color(rgb: 0xFFF1DC).opacity(0.09) : .white.opacity(0.9)
+    }
+
+    var onAccent: Color {
+        self.isDark ? self.colors.background : Color(rgb: 0xFFFDFC)
+    }
+
+    var glowGradient: [Color] {
+        self.glow + [self.glow[0]]
+    }
 }
 
 extension EnvironmentValues {

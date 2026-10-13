@@ -74,7 +74,8 @@ struct SSEResponseIntegrityTests {
               "is_complete": false,
               "created_at": "2026-01-01T00:00:01Z"
             }
-          ]
+          ],
+          "pending_updates": []
         }
         """
         let snapshot = try JSONDecoder().decode(
@@ -125,6 +126,79 @@ struct SSEResponseIntegrityTests {
         #expect(!store.messages.contains(where: { $0.id == "assistant-empty" }))
         #expect(store.context.lastMessage == nil)
         #expect(store.streamingMessageId == nil)
+    }
+
+    @Test
+    func brokerCursorDropsDuplicatesOnlyWithinTheSameIncarnation() {
+        let old = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!
+        let new = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
+
+        #expect(!DaemonClient.shouldProcess(
+            eventId: 9,
+            eventIncarnationId: old,
+            lastProcessedEventId: 9,
+            runtimeIncarnationId: old
+        ))
+        #expect(!DaemonClient.shouldProcess(
+            eventId: 8,
+            eventIncarnationId: old,
+            lastProcessedEventId: 9,
+            runtimeIncarnationId: old
+        ))
+        #expect(DaemonClient.shouldProcess(
+            eventId: 1,
+            eventIncarnationId: new,
+            lastProcessedEventId: 9,
+            runtimeIncarnationId: old
+        ))
+        #expect(DaemonClient.shouldProcess(
+            eventId: nil,
+            eventIncarnationId: nil,
+            lastProcessedEventId: 9,
+            runtimeIncarnationId: old
+        ))
+    }
+
+    @Test
+    func eventDecodesWithoutBrokerEnvelope() throws {
+        let event = try Self.bundle(delta: "plain", done: false)
+
+        #expect(event.eventId == nil)
+        #expect(event.runtimeIncarnationId == nil)
+        #expect(event.audience == nil)
+        #expect(event.type == .textDelta)
+    }
+
+    @Test
+    func snapshotRequiredEnvelopeDecodesResumeCursor() throws {
+        let incarnation = UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")!
+        let json = """
+        {
+          "event_id": null,
+          "runtime_incarnation_id": "\(incarnation.uuidString.lowercased())",
+          "audience": "owner",
+          "type": "snapshot_required",
+          "message_id": "",
+          "payload": {
+            "from": 3,
+            "to": 8,
+            "resume_after": 12,
+            "reason": "history_expired",
+            "snapshot_required": true
+          }
+        }
+        """
+
+        let event = try JSONDecoder().decode(StreamBundle.self, from: Data(json.utf8))
+        let payload = try event.payload.decode(as: SnapshotRequiredPayload.self)
+
+        #expect(event.type == .snapshotRequired)
+        #expect(event.runtimeIncarnationId == incarnation)
+        #expect(event.audience == "owner")
+        #expect(payload.from == 3)
+        #expect(payload.to == 8)
+        #expect(payload.resumeAfter == 12)
+        #expect(payload.snapshotRequired)
     }
 
     private static func bundle(

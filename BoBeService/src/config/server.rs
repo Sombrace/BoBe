@@ -1,8 +1,3 @@
-//! Server / database / logging — infrastructure-level config domains.
-//! All three are read once at boot (logging configures the subscriber;
-//! server binds the listener; database opens the pool); ConfigManager's
-//! hot-reload path doesn't touch these because changes need a restart.
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -13,10 +8,20 @@ pub(crate) struct ServerConfig {
     pub(crate) mdns_enabled: bool,
     pub(crate) cors_origins: Vec<String>,
     pub(crate) allowed_hosts: Vec<String>,
-    #[serde(skip_serializing)]
+    #[serde(skip)]
     pub(crate) api_token: secrecy::SecretString,
     pub(crate) tls_cert_path: Option<String>,
     pub(crate) tls_key_path: Option<String>,
+}
+
+impl ServerConfig {
+    pub(crate) fn is_networked(&self) -> bool {
+        self.host
+            .parse::<std::net::IpAddr>()
+            .ok()
+            .is_none_or(|address| !address.is_loopback())
+            || !self.allowed_hosts.is_empty()
+    }
 }
 
 impl Default for ServerConfig {
@@ -25,7 +30,7 @@ impl Default for ServerConfig {
             host: "127.0.0.1".into(),
             port: crate::constants::DEFAULT_DAEMON_PORT,
             mdns_enabled: false,
-            cors_origins: vec!["http://localhost:5175".into()],
+            cors_origins: Vec::new(),
             allowed_hosts: Vec::new(),
             api_token: secrecy::SecretString::default(),
             tls_cert_path: None,
@@ -61,5 +66,21 @@ impl Default for LoggingConfig {
             retention_count: 14,
             retention_total_bytes: 100 * 1024 * 1024,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn networked_includes_reverse_proxy_exposure() {
+        let mut config = ServerConfig::default();
+        assert!(!config.is_networked());
+        config.allowed_hosts.push("bobe.example.test".into());
+        assert!(config.is_networked());
+        config.allowed_hosts.clear();
+        config.host = "0.0.0.0".into();
+        assert!(config.is_networked());
     }
 }

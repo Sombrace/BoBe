@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "description": "esp-bobe bobe_sdk",
+  "dependencies": {
+    "idf": ">=6.0.2,<6.2",
+    "bobe_core": {
+      "path": "../bobe_core",
+      "require": "public"
+    },
+    "bobe_client": {
+      "path": "../bobe_client",
+      "require": "public"
+    },
+    "bobe_usb_onboarding": {
+      "path": "../bobe_usb_onboarding",
+      "require": "public"
+    }
+  }
+}

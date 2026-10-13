@@ -6,5 +6,9 @@
 	<true/>
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.bobe.app.endpoint-credential</string>
+	</array>
 </dict>
 </plist>

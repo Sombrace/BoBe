@@ -1,0 +1,15 @@
+add_executable(bobe_interaction_tests interaction_test.c)
+target_link_libraries(bobe_interaction_tests PRIVATE bobe_protocol)
+target_compile_options(bobe_interaction_tests PRIVATE -Wall -Wextra -Werror -Wpedantic)
+add_test(NAME bobe_interactions COMMAND bobe_interaction_tests)
+
+add_executable(bobe_cpp_consumer cpp_consumer.cpp)
+target_link_libraries(bobe_cpp_consumer PRIVATE bobe_protocol bobe_text)
+target_compile_features(bobe_cpp_consumer PRIVATE cxx_std_17)
+target_compile_options(bobe_cpp_consumer PRIVATE -Wall -Wextra -Werror -Wpedantic)
+add_test(NAME bobe_cpp_api COMMAND bobe_cpp_consumer)
+
+add_executable(bobe_text_view_tests text_view_test.c)
+target_link_libraries(bobe_text_view_tests PRIVATE bobe_text)
+target_compile_options(bobe_text_view_tests PRIVATE -Wall -Wextra -Werror -Wpedantic)
+add_test(NAME bobe_text_view COMMAND bobe_text_view_tests)

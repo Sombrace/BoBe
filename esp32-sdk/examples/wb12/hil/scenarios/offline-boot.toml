@@ -1,0 +1,32 @@
+schema_version = 2
+name = "offline-boot"
+description = "Reset the retained WB-12 and prove a bounded offline boot and health window."
+claim = "physical"
+requires = ["wb12", "pico-fixture", "openwrt"]
+
+[[steps]]
+id = "isolate-network"
+operation = "network_profile"
+profile = "blackhole"
+ttl_seconds = 120
+
+[[steps]]
+id = "reset-body"
+operation = "fixture_reset"
+
+[[steps]]
+id = "observe-offline-boot"
+operation = "capture_serial"
+duration_seconds = 40
+expect = ["BoBe body startup completed", "health uptime="]
+reject = ["Guru Meditation", "Task watchdog", "CORRUPT HEAP"]
+
+[[cleanup]]
+id = "release-fixture"
+operation = "fixture_release_all"
+
+[[cleanup]]
+id = "restore-network"
+operation = "network_profile"
+profile = "clean"
+ttl_seconds = 5

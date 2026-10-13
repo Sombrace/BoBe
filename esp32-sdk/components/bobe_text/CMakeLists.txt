@@ -1,0 +1,8 @@
+if(COMMAND idf_component_register)
+    idf_component_register(SRCS "bobe_text_view.c" INCLUDE_DIRS "include" REQUIRES bobe_protocol)
+else()
+    add_library(bobe_text STATIC bobe_text_view.c)
+    target_include_directories(bobe_text PUBLIC include)
+    target_link_libraries(bobe_text PUBLIC bobe_protocol)
+    target_compile_features(bobe_text PUBLIC c_std_11)
+endif()

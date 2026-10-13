@@ -1,0 +1,4 @@
+# Install as /etc/bobe-hil/netem.conf with mode 0600.
+# The test interface must never be the wired management bridge.
+TEST_INTERFACE=phy0-ap0
+MANAGEMENT_INTERFACE=br-lan

@@ -5,19 +5,27 @@ import Testing
 @Suite("BodyLink adapter")
 struct BodyLinkTests {
     @Test
-    func adapterMediaHeaderRoundTrips() throws {
-        let header = BodyAdapterMediaHeader(
-            kind: .speakerPcm,
-            connectionGeneration: UInt64.max,
-            leaseId: UUID(),
-            streamId: UInt32.max,
-            sequence: UInt32.max
-        )
-        let payload = Data(repeating: 0x5A, count: 960)
-        let parsed = try #require(BodyAdapterMediaHeader.parse(header.encode(payload: payload)))
+    func adapterMediaHeaderParsesTheDaemonRoute() throws {
+        let leaseId = UUID()
+        var uuid = leaseId.uuid
+        var frame = Data([1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7])
+        withUnsafeBytes(of: &uuid) { frame.append(contentsOf: $0) }
+        frame.append(contentsOf: [0, 0, 0, 42, 0, 0, 0, 3, 0, 0, 0, 0])
+        let payload = Data(repeating: 0x5A, count: 660)
+        frame.append(payload)
 
-        #expect(parsed.header == header)
+        let parsed = try #require(BodyAdapterMediaHeader.parse(frame))
+        #expect(parsed.header == BodyAdapterMediaHeader(
+            kind: .microphonePcm,
+            connectionGeneration: 7,
+            leaseId: leaseId,
+            streamId: 42,
+            sequence: 3
+        ))
         #expect(parsed.payload == payload)
+
+        frame[1] = 2
+        #expect(BodyAdapterMediaHeader.parse(frame) == nil)
     }
 
     @Test
@@ -33,6 +41,9 @@ struct BodyLinkTests {
         #expect(!parsed.hasDiscontinuity)
         frame[3] = 1
         #expect(BodyLinkMicrophoneFrame.parse(frame)?.hasDiscontinuity == true)
+        frame[3] = 2
+        #expect(BodyLinkMicrophoneFrame.parse(frame) == nil)
+        frame[3] = 0
         #expect(BodyLinkMicrophoneFrame.parse(frame.dropLast()) == nil)
     }
 
@@ -77,7 +88,7 @@ struct BodyLinkTests {
     }
 
     @Test
-    func adapterHandshakeCarriesVersionAndEveryAudioFormat() throws {
+    func adapterHandshakeCarriesVersionAndCaptureFormat() throws {
         let data = try JSONEncoder().encode(BodyAdapterClientMessage.hello)
         let object = try #require(
             JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -88,11 +99,6 @@ struct BodyLinkTests {
         #expect(
             (object["capture_format"] as? [String: Any])?["sample_rate_hz"] as? Int
                 == 16_000
-        )
-        #expect((object["tts_format"] as? [String: Any])?["codec"] as? String == "opus")
-        #expect(
-            (object["speaker_format"] as? [String: Any])?["sample_rate_hz"] as? Int
-                == 24_000
         )
     }
 

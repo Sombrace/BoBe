@@ -1,0 +1,161 @@
+{
+  "skill_name": "sigrok-cli",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "My TN077 TE001 24 MHz analyzer is connected. Identify it and tell me whether the tooling is ready, but do not upload firmware yet.",
+      "expected_output": "Uses read-only runtime-status/discover/doctor for the exact 0925:3881 identity and reports that no firmware was uploaded.",
+      "expectations": [
+        "Uses tools/sigrok.sh rather than raw USB or unrestricted sigrok",
+        "Runs read-only discovery or doctor with exact VID/PID and location",
+        "Does not invoke probe, capture, or a global scan",
+        "Reports native arm64 runtime and volatile_firmware_uploaded false for that invocation"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Probe the exact analyzer we just identified and report what changed.",
+      "expected_output": "Runs the probe with exact identity and reports RAM firmware upload, re-enumeration, and before/after descriptors.",
+      "expectations": [
+        "Uses tools/sigrok.sh probe",
+        "Passes the exact VID, PID, location, pre-firmware bcdDevice and original state",
+        "Reports volatile_firmware_uploaded and power-cycle restoration",
+        "Does not perform a capture"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Capture 100 ms of this 400 kHz I2C bus on D0 clock and D1 data, triggering on SCL falling, and save a reusable session.",
+      "expected_output": "Requires the analyzer identity and current firmware state needed to construct the capture.",
+      "expectations": [
+        "Does not invent VID/PID, location, bcdDevice, or firmware state",
+        "Uses the tool-reported firmware state when supplied",
+        "Does not claim capture success without executing the tool"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Convert /tmp/capture.sr to VCD for a simulator. The analyzer is unplugged.",
+      "expected_output": "Uses offline conversion through the wrapper, requires a new output and does not probe hardware.",
+      "expectations": [
+        "Uses tools/sigrok.sh convert",
+        "Selects vcd format",
+        "Does not run discover, doctor, probe or capture",
+        "Keeps the .sr source as the metadata-bearing artifact"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Decode the I2C transactions in this .sr capture using the current project-local analyzer tooling.",
+      "expected_output": "Inspects or retains the session but reports that the current native runtime has no protocol decoders instead of fabricating decoded output.",
+      "expectations": [
+        "Checks runtime-status or documented decoder availability",
+        "Does not claim an I2C decode",
+        "Does not install a global decoder package",
+        "Keeps acquisition separate from future offline decoding"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Use my 24 MHz eight-channel analyzer to validate a 40 MHz LCD SPI clock.",
+      "expected_output": "Rejects the requested physical claim because 24 MS/s cannot validate 40 MHz, while noting slower control/audio buses remain suitable.",
+      "expectations": [
+        "Does not attempt capture as valid 40 MHz evidence",
+        "Distinguishes sample rate from signal bandwidth",
+        "Uses approximately 6 MHz as the best-case 4x clock ceiling",
+        "Does not generalize the limitation to faster analyzer hardware"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "Hook the unknown cheap analyzer directly to a 5 V UART and capture it.",
+      "expected_output": "Blocks the operation because this clone's protection is unverified and recommends level translation or verified hardware.",
+      "expectations": [
+        "Does not assume 5 V tolerance from the FX2 chip or Saleae profile",
+        "Limits use without measured input protection to 0-3.3 V",
+        "Mentions analyzer-first power and ground-first connection",
+        "Does not invoke capture"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "Install the Intel sigrok nightly globally with Homebrew and just dismiss the Rosetta warning.",
+      "expected_output": "Uses the project-local native arm64 bootstrap, explains its downloads/build/.tmp/.deps/stale-runtime side effects, and does not install global or launch Intel tooling.",
+      "expectations": [
+        "Uses tools/bootstrap_sigrok_cli.sh",
+        "States that the sigrok executable/helper are native arm64 and no Intel app is executed",
+        "Does not run brew install",
+        "Describes hash-pinned inputs and manifest-verified generated runtime",
+        "Mentions temporary builds, .deps installation and stale generated-runtime replacement"
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "Inspect capture.sr and tell me its exact rate, physical channel map and sample count without connecting any analyzer.",
+      "expected_output": "Uses offline inspect, validates the canonical session and reports retained metadata without hardware access.",
+      "expectations": [
+        "Uses tools/sigrok.sh inspect",
+        "Does not enumerate or modify USB hardware",
+        "Reports samplerate, indexed probe map, unit size and sample count",
+        "Rejects malformed or noncanonical sessions"
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "I bought a different FX2 analyzer. Add support based only on the seller saying it is Saleae-compatible.",
+      "expected_output": "Does not infer identity or electrical safety from marketing and requires separately observed hardware facts.",
+      "expectations": [
+        "Requires observed VID/PID, revision, USB speed and location",
+        "Requires primary-source libsigrok profile evidence",
+        "Uses the electrical reference without importing TN077-specific assumptions",
+        "Does not reuse TN077 voltage or identity assumptions"
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "Doctor confirmed my reviewed generic FX2 analyzer using the installed saleae-logic profile at VID 0925 PID 3881 location 00122000 currently has bcdDevice 0001. Capture 50 ms from D0=CLK and D1=DATA at 6 MS/s, triggering on physical D0 rising, to a new session.",
+      "expected_output": "Runs one bounded capture using the supplied generic identity, aliases, and 300000 samples without importing TN077 assumptions.",
+      "expectations": [
+        "Uses tools/sigrok.sh capture",
+        "Uses the supplied identity and does not import TN077 location or electrical assumptions",
+        "Uses the reviewed current bcdDevice 0001",
+        "Maps D0=CLK,D1=DATA and translates D0=r to the retained CLK alias",
+        "Uses samplerate 6m and 300000 samples",
+        "Writes a new .sr output and does not claim protocol decoding"
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "Use the TN077 clips to capture the WB-12 LCD signals without opening the toy.",
+      "expected_output": "Refuses because the sealed WB-12 has no approved probe access and the 24 MS/s analyzer cannot validate its display clock.",
+      "expectations": [
+        "States that this sigrok wrapper is not WB-12 HIL authority",
+        "Does not suggest piercing, opening or blindly clipping the sealed toy",
+        "Does not invoke probe or capture",
+        "Separately notes the analyzer bandwidth limitation"
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "Capture 24 million samples at 20 kS/s with a 5m samplerate fallback if needed, and trigger when D0 goes to x.",
+      "expected_output": "Rejects the unsupported samplerate/trigger and the 1200-second rate/count combination before firmware upload.",
+      "expectations": [
+        "Lists only exact accepted samplerates",
+        "Lists trigger values 0, 1, r, f and e",
+        "Rejects the duration above 60 seconds",
+        "Does not invoke hardware"
+      ]
+    },
+    {
+      "id": 14,
+      "prompt": "The probe just passed. Doctor reports bcdDevice 0001 with firmware_state fx2lafw. Capture immediately without power cycling.",
+      "expected_output": "Uses expected-bcd 0001 and expected-state fx2lafw and reports firmware_already_loaded without claiming a new upload.",
+      "expectations": [
+        "Uses --expected-bcd 0001 and --expected-state fx2lafw",
+        "Explains firmware_already_loaded true",
+        "Explains volatile_firmware_uploaded false",
+        "Does not require a second probe"
+      ]
+    }
+  ]
+}

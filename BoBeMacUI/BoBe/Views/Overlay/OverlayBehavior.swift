@@ -15,18 +15,20 @@ extension OverlayView {
         Task {
             await self.store.sendMessage(content)
         }
-        self.isRecentConversationVisible = false
-        self.setChatVisible(false)
         self.dismissFloatingBubble()
         return true
     }
 
     func handleMessagesChange(oldCount _: Int, newCount: Int) {
         if newCount == 0 {
-            self.setChatVisible(false)
             self.composerFeedback = nil
             self.dismissFloatingBubble()
+            self.reachoutKinds = [:]
+            withAnimation(BobeMotion.soft) {
+                self.isRecentConversationVisible = false
+            }
         }
+        self.reachoutInbox.prune(keeping: Set(self.store.messages.map(\.id)))
         self.lastMessageActivity = .now
     }
 
@@ -34,8 +36,80 @@ extension OverlayView {
         guard let messageId,
               let message = self.store.messages.first(where: { $0.id == messageId })
         else { return }
+        self.latestReplyAt = .now
+        self.classifyReachout(message)
+        if message.responseOrigin == .proactive, self.store.proactiveSilenced, !self.isChatVisible {
+            withAnimation(BobeMotion.standard) {
+                self.reachoutInbox.hold(message.id)
+            }
+            return
+        }
         self.surfaceFloatingBubble(for: message)
-        self.scheduleResizeWindow()
+    }
+
+    func classifyReachout(_ message: ChatMessage) {
+        guard self.reachoutKinds[message.id] == nil else { return }
+        let origin = message.responseOrigin
+        self.reachoutKinds[message.id] = ReachoutKind(origin: origin, run: nil)
+        guard origin == .proactive else { return }
+        let selection = EndpointStore.shared.selection
+        Task { @MainActor in
+            guard let runs = try? await DaemonClient(endpoint: selection.endpoint).agentRuns(),
+                  EndpointStore.shared.selection == selection,
+                  let carrier = ReachoutKind.carrier(ofMessage: message.id, in: runs)
+            else { return }
+            withAnimation(BobeMotion.standard) {
+                self.reachoutKinds[message.id] = ReachoutKind(origin: origin, run: carrier)
+            }
+        }
+    }
+
+    func settleFloatingBubble() {
+        if let id = self.floatingBubbleMessageId {
+            self.reachoutInbox.settle(id)
+        }
+        self.dismissFloatingBubble()
+    }
+
+    func tellMeMore() {
+        self.openCurrentAnswer()
+        self.handleSendMessage(L10n.tr("overlay.reachout.more.message"))
+    }
+
+    func peekWaitingReachout() {
+        guard !self.isChatVisible,
+              !self.store.proactiveSilenced,
+              self.floatingBubbleMessageId == nil,
+              let id = self.reachoutInbox.latest,
+              let message = self.store.messages.first(where: { $0.id == id })
+        else { return }
+        withAnimation(BobeMotion.standard) {
+            self.reachoutInbox.settle(id)
+        }
+        self.surfaceFloatingBubble(for: message)
+        self.floatingBubbleWasEngaged = true
+    }
+
+    func handleAvatarTap() {
+        if !self.isChatVisible, self.floatingBubbleMessage != nil {
+            self.openCurrentAnswer()
+        } else {
+            self.toggleChatManually()
+        }
+    }
+
+    func handleAvatarHoverChange(_ hovered: Bool) {
+        self.satelliteHideTask?.cancel()
+        if hovered {
+            self.satellitesShown = true
+            self.peekWaitingReachout()
+            return
+        }
+        self.satelliteHideTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(AvatarMetrics.satelliteLingerMilliseconds))
+            guard !Task.isCancelled else { return }
+            self.satellitesShown = false
+        }
     }
 
     func toggleChatManually() {
@@ -49,65 +123,21 @@ extension OverlayView {
     func openChatManually() {
         self.isRecentConversationVisible = false
         self.setChatVisible(true)
+        OverlayWindowManager.shared.focusForTyping()
     }
 
     func openCurrentAnswer() {
         self.cancelFloatingBubbleAutoDismiss()
-        self.isRecentConversationVisible = true
-        if self.isChatVisible {
-            self.preflightExpandWindow()
-            self.dismissFloatingBubble()
-            self.scheduleResizeWindow()
-        } else {
-            self.setChatVisible(true)
-            self.dismissFloatingBubble()
-        }
+        self.setChatVisible(true)
+        self.dismissFloatingBubble()
+        OverlayWindowManager.shared.focusForTyping()
     }
 
-    /// Resize the NSPanel synchronously to its expanded floor BEFORE any
-    /// state change so the chat sections never render into a too-small
-    /// frame. Width uses `widthExpanded`; height uses the same floor
-    /// `calculateWindowSize` would compute for an expanded state.
-    private func preflightExpandWindow() {
-        let floorHeight = WindowSizes.heightAvatar
-            + WindowSizes.heightInput
-            + (self.isRecentConversationVisible ? WindowSizes.heightExpandedChrome : 8)
-            + self.chatViewportFloorHeight
-        let height = min(floorHeight, self.maxAllowedWindowHeight)
-        let width = self.isRecentConversationVisible
-            ? WindowSizes.widthExpanded
-            : WindowSizes.widthComposer
-        OverlayWindowManager.shared.resize(width: width, height: height)
-    }
-
-    private func preflightAmbientAnswerWindow() {
-        OverlayWindowManager.shared.resize(
-            width: WindowSizes.widthComposer,
-            height: min(WindowSizes.heightAmbientAnswer, self.maxAllowedWindowHeight)
-        )
-    }
-
-    func closeChat(userInitiated: Bool) {
-        // Closing the chat hides the bubble UI only. Voice listening + TTS
-        // playback live in `VoicePipeline` and are toggled explicitly by
-        // the mic button + the global voice setting — they intentionally
-        // outlive the chat surface so BoBe can keep speaking (and being
-        // heard) with the chat collapsed, matching the floating-bubble
-        // model. Previously we disconnected here, which silently killed
-        // all audio whenever the user dismissed the chat panel.
+    func closeChat(userInitiated _: Bool) {
         self.setChatVisible(false)
-        self.isRecentConversationVisible = false
-        if userInitiated {
-            self.dismissFloatingBubble()
-            return
-        }
-        // Automatic collapse preserves an already-visible live reply but
-        // never resurrects content from canonical history.
+        self.dismissFloatingBubble()
     }
 
-    /// Toggle proactive surfacing. When silenced we drop the current
-    /// floating bubble; when un-silenced the next BoBe message will
-    /// repopulate it.
     func toggleProactiveSilence() {
         self.store.toggleProactiveSilence()
         if self.store.proactiveSilenced {
@@ -115,32 +145,29 @@ extension OverlayView {
         }
     }
 
-    // MARK: - Floating bubble lifecycle
-
-    /// Single setter for the floating bubble target. Refuses to surface
-    /// while proactive silencing is on — that mode means "don't pop up
-    /// at me, I'll open the chat when I want." Centralizing the
-    /// silenced check here keeps callers from duplicating it (and from
-    /// forgetting it, which previously caused bubbles to flash through
-    /// silenced mode for one frame).
     func surfaceFloatingBubble(for message: ChatMessage) {
         guard message.hasVisibleContent,
               !self.store.proactiveSilenced,
-              !self.isRecentConversationVisible
+              !self.isChatVisible
         else { return }
-        self.preflightAmbientAnswerWindow()
+        if let current = self.floatingBubbleMessage,
+           current.id != message.id,
+           !self.floatingBubbleWasEngaged,
+           self.floatingBubbleKind.waitsWhenMissed {
+            self.reachoutInbox.hold(current.id)
+        }
+        self.preflightWindow(for: .ambient)
+        self.floatingBubbleWasEngaged = false
         self.floatingBubbleDismissalStyle = .fade
         self.floatingBubbleRecedeProgress = 0
         self.floatingBubbleTransitionGeneration &+= 1
-        withAnimation(OverlayMotionRuntime.animation(for: .chatTransition)) {
+        withAnimation(BobeMotion.standard) {
             self.floatingBubbleMessageId = message.id
         }
         self.cancelFloatingBubbleAutoDismiss()
         self.scheduleFloatingBubbleAutoDismissIfReady()
     }
 
-    /// Single clear point. Cancels any pending auto-dismiss so a later
-    /// timer tick doesn't no-op against an already-cleared bubble.
     func dismissFloatingBubble(style: AmbientBubbleDismissalStyle = .fade) {
         self.cancelFloatingBubbleAutoDismiss()
         self.floatingBubbleDismissalStyle = style
@@ -152,22 +179,17 @@ extension OverlayView {
         let generation = self.floatingBubbleTransitionGeneration
 
         guard style == .stardust else {
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
+            withAnimation(BobeMotion.standard) {
                 self.floatingBubbleMessageId = nil
-                self.floatingBubbleRecedeProgress = 0
             }
-            self.floatingBubbleTransitionInProgress = false
-            self.scheduleResizeWindow()
+            self.floatingBubbleRecedeProgress = 0
             return
         }
 
-        self.floatingBubbleTransitionInProgress = true
-        let duration = OverlayMotionRuntime.reduceMotion
+        let duration = BobeMotion.isReduced
             ? AmbientBubbleTransition.fadeDurationSeconds
             : AmbientBubbleTransition.stardustDurationSeconds
-        let animation = OverlayMotionRuntime.reduceMotion
+        let animation = BobeMotion.isReduced
             ? Animation.easeOut(duration: duration)
             : Animation.easeIn(duration: duration)
 
@@ -183,8 +205,6 @@ extension OverlayView {
                 self.floatingBubbleMessageId = nil
                 self.floatingBubbleRecedeProgress = 0
             }
-            self.floatingBubbleTransitionInProgress = false
-            self.scheduleResizeWindow()
         }
     }
 
@@ -195,8 +215,7 @@ extension OverlayView {
               !self.isTtsAudible,
               !self.isVoiceResponseInProgress,
               !self.avatarAreaHovered,
-              !self.floatingBubbleInteractionActive,
-              !self.isRecentConversationVisible
+              !self.floatingBubbleInteractionActive
         else {
             return
         }
@@ -211,11 +230,17 @@ extension OverlayView {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             self.floatingBubbleAutoDismissTask = nil
+            if let message = self.floatingBubbleMessage,
+               !self.floatingBubbleWasEngaged,
+               self.floatingBubbleKind.waitsWhenMissed {
+                withAnimation(BobeMotion.standard) {
+                    self.reachoutInbox.hold(message.id)
+                }
+            }
             self.dismissFloatingBubble(style: .stardust)
         }
     }
 
-    /// Cancel a pending auto-dismiss. Safe to call when none is queued.
     func cancelFloatingBubbleAutoDismiss() {
         self.floatingBubbleAutoDismissTask?.cancel()
         self.floatingBubbleAutoDismissTask = nil
@@ -223,14 +248,14 @@ extension OverlayView {
 
     func handleFloatingBubbleInteractionChange(_ active: Bool) {
         if active {
+            self.floatingBubbleWasEngaged = true
             self.cancelFloatingBubbleAutoDismiss()
             guard self.floatingBubbleRecedeProgress > 0 else {
                 return
             }
             self.floatingBubbleTransitionGeneration &+= 1
-            self.floatingBubbleTransitionInProgress = false
             withAnimation(
-                OverlayMotionRuntime.reduceMotion
+                BobeMotion.isReduced
                     ? .easeOut(duration: 0.1)
                     : .easeOut(duration: 0.14)
             ) {
@@ -241,121 +266,116 @@ extension OverlayView {
         }
     }
 
-    func scheduleResizeWindow() {
-        guard !self.surfaceTransitionInProgress,
-              !self.floatingBubbleTransitionInProgress
-        else {
-            return
-        }
-        self.resizeTask?.cancel()
-        self.resizeTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(40))
-            guard !Task.isCancelled else { return }
-            self.resizeWindow()
-        }
-    }
-
     func setChatVisible(_ visible: Bool) {
         guard self.isChatVisible != visible else { return }
-        self.resizeTask?.cancel()
-        self.resizeTask = nil
         if visible {
-            self.preflightExpandWindow()
+            self.preflightWindow(for: self.isRecentConversationVisible ? .conversation : .ask)
+            self.reachoutInbox.settleAll()
         }
-
-        self.surfaceTransitionGeneration &+= 1
-        let generation = self.surfaceTransitionGeneration
-        self.surfaceTransitionInProgress = true
-        let updates = {
+        withAnimation(BobeMotion.standard) {
             if !visible {
                 self.isRecentConversationVisible = false
             }
             self.isChatVisible = visible
         }
-        guard let animation = OverlayMotionRuntime.animation(for: .chatTransition) else {
-            updates()
-            self.surfaceTransitionInProgress = false
-            self.resizeWindow()
-            return
-        }
-        withAnimation(animation, completionCriteria: .logicallyComplete) {
-            updates()
-        } completion: {
-            guard generation == self.surfaceTransitionGeneration else {
-                return
-            }
-            self.surfaceTransitionInProgress = false
-            self.resizeWindow()
-        }
-    }
-
-    func resizeWindow() {
-        let size = self.calculateWindowSize()
-        OverlayWindowManager.shared.resize(width: size.width, height: size.height)
-    }
-
-    func calculateWindowSize() -> CGSize {
-        let maxAllowedHeight = min(WindowSizes.heightMax, self.maxAllowedWindowHeight)
-        let measuredWidth = max(WindowSizes.widthCollapsed, self.measuredContentSize.width)
-        let measuredHeight = max(WindowSizes.heightCollapsed, self.measuredContentSize.height)
-
-        if !self.isChatVisible {
-            if self.floatingBubbleMessage != nil {
-                return CGSize(
-                    width: WindowSizes.widthComposer,
-                    height: min(WindowSizes.heightAmbientAnswer, maxAllowedHeight)
-                )
-            }
-            return CGSize(
-                width: self.requiresWideAmbientWindow
-                    ? WindowSizes.widthComposer
-                    : WindowSizes.widthCollapsed,
-                height: min(measuredHeight, maxAllowedHeight)
-            )
-        }
-
-        let ambientChromeHeight: CGFloat = self.isRecentConversationVisible
-            ? WindowSizes.heightExpandedChrome
-            : 8
-        let minExpandedHeight =
-            WindowSizes.heightAvatar
-                + WindowSizes.heightInput
-                + ambientChromeHeight
-                + self.chatViewportFloorHeight
-        let measured = max(measuredContentSize.height, minExpandedHeight)
-        let clampedHeight = min(measured, maxAllowedHeight)
-        let targetWidth = self.isRecentConversationVisible
-            ? WindowSizes.widthExpanded
-            : WindowSizes.widthComposer
-        return CGSize(width: max(targetWidth, measuredWidth), height: clampedHeight)
+        self.lastMessageActivity = .now
     }
 
     func toggleRecentConversation() {
         if !self.isRecentConversationVisible {
-            OverlayWindowManager.shared.resize(
-                width: WindowSizes.widthExpanded,
-                height: min(self.maxAllowedWindowHeight, self.calculateWindowSize().height)
-            )
+            self.preflightWindow(for: .conversation)
         }
-        withAnimation(OverlayMotionRuntime.animation(for: .chatTransition)) {
+        withAnimation(BobeMotion.soft) {
             self.isRecentConversationVisible.toggle()
         }
         self.lastMessageActivity = .now
     }
 
+    func preflightWindow(for presentation: OverlayPresentation) {
+        let column = CGSize(
+            width: presentation.columnWidth,
+            height: min(presentation.columnHeight, self.columnHeightLimit)
+        )
+        OverlayWindowManager.shared.reveal(OverlayCanvas.columnViewport(size: column, placement: self.placement))
+        self.scheduleWindowSettle()
+    }
+
+    func syncWindow() {
+        let target = self.settledViewport()
+        let manager = OverlayWindowManager.shared
+        if let target {
+            manager.reveal(target)
+        }
+        if manager.requested != target {
+            self.scheduleWindowSettle()
+        }
+    }
+
+    func scheduleWindowSettle() {
+        self.resizeTask?.cancel()
+        self.resizeTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(WindowSizes.settleMilliseconds))
+            guard !Task.isCancelled else { return }
+            OverlayWindowManager.shared.settle(self.settledViewport())
+        }
+    }
+
+    func settledViewport() -> CGRect? {
+        let presentation = self.presentation
+        guard presentation != .collapsed else { return nil }
+        let column = CGSize(
+            width: presentation.columnWidth,
+            height: min(self.columnHeightLimit, self.measuredColumnSize.height)
+        )
+        return OverlayCanvas.columnViewport(size: column, placement: self.placement)
+    }
+
+    func handleEscape() {
+        if self.isChatVisible {
+            self.closeChat(userInitiated: true)
+        } else if self.floatingBubbleMessageId != nil {
+            self.settleFloatingBubble()
+        }
+    }
+
+    func handleClickAway() {
+        guard self.isChatVisible,
+              self.draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return }
+        self.recedeChat()
+    }
+
+    func recedeChat() {
+        let latest = self.ambientConversationMessages.last
+        let isFresh = Date.now.timeIntervalSince(self.latestReplyAt) < AmbientMessageTiming.recedeFreshSeconds
+        self.setChatVisible(false)
+        guard let latest, latest.sender == .bobe, latest.hasVisibleContent,
+              latest.isStreaming || isFresh
+        else {
+            self.dismissFloatingBubble()
+            return
+        }
+        self.surfaceFloatingBubble(for: latest)
+        self.floatingBubbleWasEngaged = true
+    }
+
     func startInactivityTimer() {
         self.inactivityTimer?.cancel()
-        self.inactivityTimer = Task {
+        self.inactivityTimer = Task { @MainActor in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(InactivityTiming.checkIntervalSeconds))
                 guard !Task.isCancelled else { return }
                 let elapsed = Date.now.timeIntervalSince(self.lastMessageActivity)
-                if elapsed > InactivityTiming.timeoutSeconds,
-                   self.isChatVisible,
-                   self.store.stateType == .idle,
-                   !self.isPointerOverChat {
-                    await MainActor.run {
-                        self.closeChat(userInitiated: false)
+                let isResting = self.isChatVisible
+                    && self.store.stateType == .idle
+                    && !self.isPointerOverChat
+                    && self.draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                guard isResting else { continue }
+                if elapsed > InactivityTiming.timeoutSeconds {
+                    self.closeChat(userInitiated: false)
+                } else if elapsed > InactivityTiming.settleSeconds, self.isRecentConversationVisible {
+                    withAnimation(BobeMotion.soft) {
+                        self.isRecentConversationVisible = false
                     }
                 }
             }
@@ -370,18 +390,13 @@ extension OverlayView {
             L10n.tr("overlay.input.waiting_for_reconnecting")
         case .thinking:
             L10n.tr("overlay.input.waiting_for_thinking")
-        case .speaking:
-            L10n.tr("overlay.input.waiting_for_speaking")
-        case .capturing:
-            L10n.tr("overlay.input.waiting_for_capturing")
-        case let .usingTool(toolName):
-            L10n.tr("overlay.input.waiting_for_tool_format", toolName)
         }
     }
 }
 
 enum AmbientMessageTiming {
     static let minimumDwellSeconds: TimeInterval = 8
+    static let recedeFreshSeconds: TimeInterval = 120
     static let maximumAutoDismissWords = 60
 
     static func dwellDuration(for content: String) -> TimeInterval {

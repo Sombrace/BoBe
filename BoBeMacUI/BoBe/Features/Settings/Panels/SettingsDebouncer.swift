@@ -1,10 +1,5 @@
 import Foundation
 
-/// Coalesces rapid setting mutations into one persist call and schedules
-/// the "Saved ✓" toast clear. Replaces the four near-identical saveTask /
-/// savedToastTask pairs that previously lived inline in each panel. Owns
-/// the Task lifecycle so panels never see `Task.sleep` or cancellation
-/// bookkeeping.
 @MainActor
 @Observable
 final class SettingsDebouncer {
@@ -12,26 +7,41 @@ final class SettingsDebouncer {
     static let toastSeconds: Double = 2.4
 
     private var saveTask: Task<Void, Never>?
+    private var inFlightTask: Task<Void, Never>?
     private var pendingWork: (@MainActor () async -> Void)?
     private var toastTask: Task<Void, Never>?
+    private var generation: UInt64 = 0
+    private var persistGeneration: UInt64 = 0
 
-    /// Cancel any pending persist, then run `work` after `debounceSeconds`.
-    /// If a later call arrives within the window, the in-flight one is
-    /// cancelled before it fires — only the last touched value persists.
+    func cancelPendingSave() {
+        self.generation &+= 1
+        self.saveTask?.cancel()
+        self.saveTask = nil
+        self.pendingWork = nil
+        self.cancelToast()
+    }
+
     func debounce(_ work: @escaping @MainActor () async -> Void) {
         self.saveTask?.cancel()
+        self.generation &+= 1
+        let generation = self.generation
         self.pendingWork = work
         self.saveTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(Self.debounceSeconds))
-            guard !Task.isCancelled, let self, let work = self.pendingWork else { return }
+            guard !Task.isCancelled, let self else { return }
+            await self.drainInFlight()
+            guard !Task.isCancelled, generation == self.generation, let work = self.pendingWork else { return }
             self.pendingWork = nil
-            await work()
-            self.saveTask = nil
+            self.persistGeneration &+= 1
+            let persistGeneration = self.persistGeneration
+            let persist = Task { @MainActor in await work() }
+            self.inFlightTask = persist
+            await persist.value
+            if persistGeneration == self.persistGeneration { self.inFlightTask = nil }
+            if generation == self.generation { self.saveTask = nil }
         }
     }
 
-    /// Clear the "Saved ✓" toast after `toastSeconds`. Cancels any prior
-    /// pending clear so back-to-back saves don't snap the toast off early.
     func scheduleToastClear(_ clear: @escaping @MainActor () -> Void) {
         self.toastTask?.cancel()
         self.toastTask = Task { @MainActor in
@@ -41,63 +51,59 @@ final class SettingsDebouncer {
         }
     }
 
-    /// Cancel only the toast clear. Used on panel disappear so a pending
-    /// "Saved ✓" doesn't fire on a torn-down view, while the in-flight
-    /// persist (if any) is allowed to finish in the background.
     func cancelToast() {
         self.toastTask?.cancel()
         self.toastTask = nil
     }
 
-    func flush() async {
-        guard let work = self.pendingWork else {
-            if let saveTask { await saveTask.value }
-            return
+    private func drainInFlight() async {
+        while let task = self.inFlightTask {
+            let generation = self.persistGeneration
+            await task.value
+            if generation == self.persistGeneration { self.inFlightTask = nil }
         }
-        self.saveTask?.cancel()
-        self.saveTask = nil
-        self.pendingWork = nil
-        await work()
     }
 
-    /// Cancel a pending debounced save. Used when the caller needs to
-    /// persist immediately (e.g. a user-initiated mode flip) and doesn't
-    /// want the queued debounce to fire a redundant PATCH afterwards.
-    func cancelPendingSave() {
+    func flush() async {
+        self.generation &+= 1
         self.saveTask?.cancel()
         self.saveTask = nil
+        await self.drainInFlight()
+        guard let work = self.pendingWork else { return }
         self.pendingWork = nil
+        self.persistGeneration &+= 1
+        let persistGeneration = self.persistGeneration
+        let persist = Task { @MainActor in await work() }
+        self.inFlightTask = persist
+        await persist.value
+        if persistGeneration == self.persistGeneration { self.inFlightTask = nil }
     }
 
-    /// Standard settings-PATCH flow shared across every panel:
-    ///   1. Build a partial `SettingsUpdateRequest` via the `build` closure.
-    ///   2. PATCH `/settings`.
-    ///   3. On `persistFailed`, route to `setError`. On success, surface
-    ///      `resp.message` via `setSaved` and schedule its auto-clear.
-    ///   4. On thrown error, surface the localized description.
-    ///   5. Fire optional `onSuccess` for panel-specific side-effects
-    ///      (VoicePanel uses it to refresh the pipeline + post the config
-    ///      change notification).
     func runPersist(
         setError: @escaping (String?) -> Void,
         setSaved: @escaping (String?) -> Void,
-        onSuccess: (() async -> Void)? = nil,
+        onSuccess: (@MainActor (SettingsUpdateResponse) async -> Void)? = nil,
+        update: @MainActor (SettingsUpdateRequest) async throws -> SettingsUpdateResponse,
+        isCurrent: @escaping () -> Bool,
         build: (inout SettingsUpdateRequest) -> Void
     ) async {
         var req = SettingsUpdateRequest()
         build(&req)
         do {
-            let resp = try await DaemonClient.shared.updateSettings(req)
+            guard isCurrent() else { return }
+            let resp = try await update(req)
+            guard isCurrent() else { return }
             if resp.persistFailed == true {
                 setError(L10n.tr("settings.shared.action.persist_failed"))
                 setSaved(nil)
             } else {
                 setError(nil)
                 setSaved(resp.message)
-                self.scheduleToastClear { setSaved(nil) }
-                if let onSuccess { await onSuccess() }
+                self.scheduleToastClear { if isCurrent() { setSaved(nil) } }
+                if let onSuccess { await onSuccess(resp) }
             }
         } catch {
+            guard isCurrent() else { return }
             setError(error.localizedDescription)
             setSaved(nil)
         }

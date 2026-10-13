@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Read-only on API: AI-curated sections (how/patterns/attitude/questions) are agent-written.
 struct GoalDraft: Equatable {
     var title = ""
     var summary = ""
@@ -18,6 +17,19 @@ struct GoalDraft: Equatable {
         self.notes = goal.notes
         self.priority = goal.priority
         self.status = goal.status
+    }
+
+    func reconciled(submitted: GoalDraft, saved: GoalDraft) -> GoalDraft {
+        var result = self
+        result.title = reconcileSavedDraft(current: self.title, submitted: submitted.title, saved: saved.title)
+        result.summary = reconcileSavedDraft(current: self.summary, submitted: submitted.summary, saved: saved.summary)
+        result.whyItMatters = reconcileSavedDraft(
+            current: self.whyItMatters, submitted: submitted.whyItMatters, saved: saved.whyItMatters
+        )
+        result.notes = reconcileSavedDraft(current: self.notes, submitted: submitted.notes, saved: saved.notes)
+        result.priority = reconcileSavedDraft(current: self.priority, submitted: submitted.priority, saved: saved.priority)
+        result.status = reconcileSavedDraft(current: self.status, submitted: submitted.status, saved: saved.status)
+        return result
     }
 
     func equals(_ goal: Goal) -> Bool {
@@ -48,6 +60,18 @@ struct GoalsEditor: View {
 
     var selectedGoal: Goal? {
         self.goals.first { $0.id == self.editorState.selectedId }
+    }
+
+    func goalMatchesFilter(_ goal: Goal) -> Bool {
+        if let statusFilter { return goal.status == statusFilter }
+        return self.showArchived || goal.status != .archived
+    }
+
+    var visibleGoals: [Goal] {
+        self.goals.filter {
+            self.goalMatchesFilter($0)
+                || (self.editorState.selectedId == $0.id && self.editorState.isDirty)
+        }
     }
 
     var body: some View {
@@ -104,7 +128,6 @@ struct GoalsEditor: View {
         )
     }
 
-    // MARK: - List pane
 
     var listPane: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -117,7 +140,12 @@ struct GoalsEditor: View {
 
             HStack(spacing: 8) {
                 BobeMenuPicker(
-                    selection: self.$statusFilter,
+                    selection: Binding(
+                        get: { self.statusFilter },
+                        set: { status in
+                            self.editCoordinator.requestTransition { self.statusFilter = status }
+                        }
+                    ),
                     options: Self.statusFilterOptions,
                     label: { status in
                         guard let status else { return L10n.tr("settings.common.all") }
@@ -127,15 +155,20 @@ struct GoalsEditor: View {
                     size: .small
                 )
 
-                Toggle(L10n.tr("settings.goals.filter.show_archived"), isOn: self.$showArchived)
-                    .toggleStyle(.checkbox)
-                    .controlSize(.small)
+                Toggle(L10n.tr("settings.goals.filter.show_archived"), isOn: Binding(
+                    get: { self.showArchived },
+                    set: { shown in
+                        self.editCoordinator.requestTransition { self.showArchived = shown }
+                    }
+                ))
+                    .toggleStyle(BobeLabeledSwitchStyle())
                     .font(.system(size: 11))
                     .foregroundStyle(self.theme.colors.textMuted)
+                    .fixedSize()
 
                 Spacer()
 
-                Text("\(self.goals.count)")
+                Text("\(self.visibleGoals.count)")
                     .bobeTextStyle(.badge)
                     .foregroundStyle(self.theme.colors.textMuted)
             }
@@ -185,11 +218,7 @@ struct GoalsEditor: View {
             }
         }
         .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(self.theme.colors.surface)
-                .stroke(self.theme.colors.border, lineWidth: 1)
-        )
+        .bobeRaised(cornerRadius: 16)
     }
 
     var canCreate: Bool {
@@ -207,7 +236,7 @@ struct GoalsEditor: View {
             }
             .frame(maxWidth: .infinity, alignment: .center)
             .padding(.top, 20)
-        } else if self.goals.isEmpty {
+        } else if self.visibleGoals.isEmpty {
             VStack(spacing: 8) {
                 Image(systemName: "target")
                     .font(.system(size: 28))
@@ -224,7 +253,7 @@ struct GoalsEditor: View {
         } else {
             ScrollView {
                 LazyVStack(spacing: 4) {
-                    ForEach(self.goals) { goal in
+                    ForEach(self.visibleGoals) { goal in
                         self.goalRow(goal)
                     }
                 }
@@ -264,7 +293,6 @@ struct GoalsEditor: View {
         }
     }
 
-    // MARK: - Color + label helpers
 
     func priorityColor(_ priority: Int) -> Color {
         switch priority {

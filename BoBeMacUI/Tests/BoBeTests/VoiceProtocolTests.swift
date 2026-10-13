@@ -2,13 +2,34 @@
 import Foundation
 import Testing
 
-/// Wire-shape tests for the daemon ↔ client voice protocol. Drift between
-/// these values and `BoBeService/src/speech/protocol.rs` breaks every audio
-/// frame, so the parser deserves explicit coverage.
+@Suite("VoiceCaptureFrameEncoder")
+struct VoiceCaptureFrameEncoderTests {
+    @Test
+    func encodesExactPcmFrameAndClampsSamples() {
+        var samples = Array(repeating: Float(0), count: 320)
+        samples[0] = 1
+        samples[1] = -1
+        let frame = VoiceCaptureFrameEncoder.encode(
+            streamId: 0x0102_0304,
+            sequence: 7,
+            samples: samples[...]
+        )
+        #expect(frame?.count == 653)
+        #expect(Array(frame?.prefix(4) ?? Data()) == [1, 2, 3, 4])
+        #expect(Array(frame?[13 ..< 17] ?? Data()) == [0xFF, 0x7F, 0x01, 0x80])
+    }
+
+    @Test
+    func rejectsWrongFrameSizeAndZeroStream() {
+        let samples = Array(repeating: Float(0), count: 319)
+        #expect(VoiceCaptureFrameEncoder.encode(streamId: 1, sequence: 0, samples: samples[...]) == nil)
+        let full = Array(repeating: Float(0), count: 320)
+        #expect(VoiceCaptureFrameEncoder.encode(streamId: 0, sequence: 0, samples: full[...]) == nil)
+    }
+}
+
 @Suite("TtsFrameHeader")
 struct TtsFrameHeaderTests {
-    /// Build a frame the same way Rust's `encode_tts_frame` does: 8 bytes
-    /// big-endian `chunk_id`, 1 byte `flags`, then payload.
     private func encode(chunkId: UInt64, flags: UInt8, payload: [UInt8]) -> Data {
         var data = Data(capacity: 9 + payload.count)
         for i in stride(from: 56, through: 0, by: -8) {
@@ -45,7 +66,6 @@ struct TtsFrameHeaderTests {
 
     @Test
     func rejectsTooShort() {
-        // 8 bytes is one short of the 9-byte header.
         let bad = Data([0, 0, 0, 0, 0, 0, 0, 1])
         #expect(TtsFrameHeader.parse(bad) == nil)
     }
@@ -81,6 +101,19 @@ struct ServerVoiceMessageTests {
     private func decode(_ json: String) throws -> ServerVoiceMessage {
         let data = json.data(using: .utf8) ?? Data()
         return try JSONDecoder().decode(ServerVoiceMessage.self, from: data)
+    }
+
+    @Test
+    func decodesSpeechPlan() throws {
+        let msg = try decode(#"{"type":"speech_plan","plan":{"plan_id":"p1","stt_site":"endpoint","stt_engine_id":"parakeet","tts_site":"daemon","tts_engine_id":"server_kokoro","voice_id":"af_bella","uplink":"transcript","downlink":"audio","eou_owner":"endpoint","wake_owner":"endpoint","tts_text_delivery":"none","reason":"voice_v2_endpoint_stt_daemon_tts"}}"#)
+        guard case let .speechPlan(plan) = msg else {
+            Issue.record("expected .speechPlan, got \(msg)")
+            return
+        }
+        #expect(plan.planId == "p1")
+        #expect(plan.sttSite == .endpoint)
+        #expect(plan.ttsSite == .daemon)
+        #expect(plan.downlink == .audio)
     }
 
     @Test
@@ -132,9 +165,6 @@ struct ServerVoiceMessageTests {
 
     @Test
     func unknownTypeBecomesUnknownVariant() throws {
-        // Forward-compat: a daemon adding a new server message shouldn't make
-        // the client throw — it should fall through to `.unknown` and be
-        // ignored at the dispatch layer.
         let msg = try decode(#"{"type":"future_event","data":42}"#)
         guard case let .unknown(type) = msg else {
             Issue.record("expected .unknown, got \(msg)")
@@ -152,6 +182,27 @@ struct ClientVoiceMessageEncodingTests {
         return any as? [String: Any] ?? [:]
     }
 
+    private let macOffer = SpeechOfferWire(
+        endpointId: UUID(uuidString: "00000000-0000-0000-0000-000000000001") ?? UUID(),
+        endpointKind: "mac_app",
+        language: "en",
+        playbackRates: [24_000],
+        endpointStt: [SpeechEngineOfferWire(
+            id: "parakeet",
+            languages: ["en"],
+            partials: true,
+            eou: true,
+            voices: [],
+            sampleRates: [],
+            ready: true
+        )],
+        endpointTts: [],
+        audioUplink: false,
+        overrides: SpeechOverridesWire(stt: .auto, tts: .daemon),
+        daemonIsNonLoopback: false,
+        remoteAudioConsent: false
+    )
+
     @Test
     func controlEncodesAbort() throws {
         let obj = try encode(.control(action: .abort))
@@ -159,12 +210,17 @@ struct ClientVoiceMessageEncodingTests {
         #expect(obj["action"] as? String == "abort")
     }
 
+    @Test(arguments: [VoiceControlAction.mute, .unmute])
+    func controlEncodesMuteState(_ action: VoiceControlAction) throws {
+        let obj = try encode(.control(action: action))
+        #expect(obj["type"] as? String == "control")
+        #expect(obj["action"] as? String == action.rawValue)
+    }
+
     @Test
     func transcriptPartialEncodesSnakeCaseKeys() throws {
         let obj = try encode(.transcriptPartial(turnId: "abc", text: "hi"))
         #expect(obj["type"] as? String == "transcript_partial")
-        // Wire contract: turn_id, not turnId. Daemon decodes via serde
-        // snake_case, so the Swift CodingKey rename must match.
         #expect(obj["turn_id"] as? String == "abc")
         #expect(obj["text"] as? String == "hi")
     }
@@ -174,44 +230,79 @@ struct ClientVoiceMessageEncodingTests {
         let obj = try encode(.bargeIn(
             tsMs: 1_000,
             playbackMsPlayed: 420,
-            partialText: "please stop now"
+            partialText: "please stop now",
+            playheadChunk: 3
         ))
         #expect(obj["type"] as? String == "barge_in")
         #expect(obj["playback_ms_played"] as? Int == 420)
         #expect(obj["partial_text"] as? String == "please stop now")
+        #expect(obj["playhead_chunk"] as? Int == 3)
     }
 
     @Test
-    func helloEncodesAllOptionalsWhenSet() throws {
-        let obj = try encode(.hello(
-            sessionId: "s1",
-            playbackRate: 24_000,
-            voiceId: "af_alloy",
-            speed: 1.0,
-            language: "en",
-            ttsBackend: "client_supertonic"
+    func bargeInOmitsMissingPartialEvidence() throws {
+        let obj = try encode(.bargeIn(
+            tsMs: 1_000,
+            playbackMsPlayed: 420,
+            partialText: nil,
+            playheadChunk: 0
         ))
+        #expect(obj["partial_text"] == nil)
+        #expect(obj["playhead_chunk"] as? Int == 0)
+    }
+
+    @Test
+    func playbackAckEncodesMonotonicPositionFields() throws {
+        let obj = try encode(.playbackAck(chunkId: 17, playedMs: 925))
+        #expect(obj["type"] as? String == "playback_ack")
+        #expect(obj["chunk_id"] as? Int == 17)
+        #expect(obj["played_ms"] as? Int == 925)
+    }
+
+    @Test
+    func helloEncodesVoicePreferencesWhenSet() throws {
+        let obj = try encode(.hello(sessionId: "s1", voiceId: "af_alloy", speed: 1.0, speechOffer: self.macOffer))
+        #expect(obj["type"] as? String == "hello")
         #expect(obj["session_id"] as? String == "s1")
-        #expect(obj["playback_rate"] as? Int == 24_000)
         #expect(obj["voice_id"] as? String == "af_alloy")
-        #expect(obj["language"] as? String == "en")
-        #expect(obj["tts_backend"] as? String == "client_supertonic")
+        #expect(obj["speed"] as? Double == 1.0)
+        #expect(obj["playback_rate"] == nil)
+        #expect(obj["language"] == nil)
     }
 
     @Test
     func helloOmitsNilOptionals() throws {
-        let obj = try encode(.hello(
-            sessionId: "s1",
-            playbackRate: 24_000,
-            voiceId: nil,
-            speed: nil,
-            language: nil,
-            ttsBackend: nil
-        ))
+        let obj = try encode(.hello(sessionId: "s1", voiceId: nil, speed: nil, speechOffer: self.macOffer))
         #expect(obj["voice_id"] == nil)
         #expect(obj["speed"] == nil)
-        #expect(obj["language"] == nil)
-        #expect(obj["tts_backend"] == nil)
+    }
+
+    @Test
+    func helloEncodesCapabilityOffer() throws {
+        let obj = try encode(.hello(sessionId: "s1", voiceId: "af_bella", speed: 1, speechOffer: self.macOffer))
+        let encodedOffer = obj["speech_offer"] as? [String: Any]
+        #expect(encodedOffer?["endpoint_kind"] as? String == "mac_app")
+        #expect(encodedOffer?["language"] as? String == "en")
+        #expect(encodedOffer?["playback_rates"] as? [Int] == [24_000])
+        #expect(encodedOffer?["daemon_is_non_loopback"] as? Bool == false)
+        let stt = encodedOffer?["endpoint_stt"] as? [[String: Any]]
+        #expect(stt?.first?["id"] as? String == "parakeet")
+    }
+
+    @MainActor
+    @Test
+    func remoteConsentKeysAreAuthorityScoped() {
+        let first = UUID(uuidString: "00000000-0000-0000-0000-000000000001") ?? UUID()
+        let second = UUID(uuidString: "00000000-0000-0000-0000-000000000002") ?? UUID()
+        #expect(RemoteSpeechConsent.storageKey(authorityId: first)
+            != RemoteSpeechConsent.storageKey(authorityId: second))
+    }
+
+    @MainActor
+    @Test
+    func supertonicVoiceIdentityReflectsActualStyle() {
+        #expect(VoicePipeline.supertonicVoiceId(for: "am_michael") == "supertonic_m1")
+        #expect(VoicePipeline.supertonicVoiceId(for: "af_bella") == "supertonic_f1")
     }
 
     @Test
