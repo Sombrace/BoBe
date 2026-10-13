@@ -1,0 +1,136 @@
+Provider artwork
+================
+
+These marks identify model providers. They do not imply endorsement of BoBe.
+All trademarks remain the property of their respective owners. No asset is
+loaded from the network at runtime. The custom/local endpoint keeps a generic
+system icon because it has no provider brand.
+
+Sources retrieved 2026-10-07 (UTC):
+
+OpenAI
+https://github.com/openai/openai-assistants-quickstart/blob/main/public/openai.svg
+Official OpenAI repository; source blob 98d4eddc88e4982da8f58cd0bf8af321c27e93e3.
+The vector geometry is unchanged. Its monochrome mask renders black or white.
+The repository's MIT notice is reproduced below.
+
+Anthropic
+https://www.anthropic.com/news -> https://anthropic.com/press-kit
+https://www-cdn.anthropic.com/ae59ca4ca194dac9c9dc3bc78c5829468cb0e8af.zip
+Anthropic media resources / Anthropic logos / Anthropic logos /
+2 Anthropic symbol / SVG / Anthropic symbol - Slate.svg and
+Anthropic symbol - Ivory.svg. Both supplied variants are unchanged.
+Vendor media assets, not covered by the MIT notices below.
+
+DeepSeek
+https://github.com/deepseek-ai/DeepSeek-V2/blob/main/figures/logo.svg
+The company's DeepSeek-V3 README also links to this logo. The whale path is
+unchanged; the wordmark is omitted and the view box fits the standalone symbol.
+The supplied #4D6BFE color is retained. Repository MIT notice below.
+
+OpenRouter
+https://openrouter.ai/brand
+https://openrouter.ai/brand/logos/transparent/glyph/svg/glyph-grape.svg
+https://openrouter.ai/brand/logos/transparent/glyph/svg/glyph-volt.svg
+Official glyphs for light and dark surfaces, unchanged. The brand page asks
+users not to stretch, recolor, or remix the marks. They render in original color.
+Vendor brand assets, not covered by the MIT notices below.
+
+GitHub Copilot
+https://github.com/primer/octicons/blob/main/icons/copilot-24.svg
+Official GitHub Octicons; source blob 201ecf408786f8e248ed4a223262c11c6eb726c0.
+The vector geometry is unchanged. Its monochrome mask renders black or white.
+Octicons MIT notice below.
+
+Rail Relay
+Owner-provided RailRelay2 repository:
+web/packages/ui/src/components/logo-mark.tsx
+web/packages/ui/src/design.css
+The logo geometry is unchanged. JSX attributes are serialized as SVG attributes.
+The source's light/dark --rr-accent values (#d7801f / #e9953a) are resolved into
+the bundled variants. This is Rail Relay's own mark, not Noiplex's earlier icon.
+
+Bundled SVG SHA-256
+------------------
+ProviderOpenAI/light.svg  0dd4dd71846aeb7a484acdc59eb08eac2b3c1264a143d11bca9b73e4a8cacfbf
+ProviderAnthropic/light.svg  d55918884053460f24c958fca3fba8d10b48fdd86e73ba3cd1237713bc0a03bb
+ProviderAnthropic/dark.svg  38fc06d8e9390654cc4e96aa53691e2e78d929667c0034805b6d1b3891ba22dd
+ProviderDeepSeek/light.svg  f938e8725dc10fa5e9d5d5f3d71ece362c2724402e437d949bb25c357ad73df5
+ProviderOpenRouter/light.svg  5b49593d44e6aa41011be377e182cd89e57473f1948e0dfb128f99a92adfc68d
+ProviderOpenRouter/dark.svg  0d22462e4f2835a5a5b9000af0a55fc9238e39996100f54706e41ec45b9d1727
+ProviderCopilot/light.svg  eeafb3c2f333e04ccf7d031ae215f7adafaed4c6352556b0bf79496e048bcdd7
+ProviderRailRelay/light.svg  e5bbe4732e5ac3d64908a5d2c8a0873f29eae8c1440a4d18289026c443a5dcc2
+ProviderRailRelay/dark.svg  e917d7c6d50b82f2fe5cee74ec756e089c8fd3b2d9bfce0d5caad17e831e6bd8
+
+openai-LICENSE
+--------------
+MIT License
+
+Copyright (c) 2024 OpenAI
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+deepseek-LICENSE
+----------------
+MIT License
+
+Copyright (c) 2023 DeepSeek
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+octicons-LICENSE
+----------------
+MIT License
+
+Copyright (c) 2026 GitHub Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

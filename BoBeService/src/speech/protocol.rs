@@ -1,6 +1,3 @@
-//! WS wire protocol for `/voice/stream`. Client owns ASR + ships transcripts;
-//! daemon owns LLM + TTS and ships Opus binary audio. No audio uplink.
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -9,12 +6,8 @@ pub(crate) enum ControlAction {
     Abort,
     Mute,
     Unmute,
-    /// Drops running turn; keeps conversation context.
-    Reset,
 }
 
-/// **Wire contract:** mirror `VoicePhaseWire` in Swift. Adding a variant
-/// without the Swift counterpart breaks decode on the client.
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum VoicePhase {
@@ -24,38 +17,24 @@ pub(crate) enum VoicePhase {
     Speaking,
 }
 
-/// **Wire contract:** mirror `ClientVoiceMessage` in Swift; rename fields here = update both.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ClientMessage {
     Hello {
         session_id: String,
-        playback_rate: u32,
         #[serde(default)]
         voice_id: Option<String>,
         #[serde(default)]
         speed: Option<f32>,
-        /// BCP-47; daemon telemetry only — client picks the ASR engine.
-        #[serde(default)]
-        language: Option<String>,
-        #[serde(default)]
-        tts_backend: Option<String>,
+        speech_offer: Box<crate::speech::SpeechOffer>,
     },
-    /// Candidate barge-in; daemon decides after the min-words gate.
     BargeIn {
         ts_ms: u64,
         playback_ms_played: u64,
-        /// Latest acoustic transcript evidence, carried atomically with the
-        /// candidate so transport scheduling cannot reorder it behind barge-in.
         #[serde(default)]
         partial_text: Option<String>,
+        playhead_chunk: u64,
     },
-    Wake {
-        phrase: String,
-        score: f32,
-        ts_ms: u64,
-    },
-    /// Playback progress for truncation math.
     PlaybackAck {
         chunk_id: u64,
         played_ms: u64,
@@ -63,12 +42,10 @@ pub(crate) enum ClientMessage {
     Control {
         action: ControlAction,
     },
-    /// Daemon stores on `session.last_partial_text` for cancel-phrase + MinWords gate.
     TranscriptPartial {
         turn_id: String,
         text: String,
     },
-    /// Triggers single-flight admit + convergence pipeline.
     TranscriptFinal {
         turn_id: String,
         text: String,
@@ -82,14 +59,23 @@ pub(crate) enum ClientMessage {
     },
 }
 
-/// **Wire contract:** mirror `ServerVoiceMessage` in Swift. Binary TTS frames
-/// bypass this enum — see `encode_tts_frame` below.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum ServerMessage {
-    HelloAck {
-        voice_pack: String,
-        playback_rate: u32,
+    SpeechPlan {
+        plan: crate::speech::SpeechPlan,
+    },
+    CaptureCredit {
+        stream_id: u32,
+        credit_frames: u32,
+    },
+    SttPartial {
+        turn_id: String,
+        text: String,
+    },
+    SttFinal {
+        turn_id: String,
+        text: String,
     },
     State {
         phase: VoicePhase,
@@ -107,7 +93,6 @@ pub(crate) enum ServerMessage {
         sequence: u64,
         text: String,
     },
-    /// Post-barge-in: client drops queued audio beyond `keep_ms`.
     Truncate {
         turn_id: String,
         keep_ms: u64,
@@ -118,11 +103,56 @@ pub(crate) enum ServerMessage {
     },
 }
 
-/// `[8 bytes BE u64 chunk_id][1 byte flags][N bytes Opus]`.
-/// flags: bit 0 = filler (preemptible), bit 1 = first chunk of turn.
+pub(crate) const VOICE_CAPTURE_HEADER_LEN: usize = 13;
+pub(crate) const VOICE_CAPTURE_PCM_BYTES: usize = 640;
+
+pub(crate) struct VoiceCaptureFrame<'a> {
+    pub(crate) stream_id: u32,
+    pub(crate) sequence: u32,
+    pub(crate) flags: u8,
+    pub(crate) payload: &'a [u8],
+}
+
+pub(crate) fn decode_voice_capture_frame(bytes: &[u8]) -> Option<VoiceCaptureFrame<'_>> {
+    if bytes.len() != VOICE_CAPTURE_HEADER_LEN + VOICE_CAPTURE_PCM_BYTES {
+        return None;
+    }
+    let stream_id = u32::from_be_bytes(bytes[..4].try_into().ok()?);
+    let sequence = u32::from_be_bytes(bytes[4..8].try_into().ok()?);
+    let flags = bytes[8];
+    let reserved = u32::from_be_bytes(bytes[9..13].try_into().ok()?);
+    if stream_id == 0 || reserved != 0 || flags & !0b0000_0001 != 0 {
+        return None;
+    }
+    Some(VoiceCaptureFrame {
+        stream_id,
+        sequence,
+        flags,
+        payload: &bytes[VOICE_CAPTURE_HEADER_LEN..],
+    })
+}
+
 pub(crate) const TTS_FRAME_HEADER_LEN: usize = 9;
 pub(crate) const FLAG_FILLER: u8 = 0b0000_0001;
 pub(crate) const FLAG_FIRST_OF_TURN: u8 = 0b0000_0010;
+
+pub(crate) struct DecodedTtsFrame<'a> {
+    pub(crate) chunk_id: u64,
+    pub(crate) flags: u8,
+    pub(crate) payload: &'a [u8],
+}
+
+pub(crate) fn decode_tts_frame(bytes: &[u8]) -> Option<DecodedTtsFrame<'_>> {
+    if bytes.len() <= TTS_FRAME_HEADER_LEN {
+        return None;
+    }
+    let chunk_id = u64::from_be_bytes(bytes[..8].try_into().ok()?);
+    Some(DecodedTtsFrame {
+        chunk_id,
+        flags: bytes[8],
+        payload: &bytes[TTS_FRAME_HEADER_LEN..],
+    })
+}
 
 pub(crate) fn encode_tts_frame(chunk_id: u64, flags: u8, opus: &[u8]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(TTS_FRAME_HEADER_LEN + opus.len());
@@ -139,50 +169,86 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn hello_deserialize_minimal() {
-        let raw = r#"{"type":"hello","session_id":"abc","playback_rate":24000}"#;
-        let parsed: ClientMessage = serde_json::from_str(raw).unwrap();
+    fn voice_capture_frame_validates_identity_sequence_and_pcm_size() {
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&7_u32.to_be_bytes());
+        frame.extend_from_slice(&3_u32.to_be_bytes());
+        frame.push(0);
+        frame.extend_from_slice(&0_u32.to_be_bytes());
+        frame.extend_from_slice(&vec![0_u8; VOICE_CAPTURE_PCM_BYTES]);
+        let decoded = decode_voice_capture_frame(&frame).unwrap();
+        assert_eq!(decoded.stream_id, 7);
+        assert_eq!(decoded.sequence, 3);
+        assert_eq!(decoded.payload.len(), 640);
+        frame.pop();
+        assert!(decode_voice_capture_frame(&frame).is_none());
+    }
+
+    #[test]
+    fn voice_capture_frame_rejects_zero_stream_reserved_and_unknown_flags() {
+        let mut frame = vec![0_u8; VOICE_CAPTURE_HEADER_LEN + VOICE_CAPTURE_PCM_BYTES];
+        assert!(decode_voice_capture_frame(&frame).is_none());
+        frame[3] = 1;
+        frame[8] = 2;
+        assert!(decode_voice_capture_frame(&frame).is_none());
+        frame[8] = 0;
+        frame[12] = 1;
+        assert!(decode_voice_capture_frame(&frame).is_none());
+    }
+
+    const MAC_OFFER: &str = r#"{
+        "endpoint_id":"00000000-0000-0000-0000-000000000001",
+        "endpoint_kind":"mac_app",
+        "language":"en",
+        "playback_rates":[24000],
+        "endpoint_stt":[{"id":"parakeet","languages":["en"],"partials":true,"eou":true,"voices":[],"sample_rates":[],"ready":true}],
+        "endpoint_tts":[],
+        "audio_uplink":false,
+        "overrides":{"stt":"auto","tts":"daemon"},
+        "daemon_is_non_loopback":false,
+        "remote_audio_consent":false
+    }"#;
+
+    #[test]
+    fn hello_requires_a_speech_offer() {
+        let raw = r#"{"type":"hello","session_id":"abc"}"#;
+        assert!(serde_json::from_str::<ClientMessage>(raw).is_err());
+    }
+
+    #[test]
+    fn hello_deserializes_capability_offer() {
+        let raw = format!(r#"{{"type":"hello","session_id":"abc","speech_offer":{MAC_OFFER}}}"#);
+        let parsed: ClientMessage = serde_json::from_str(&raw).unwrap();
         match parsed {
             ClientMessage::Hello {
                 session_id,
-                playback_rate,
                 voice_id,
                 speed,
-                language,
-                tts_backend,
+                speech_offer,
             } => {
                 assert_eq!(session_id, "abc");
-                assert_eq!(playback_rate, 24_000);
                 assert_eq!(voice_id, None);
                 assert_eq!(speed, None);
-                assert_eq!(language, None);
-                assert_eq!(tts_backend, None);
+                assert_eq!(speech_offer.endpoint_kind, "mac_app");
+                assert_eq!(speech_offer.language, "en");
+                assert_eq!(speech_offer.endpoint_stt[0].id, "parakeet");
             }
             other => panic!("expected Hello, got {other:?}"),
         }
     }
 
     #[test]
-    fn hello_deserialize_full() {
-        let raw = r#"{
-            "type":"hello",
-            "session_id":"abc",
-            "playback_rate":24000,
-            "voice_id":"am_michael",
-            "speed":1.2,
-            "language":"zh"
-        }"#;
-        let parsed: ClientMessage = serde_json::from_str(raw).unwrap();
+    fn hello_deserializes_voice_preferences() {
+        let raw = format!(
+            r#"{{"type":"hello","session_id":"abc","voice_id":"am_michael","speed":1.2,"speech_offer":{MAC_OFFER}}}"#
+        );
+        let parsed: ClientMessage = serde_json::from_str(&raw).unwrap();
         match parsed {
             ClientMessage::Hello {
-                voice_id,
-                speed,
-                language,
-                ..
+                voice_id, speed, ..
             } => {
                 assert_eq!(voice_id, Some("am_michael".into()));
                 assert_eq!(speed, Some(1.2));
-                assert_eq!(language.as_deref(), Some("zh"));
             }
             other => panic!("expected Hello, got {other:?}"),
         }
@@ -230,20 +296,28 @@ mod tests {
 
     #[test]
     fn barge_in_deserialize() {
-        let raw = r#"{"type":"barge_in","ts_ms":1000,"playback_ms_played":420}"#;
+        let raw = r#"{"type":"barge_in","ts_ms":1000,"playback_ms_played":420,"playhead_chunk":7}"#;
         let parsed: ClientMessage = serde_json::from_str(raw).unwrap();
         match parsed {
             ClientMessage::BargeIn {
                 ts_ms,
                 playback_ms_played,
                 partial_text,
+                playhead_chunk,
             } => {
                 assert_eq!(ts_ms, 1_000);
                 assert_eq!(playback_ms_played, 420);
                 assert_eq!(partial_text, None);
+                assert_eq!(playhead_chunk, 7);
             }
             other => panic!("expected BargeIn, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn barge_in_requires_the_playhead() {
+        let raw = r#"{"type":"barge_in","ts_ms":1000,"playback_ms_played":420}"#;
+        assert!(serde_json::from_str::<ClientMessage>(raw).is_err());
     }
 
     #[test]
@@ -252,7 +326,8 @@ mod tests {
             "type":"barge_in",
             "ts_ms":1000,
             "playback_ms_played":420,
-            "partial_text":"please stop now"
+            "partial_text":"please stop now",
+            "playhead_chunk":3
         }"#;
         let parsed: ClientMessage = serde_json::from_str(raw).unwrap();
         std::assert_matches!(
@@ -273,23 +348,6 @@ mod tests {
             ClientMessage::Control {
                 action: ControlAction::Abort
             }
-        );
-    }
-
-    #[test]
-    fn hello_ack_serialize() {
-        let msg = ServerMessage::HelloAck {
-            voice_pack: "af_bella".into(),
-            playback_rate: 24_000,
-        };
-        let v = serde_json::to_value(&msg).unwrap();
-        assert_eq!(
-            v,
-            json!({
-                "type":"hello_ack",
-                "voice_pack":"af_bella",
-                "playback_rate":24000
-            })
         );
     }
 

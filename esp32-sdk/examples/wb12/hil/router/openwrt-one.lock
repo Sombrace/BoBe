@@ -1,0 +1,6 @@
+OPENWRT_VERSION=25.12.5
+OPENWRT_TARGET=mediatek/filogic
+OPENWRT_PROFILE=openwrt_one
+OPENWRT_SYSUPGRADE_IMAGE=openwrt-25.12.5-mediatek-filogic-openwrt_one-squashfs-sysupgrade.itb
+OPENWRT_SYSUPGRADE_SHA256=771fbaca6cde230ac7167630674d51cdb4370d36bc4a9b22e36eb1969113779c
+OPENWRT_SYSUPGRADE_URL=https://downloads.openwrt.org/releases/25.12.5/targets/mediatek/filogic/openwrt-25.12.5-mediatek-filogic-openwrt_one-squashfs-sysupgrade.itb

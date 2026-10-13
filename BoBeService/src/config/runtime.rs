@@ -1,8 +1,3 @@
-//! Background-loop tuning — capture cadence, check-in scheduling,
-//! conversation timeouts, decision cooldowns, goal eval interval.
-//! Read by various triggers + RuntimeSession; ConfigManager hot-applies
-//! some of these (capture, conversation timeouts) live.
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -16,7 +11,7 @@ impl Default for CaptureConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            interval_seconds: 30,
+            interval_seconds: 120,
         }
     }
 }
@@ -66,7 +61,6 @@ impl Default for ConversationConfig {
 pub(crate) struct DecisionConfig {
     pub(crate) cooldown_minutes: i64,
     pub(crate) extended_cooldown_minutes: i64,
-    pub(crate) recent_ai_messages_limit: i64,
 }
 
 impl Default for DecisionConfig {
@@ -74,7 +68,6 @@ impl Default for DecisionConfig {
         Self {
             cooldown_minutes: 3,
             extended_cooldown_minutes: 5,
-            recent_ai_messages_limit: 3,
         }
     }
 }
@@ -82,13 +75,43 @@ impl Default for DecisionConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct GoalsConfig {
+    pub(crate) enabled: bool,
     pub(crate) check_interval_seconds: f64,
 }
 
 impl Default for GoalsConfig {
     fn default() -> Self {
         Self {
-            check_interval_seconds: 900.0,
+            enabled: true,
+            check_interval_seconds: 3600.0,
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub(crate) struct MemoryConfig {
+    pub(crate) enabled: bool,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn observation_and_goal_review_have_distinct_default_cadences() {
+        assert_eq!(CaptureConfig::default().interval_seconds, 120);
+        assert!((GoalsConfig::default().check_interval_seconds - 3600.0).abs() < f64::EPSILON);
+        let capture: CaptureConfig = serde_json::from_str(r#"{"interval_seconds":240}"#).unwrap();
+        let goals: GoalsConfig =
+            serde_json::from_str(r#"{"check_interval_seconds":7200}"#).unwrap();
+        assert_eq!(capture.interval_seconds, 240);
+        assert!((goals.check_interval_seconds - 7200.0).abs() < f64::EPSILON);
     }
 }

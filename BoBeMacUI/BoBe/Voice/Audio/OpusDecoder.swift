@@ -1,15 +1,6 @@
 @preconcurrency import AVFoundation
 import Foundation
 
-/// Decodes raw Opus packets (one packet at a time) into PCM via
-/// `AVAudioConverter` + `kAudioFormatOpus`. Replaces `swift-opus`'s
-/// `Opus.Decoder` so we don't drag an unmaintained SPM dep for what
-/// macOS already covers natively (Apple's bundled libopus, available
-/// since macOS 10.13).
-///
-/// Each `decode(_:to:)` call consumes one packet and emits up to
-/// `frameCapacity` PCM frames. Opus packets are 2.5/5/10/20/40/60ms;
-/// BoBe's daemon emits 20ms at 24kHz mono (480 samples/packet).
 final class OpusDecoder {
     private let converter: AVAudioConverter
     private let inputFormat: AVAudioFormat
@@ -21,8 +12,6 @@ final class OpusDecoder {
     }
 
     init(outputFormat: AVAudioFormat) throws {
-        // Source ASBD: Opus, VBR (variable bytes + frames per packet).
-        // Apple's libopus reads the frame count from each packet's TOC byte.
         var asbd = AudioStreamBasicDescription(
             mSampleRate: outputFormat.sampleRate,
             mFormatID: kAudioFormatOpus,
@@ -44,8 +33,6 @@ final class OpusDecoder {
         self.converter = converter
     }
 
-    /// Decode one Opus packet. `buffer` is filled to its `frameCapacity`
-    /// upper bound; `frameLength` is updated to the actual decoded count.
     func decode(_ packet: UnsafeBufferPointer<UInt8>, to buffer: AVAudioPCMBuffer) throws {
         guard let base = packet.baseAddress, !packet.isEmpty else { return }
         let byteCount = packet.count

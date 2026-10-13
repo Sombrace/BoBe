@@ -1,7 +1,3 @@
-//! MCP (Model Context Protocol) config — file path + security guards
-//! (blocked shell commands, dangerous-env-key blocklist for sandboxing
-//! MCP server processes).
-
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

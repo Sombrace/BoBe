@@ -26,70 +26,66 @@ struct BobeButtonStyle: ButtonStyle {
     }
 
     func makeBody(configuration: Configuration) -> some View {
-        let disabledOpacity = self.isEnabled ? 1.0 : 0.5
         let isPressed = configuration.isPressed
 
         configuration.label
             .font(.system(size: self.size.fontSize, weight: .semibold))
-            .foregroundStyle(self.foregroundColor.opacity(disabledOpacity))
+            .foregroundStyle(self.foregroundColor)
+            .lineLimit(1)
             .padding(.horizontal, self.size.horizontalPadding)
-            .padding(.vertical, self.size.verticalPadding)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(self.backgroundColor(isPressed: isPressed).opacity(disabledOpacity))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(self.borderColor(isPressed: isPressed).opacity(disabledOpacity), lineWidth: 1)
-            )
-            .opacity(isPressed ? 0.9 : 1)
-            .animation(OverlayMotionRuntime.reduceMotion ? nil : .easeOut(duration: 0.12), value: isPressed)
+            .frame(minHeight: self.size.height)
+            .background {
+                Capsule(style: .circular)
+                    .fill(self.backgroundColor(isPressed: isPressed))
+                    .shadow(
+                        color: self.theme.shadowTint.opacity(self.castsShadow ? 0.14 : 0),
+                        radius: self.hovered ? 4 : 1.5,
+                        y: self.hovered ? 2 : 1
+                    )
+            }
+            .overlay {
+                Capsule(style: .circular)
+                    .strokeBorder(self.borderColor, style: BobeStroke.hairline)
+            }
+            .opacity(self.isEnabled ? 1 : 0.45)
+            .scaleEffect(isPressed ? 0.96 : 1)
+            .animation(BobeMotion.snappy, value: isPressed)
+            .animation(BobeMotion.fade, value: self.hovered)
+            .contentShape(Capsule(style: .circular))
+    }
+
+    private var castsShadow: Bool {
+        self.isEnabled && (self.variant == .primary || self.variant == .secondary || self.variant == .destructive)
     }
 
     private var foregroundColor: Color {
         switch self.variant {
-        case .primary:
-            self.theme.colors.background
+        case .primary, .destructive:
+            self.theme.onAccent
         case .secondary:
             self.theme.colors.text
         case .ghost:
-            self.theme.colors.textMuted
-        case .destructive:
-            self.theme.colors.background
+            self.hovered ? self.theme.colors.text : self.theme.colors.textMuted
         }
     }
 
     private func backgroundColor(isPressed: Bool) -> Color {
         switch self.variant {
         case .primary:
-            isPressed
-                ? self.theme.colors.primary.opacity(0.85)
-                : self.hovered ? self.theme.colors.primary.opacity(0.94) : self.theme.colors.primary
+            self.theme.colors.primary.mix(with: .white, by: self.hovered && !isPressed ? 0.08 : 0)
         case .secondary:
-            isPressed
-                ? self.theme.colors.border.opacity(0.8)
-                : self.hovered ? self.theme.colors.border.opacity(0.5) : self.theme.colors.surface
+            isPressed ? self.theme.well : self.theme.colors.surface
         case .ghost:
-            isPressed
-                ? self.theme.colors.border.opacity(0.5)
-                : self.hovered ? self.theme.colors.surface : .clear
+            isPressed || self.hovered ? self.theme.well : .clear
         case .destructive:
-            isPressed
-                ? self.theme.colors.destructive.opacity(0.88)
-                : self.hovered ? self.theme.colors.destructive.opacity(0.94) : self.theme.colors.destructive
+            self.theme.colors.destructive.mix(with: .white, by: self.hovered && !isPressed ? 0.08 : 0)
         }
     }
 
-    private func borderColor(isPressed: Bool) -> Color {
+    private var borderColor: Color {
         switch self.variant {
-        case .primary:
-            self.theme.colors.primary.opacity(isPressed ? 0.95 : 1)
-        case .secondary:
-            isPressed || self.hovered ? self.theme.colors.primary.opacity(0.65) : self.theme.colors.border
-        case .ghost:
-            self.hovered ? self.theme.colors.border.opacity(0.7) : .clear
-        case .destructive:
-            self.theme.colors.destructive.opacity(isPressed ? 0.95 : 1)
+        case .secondary: self.theme.hairline
+        default: .clear
         }
     }
 }

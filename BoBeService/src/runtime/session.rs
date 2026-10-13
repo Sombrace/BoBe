@@ -14,6 +14,8 @@ use crate::runtime::message_handler::MessageHandler;
 use crate::runtime::state::Decision;
 use crate::runtime::triggers::{CaptureTrigger, CheckinTrigger, GoalTrigger};
 use crate::runtime::turn_admission::{TurnAdmission, TurnSource};
+use crate::util::sse::body_requests::BodyAction;
+use crate::util::sse::connection_manager::SseConnectionManager;
 use crate::util::sse::event_queue::EventQueue;
 use crate::util::sse::types::IndicatorType;
 
@@ -27,13 +29,13 @@ pub(crate) struct RuntimeSession {
     event_queue: Arc<EventQueue>,
     config: Arc<ArcSwap<Config>>,
     running: std::sync::atomic::AtomicBool,
-    capture_enabled: std::sync::atomic::AtomicBool,
+    connections: Arc<SseConnectionManager>,
+    capture_wake: tokio::sync::Notify,
     turn_admission: Arc<TurnAdmission>,
+    pub(crate) runs: Arc<crate::runtime::run_registry::RunRegistry>,
 }
 
-/// RAII gate for "is a user-driven turn in flight." Cleared on drop so a
-/// panicking turn doesn't brick the next message.
-pub(crate) type UserMessageGuard = crate::util::atomic_flag_guard::AtomicFlagGuard;
+pub(crate) type UserMessageGuard = crate::runtime::turn_admission::TurnPermit;
 
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct RuntimeStatus {
@@ -43,6 +45,46 @@ pub(crate) struct RuntimeStatus {
 }
 
 impl RuntimeSession {
+    pub(crate) async fn bind_owner_answer(
+        &self,
+        channel: crate::models::ids::ConversationChannelId,
+        text: &str,
+        received_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<uuid::Uuid>, crate::error::AppError> {
+        self.message_handler
+            .bind_owner_answer(channel, text, received_at)
+            .await
+    }
+
+    pub(crate) async fn answer_bound_input(
+        &self,
+        input: Option<uuid::Uuid>,
+        response: uuid::Uuid,
+        text: &str,
+        channel: crate::models::ids::ConversationChannelId,
+    ) -> Result<(), crate::error::AppError> {
+        self.message_handler
+            .answer_bound_input(input, response, text, channel)
+            .await
+    }
+
+    pub(crate) async fn acknowledge_presentation(
+        &self,
+        turn: crate::models::ids::ConversationTurnId,
+        channel: crate::models::ids::ConversationChannelId,
+    ) -> Result<(), crate::error::AppError> {
+        self.conversation
+            .acknowledge_presentation(turn, channel)
+            .await
+    }
+
+    pub(crate) async fn unpresented_updates(
+        &self,
+        channel: crate::models::ids::ConversationChannelId,
+    ) -> Result<Vec<crate::models::conversation::ConversationTurn>, crate::error::AppError> {
+        self.conversation.unpresented_updates(channel).await
+    }
+
     pub(crate) fn new(
         checkin_trigger: CheckinTrigger,
         goal_trigger: Arc<GoalTrigger>,
@@ -52,7 +94,9 @@ impl RuntimeSession {
         cooldown_repo: Arc<SqliteCooldownRepo>,
         event_queue: Arc<EventQueue>,
         config: Arc<ArcSwap<Config>>,
+        connections: Arc<SseConnectionManager>,
         turn_admission: Arc<TurnAdmission>,
+        runs: Arc<crate::runtime::run_registry::RunRegistry>,
     ) -> Self {
         Self {
             checkin_trigger: Mutex::new(checkin_trigger),
@@ -64,51 +108,45 @@ impl RuntimeSession {
             event_queue,
             config,
             running: std::sync::atomic::AtomicBool::new(false),
-            capture_enabled: std::sync::atomic::AtomicBool::new(false),
+            connections,
+            capture_wake: tokio::sync::Notify::new(),
             turn_admission,
+            runs,
         }
     }
 
-    pub(crate) async fn start_capture(&self) {
-        self.capture_enabled
-            .store(true, std::sync::atomic::Ordering::Release);
-        let mut trigger = self.capture_trigger.lock().await;
-        trigger.start().await;
-        info!("runtime_session.capture_started");
-    }
-
-    pub(crate) async fn stop_capture(&self) {
-        self.capture_enabled
-            .store(false, std::sync::atomic::Ordering::Release);
-        let mut trigger = self.capture_trigger.lock().await;
-        trigger.stop().await;
-        info!("runtime_session.capture_stopped");
-    }
-
-    pub(crate) async fn apply_runtime_settings(&self) {
-        let config = self.config.load_full();
-        if config.capture.enabled {
-            self.start_capture().await;
-        } else {
-            self.stop_capture().await;
-        }
-        self.checkin_trigger.lock().await.reconfigure(&config);
-    }
-
-    pub(crate) async fn on_connection(&self) {
-        let cfg = self.config.load();
-        info!(
-            capture_enabled = cfg.capture.enabled,
-            "runtime_session.sse_client_connected"
+    pub(crate) fn fail_message(
+        &self,
+        turn_id: crate::models::ids::ConversationTurnId,
+        channel: crate::models::ids::ConversationChannelId,
+        reason: &str,
+    ) {
+        self.event_queue.push_in_channel(
+            channel,
+            crate::util::sse::factories::error_event(
+                &crate::models::ids::message_id_for_turn(turn_id),
+                reason,
+                if reason == "turn_cancelled" {
+                    "This turn was stopped. Completed changes remain saved."
+                } else {
+                    "BoBe could not finish this turn. Check saved results before repeating changes."
+                },
+                true,
+            ),
         );
-        if cfg.capture.enabled {
-            self.start_capture().await;
-        }
     }
 
-    pub(crate) async fn on_disconnection(&self) {
-        info!("runtime_session.sse_client_disconnected");
-        self.stop_capture().await;
+    pub(crate) fn wake_capture(&self) {
+        self.capture_wake.notify_one();
+    }
+
+    fn capture_active(&self) -> bool {
+        self.config.load().capture.enabled && self.connections.serves(BodyAction::ScreenRead)
+    }
+
+    pub(crate) async fn reconfigure_checkins(&self) {
+        let config = self.config.load_full();
+        self.checkin_trigger.lock().await.reconfigure(&config);
     }
 
     pub(crate) async fn start(&self) {
@@ -120,7 +158,6 @@ impl RuntimeSession {
         }
 
         info!("runtime_session.started");
-        self.event_queue.set_indicator(IndicatorType::Idle);
     }
 
     pub(crate) async fn stop(&self) {
@@ -189,8 +226,11 @@ impl RuntimeSession {
     }
 
     async fn goal_loop(&self) {
-        let mut last_fire = Instant::now();
         while self.running.load(Ordering::Acquire) {
+            if !self.config.load().goals.enabled {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                continue;
+            }
             let seconds = {
                 let configured = self.config.load().goals.check_interval_seconds;
                 if configured.is_finite() {
@@ -199,15 +239,12 @@ impl RuntimeSession {
                     30.0
                 }
             };
-            if last_fire.elapsed().as_secs_f64() >= seconds {
-                Box::pin(run_trigger(
-                    "goal",
-                    std::time::Duration::from_mins(5),
-                    self.goal_trigger.fire(),
-                ))
-                .await;
-                last_fire = Instant::now();
-            }
+            Box::pin(run_trigger(
+                "goal",
+                std::time::Duration::from_mins(5),
+                self.goal_trigger.fire(),
+            ))
+            .await;
             tokio::time::sleep(std::time::Duration::from_secs_f64(seconds.min(30.0))).await;
         }
     }
@@ -215,7 +252,7 @@ impl RuntimeSession {
     async fn capture_loop(&self) {
         let mut last_fire = Instant::now();
         while self.running.load(Ordering::Acquire) {
-            let enabled = self.capture_enabled.load(Ordering::Acquire);
+            let enabled = self.capture_active();
             let seconds = self.config.load().capture.interval_seconds.max(1);
             if enabled && last_fire.elapsed().as_secs() >= seconds {
                 let timed_out = Box::pin(run_trigger(
@@ -233,32 +270,31 @@ impl RuntimeSession {
                 last_fire = Instant::now();
             }
             let sleep_seconds = if enabled { seconds.min(5) } else { 30 };
-            tokio::time::sleep(std::time::Duration::from_secs(sleep_seconds)).await;
+            tokio::select! {
+                () = tokio::time::sleep(std::time::Duration::from_secs(sleep_seconds)) => {}
+                () = self.capture_wake.notified() => {}
+            }
         }
     }
 
     async fn close_stale_conversation_if_needed(&self) -> Result<(), crate::error::AppError> {
         let cfg = self.config.load();
-        let Some(existing) = self.conversation.get_pending_or_active().await? else {
-            return Ok(());
-        };
-
-        // MAX(created_at) query instead of loading 100 turn rows just to
-        // find the most recent user-turn timestamp.
-        let last_user_at = self.conversation.last_user_turn_at(existing.id).await?;
-        if !existing.is_stale_since(cfg.conversation.auto_close_minutes as i64, last_user_at) {
-            return Ok(());
-        }
-
-        if let Some(turn_count) = self
-            .conversation
-            .close_if_stale(existing.id, cfg.conversation.auto_close_minutes as i64)
-            .await?
-        {
-            info!(
-                conversation_id = &existing.id.to_string()[..8],
-                turn_count, "runtime_session.auto_closing_stale_conversation"
-            );
+        for existing in self.conversation.list_open().await? {
+            if let Some(turn_count) = self
+                .conversation
+                .close_if_stale(existing.id, cfg.conversation.auto_close_minutes as i64)
+                .await?
+            {
+                info!(conversation_id=%existing.id, turn_count, "runtime_session.auto_closing_stale_conversation");
+                self.event_queue.push_in_channel(
+                    existing.channel_id,
+                    crate::util::sse::factories::conversation_closed_event(
+                        &existing.id.to_string(),
+                        "inactivity_timeout",
+                        u32::try_from(turn_count).unwrap_or(u32::MAX),
+                    ),
+                );
+            }
         }
         Ok(())
     }
@@ -268,7 +304,7 @@ impl RuntimeSession {
         let next_checkin = checkin.get_next_checkin_time();
         info!(
             loop_count = loop_counter,
-            capture = self.capture_enabled.load(std::sync::atomic::Ordering::Acquire),
+            capture = self.capture_active(),
             next_checkin = ?next_checkin.map(|t| t.format("%H:%M:%S").to_string()),
             "runtime_session.heartbeat"
         );
@@ -279,20 +315,87 @@ impl RuntimeSession {
         content: &str,
         message_id: &str,
         assistant_turn_id: crate::models::ids::ConversationTurnId,
+        channel: crate::models::ids::ConversationChannelId,
     ) -> bool {
         self.message_handler
-            .handle_message(content, message_id, assistant_turn_id)
+            .handle_message(content, message_id, assistant_turn_id, channel)
             .await
     }
 
-    /// Voice variant: text-delta observer runs in addition to SSE.
-    /// `DeliveryMode::Immediate` makes barge-ins atomic without AbortGuard timing.
+    pub(crate) async fn settle_interrupted_turn(
+        &self,
+        turn_id: crate::models::ids::ConversationTurnId,
+    ) {
+        if let Err(error) = self.message_handler.settle_run(turn_id.into()).await {
+            tracing::error!(%error,%turn_id,"runtime_session.run_settlement_failed");
+        }
+        if let Err(error) = self.conversation.settle_interrupted_turn(turn_id).await {
+            tracing::error!(%error, %turn_id, "runtime_session.interrupted_turn_persist_failed");
+        }
+    }
+
+    pub(crate) fn note_interrupted_reply(
+        &self,
+        channel: crate::models::ids::ConversationChannelId,
+        reply: crate::provider::InterruptedReply,
+    ) {
+        self.message_handler.note_interrupted_reply(channel, reply);
+    }
+
+    pub(crate) fn try_begin_background_result(
+        &self,
+        channel: crate::models::ids::ConversationChannelId,
+    ) -> Option<UserMessageGuard> {
+        self.turn_admission.try_admit_channel(
+            crate::runtime::turn_admission::TurnSource::Background,
+            channel,
+        )
+    }
+
+    pub(crate) async fn handle_background_result(
+        &self,
+        job: &crate::db::agent_job_repo::AgentJob,
+    ) -> bool {
+        self.message_handler.handle_background_result(job).await
+    }
+
+    pub(crate) async fn evaluate_background_update(
+        &self,
+        job: &crate::db::agent_job_repo::AgentJob,
+    ) -> Result<crate::runtime::message_handler::BackgroundOffer, crate::error::AppError> {
+        self.message_handler.evaluate_background_update(job).await
+    }
+
+    pub(crate) async fn update_channel(
+        &self,
+    ) -> Result<crate::models::ids::ConversationChannelId, crate::error::AppError> {
+        Ok(self
+            .conversation
+            .get_latest_readable_conversation(1, None)
+            .await?
+            .map_or(
+                crate::models::ids::ConversationChannelId::OWNER,
+                |(conversation, _)| conversation.channel_id,
+            ))
+    }
+
+    pub(crate) async fn can_offer_update(&self) -> bool {
+        self.turn_admission.is_idle()
+            && crate::runtime::proactive_generator::activation_is_timely(
+                &self.conversation,
+                &self.cooldown_repo,
+                &self.config.load_full(),
+            )
+            .await
+    }
+
     pub(crate) async fn handle_user_message_with_observer<F, Fut>(
         &self,
         content: &str,
         message_id: &str,
         assistant_turn_id: crate::models::ids::ConversationTurnId,
         delivery: crate::runtime::response_streamer::StreamDelivery,
+        channel: crate::models::ids::ConversationChannelId,
         on_text_delta: F,
     ) -> bool
     where
@@ -306,30 +409,58 @@ impl RuntimeSession {
                 assistant_turn_id,
                 true,
                 delivery,
+                channel,
                 on_text_delta,
             )
             .await
     }
 
-    pub(crate) fn try_begin_user_message(&self) -> Result<UserMessageGuard, &'static str> {
-        let guard = self
-            .turn_admission
-            .try_admit(TurnSource::User)
-            .ok_or("BoBe is still finishing the previous message")?;
+    pub(crate) async fn handle_endpoint_text_with_observer<F, Fut>(
+        &self,
+        content: &str,
+        message_id: &str,
+        assistant_turn_id: crate::models::ids::ConversationTurnId,
+        channel: crate::models::ids::ConversationChannelId,
+        on_text_delta: F,
+    ) -> bool
+    where
+        F: FnMut(String) -> Fut + Send,
+        Fut: Future<Output = ()> + Send,
+    {
+        self.message_handler
+            .handle_message_with_observer(
+                content,
+                message_id,
+                assistant_turn_id,
+                false,
+                crate::runtime::response_streamer::StreamDelivery::EndpointOnly,
+                channel,
+                on_text_delta,
+            )
+            .await
+    }
 
-        let indicator = self.event_queue.current_indicator();
-        if indicator != IndicatorType::Idle {
-            // Drop releases the CAS we just made.
-            drop(guard);
-            return Err(match indicator {
-                IndicatorType::ScreenCapture => "BoBe is finishing capture work",
-                IndicatorType::Thinking => "BoBe is still thinking",
-                IndicatorType::Streaming => "BoBe is still responding",
-                IndicatorType::Idle => "BoBe is still finishing the previous message",
-            });
-        }
+    pub(crate) fn try_begin_user_message(
+        &self,
+        channel: crate::models::ids::ConversationChannelId,
+    ) -> Result<UserMessageGuard, &'static str> {
+        self.turn_admission
+            .try_admit_channel(TurnSource::User, channel)
+            .ok_or("BoBe is finishing the previous turn in this channel")
+    }
 
-        Ok(guard)
+    pub(crate) async fn begin_user_message(
+        &self,
+        channel: crate::models::ids::ConversationChannelId,
+    ) -> Result<UserMessageGuard, crate::error::AppError> {
+        self.turn_admission.admit_user(channel).await
+    }
+
+    pub(crate) fn queue_user_message(
+        &self,
+        channel: crate::models::ids::ConversationChannelId,
+    ) -> Result<crate::runtime::turn_admission::QueuedTurn, crate::error::AppError> {
+        self.turn_admission.queue_user(channel)
     }
 
     pub(crate) fn try_begin_privacy_purge(&self) -> Result<UserMessageGuard, &'static str> {
@@ -344,25 +475,22 @@ impl RuntimeSession {
             .ok_or("Personal data is busy with another operation")
     }
 
-    pub(crate) fn try_begin_consolidation(&self) -> Result<UserMessageGuard, &'static str> {
-        self.turn_admission
-            .try_admit(TurnSource::Consolidation)
-            .ok_or("another turn or privacy operation is active")
-    }
-
-    pub(crate) fn get_status(&self) -> RuntimeStatus {
-        let indicator = self.event_queue.current_indicator();
+    pub(crate) fn get_status(
+        &self,
+        channel: crate::models::ids::ConversationChannelId,
+    ) -> RuntimeStatus {
+        let indicator = self.event_queue.channel_indicator(channel);
         RuntimeStatus {
             indicator,
-            capturing: self.capture_enabled.load(Ordering::Acquire),
-            accepting_user_messages: indicator == IndicatorType::Idle
-                && self.turn_admission.is_idle(),
+            capturing: self.capture_active(),
+            accepting_user_messages: self.turn_admission.accepts_messages(),
         }
     }
 
     pub(crate) async fn current_conversation(
         &self,
         limit: i64,
+        channel: crate::models::ids::ConversationChannelId,
     ) -> Result<
         Option<(
             crate::models::conversation::Conversation,
@@ -371,7 +499,7 @@ impl RuntimeSession {
         crate::error::AppError,
     > {
         self.conversation
-            .get_latest_readable_conversation(limit)
+            .get_latest_readable_conversation(limit, Some(channel))
             .await
     }
 
@@ -384,7 +512,6 @@ impl RuntimeSession {
     }
 }
 
-/// Returns `true` if the timeout fired so the caller can surface an extra error event.
 async fn run_trigger(
     name: &'static str,
     timeout: std::time::Duration,
@@ -400,43 +527,5 @@ async fn run_trigger(
             warn!(trigger = name, "runtime_session.trigger_timeout");
             true
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::AtomicBool;
-
-    /// Single-flight correctness rests on Drop clearing the flag on every exit.
-    #[test]
-    fn user_message_guard_clears_flag_on_drop() {
-        let flag = Arc::new(AtomicBool::new(true));
-        let guard = UserMessageGuard::new(Arc::clone(&flag));
-        assert!(
-            flag.load(Ordering::Acquire),
-            "flag should be true while guard is alive"
-        );
-        drop(guard);
-        assert!(
-            !flag.load(Ordering::Acquire),
-            "Drop must release the in-flight claim"
-        );
-    }
-
-    /// Without unwind-safe Drop a single panicking turn would brick all future text messages.
-    #[test]
-    fn user_message_guard_clears_flag_on_panic() {
-        let flag = Arc::new(AtomicBool::new(true));
-        let flag_clone = Arc::clone(&flag);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-            let _guard = UserMessageGuard::new(flag_clone);
-            panic!("simulated turn failure");
-        }));
-        assert!(result.is_err(), "test setup: panic should propagate");
-        assert!(
-            !flag.load(Ordering::Acquire),
-            "Drop fires during unwind — flag should be cleared even on panic"
-        );
     }
 }

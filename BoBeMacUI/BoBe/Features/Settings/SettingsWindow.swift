@@ -5,7 +5,9 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     case userProfiles = "user-profiles"
     case mcpServers = "mcp-servers"
     case engine
+    case runtime
     case voice
+    case devices
     case appearance, behavior, privacy
     case expert
 
@@ -21,12 +23,75 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .userProfiles: L10n.tr("settings.category.user_profiles")
         case .mcpServers: L10n.tr("settings.category.mcp_servers")
         case .engine: L10n.tr("settings.category.engine")
+        case .runtime: L10n.tr("settings.category.runtime")
         case .voice: L10n.tr("settings.category.voice")
+        case .devices: L10n.tr("settings.category.devices")
         case .appearance: L10n.tr("settings.category.appearance")
         case .behavior: L10n.tr("settings.category.behavior")
         case .privacy: L10n.tr("settings.category.privacy")
         case .expert: L10n.tr("settings.category.expert")
         }
+    }
+
+    var searchTerms: [String] {
+        switch self {
+        case .souls:
+            [self.label, L10n.tr("settings.souls.title")]
+        case .goals:
+            [self.label, L10n.tr("settings.goals.title")]
+        case .memories:
+            [self.label, L10n.tr("settings.memories.loading")]
+        case .userProfiles:
+            [self.label, L10n.tr("settings.user_profiles.title")]
+        case .mcpServers:
+            [self.label, L10n.tr("settings.mcp.description")]
+        case .engine:
+            [
+                self.label, L10n.tr("settings.engine.description"),
+                L10n.tr("settings.providers.title"), L10n.tr("settings.providers.auth.api_key"),
+                L10n.tr("settings.providers.auth.oauth"), L10n.tr("settings.agent.jobs.title"),
+                L10n.tr("settings.agent.schedules.title"), L10n.tr("settings.agent.tools.title"),
+            ] + ProviderKindWire.allCases.map(\.displayName)
+        case .runtime:
+            [
+                self.label,
+                L10n.tr("settings.runtime.mode"),
+                L10n.tr("settings.runtime.address"),
+                L10n.tr("settings.runtime.mode.managed"),
+                L10n.tr("settings.runtime.mode.attached"),
+                L10n.tr("settings.runtime.mode.remote"),
+            ]
+        case .voice:
+            [self.label, L10n.tr("settings.voice.description")]
+        case .devices:
+            [
+                self.label,
+                L10n.tr("settings.devices.phone.title"),
+                L10n.tr("settings.devices.phone.pair"),
+                L10n.tr("settings.devices.list.title"),
+            ]
+        case .appearance:
+            [self.label, L10n.tr("settings.appearance.theme.description")]
+        case .behavior:
+            [
+                self.label,
+                L10n.tr("settings.behavior.capture.title"),
+                L10n.tr("settings.behavior.capture.description"),
+                L10n.tr("settings.behavior.checkins.description"),
+                L10n.tr("settings.behavior.conversation.description"),
+            ]
+        case .privacy:
+            [self.label, L10n.tr("settings.providers.storage"), L10n.tr("settings.providers.tools_network")]
+        case .expert:
+            [self.label, L10n.tr("settings.expert.description")]
+        }
+    }
+
+    func matchesSearch(_ query: String) -> Bool {
+        let tokens = query.lowercased().split(whereSeparator: \Character.isWhitespace)
+        guard !tokens.isEmpty else { return true }
+        let haystack = self.searchTerms.joined(separator: " ").lowercased()
+        return tokens.allSatisfy(haystack.contains)
     }
 
     var icon: String {
@@ -35,58 +100,95 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .goals: "target"
         case .memories: "brain.head.profile"
         case .userProfiles: "person.fill"
-        case .mcpServers: "server.rack"
-        case .engine: "cpu"
+        case .mcpServers: "hammer.fill"
+        case .engine: "cpu.fill"
+        case .runtime: "server.rack"
         case .voice: "waveform"
+        case .devices: "ipad.and.iphone"
         case .appearance: "paintpalette.fill"
-        case .behavior: "slider.horizontal.3"
-        case .privacy: "shield.fill"
+        case .behavior: "bell.badge.fill"
+        case .privacy: "hand.raised.fill"
         case .expert: "wrench.and.screwdriver.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .souls: Color(rgb: 0xC6694A)
+        case .appearance: Color(rgb: 0xD9698A)
+        case .voice: Color(rgb: 0xDD9A2F)
+        case .devices: Color(rgb: 0x5A7FA0)
+        case .userProfiles: Color(rgb: 0x5F88B0)
+        case .goals: Color(rgb: 0x5B8A56)
+        case .memories: Color(rgb: 0x8E6BA8)
+        case .behavior: Color(rgb: 0x3F9488)
+        case .privacy: Color(rgb: 0x64748B)
+        case .engine: Color(rgb: 0xB5653A)
+        case .mcpServers: Color(rgb: 0xA6832E)
+        case .runtime: Color(rgb: 0x6F6862)
+        case .expert: Color(rgb: 0x4F4944)
+        }
+    }
+
+    var lede: String {
+        switch self {
+        case .souls: L10n.tr("settings.page.souls.lede")
+        case .goals: L10n.tr("settings.page.goals.lede")
+        case .memories: L10n.tr("settings.page.memories.lede")
+        case .userProfiles: L10n.tr("settings.page.user_profiles.lede")
+        case .mcpServers: L10n.tr("settings.mcp.description")
+        case .engine: L10n.tr("settings.engine.description")
+        case .runtime: L10n.tr("settings.page.runtime.lede")
+        case .voice: L10n.tr("settings.voice.description")
+        case .devices: L10n.tr("settings.page.devices.lede")
+        case .appearance: L10n.tr("settings.page.appearance.lede")
+        case .behavior: L10n.tr("settings.page.behavior.lede")
+        case .privacy: L10n.tr("settings.page.privacy.lede")
+        case .expert: L10n.tr("settings.expert.description")
         }
     }
 }
 
 enum SettingsCategoryGroup: String, CaseIterable {
-    case context = "CONTEXT"
-    case integrations = "INTEGRATIONS"
-    case preferences = "PREFERENCES"
+    case bobe
+    case you
+    case initiative
+    case engineRoom
 
     var categories: [SettingsCategory] {
         switch self {
-        case .context:
-            [.souls, .goals, .memories, .userProfiles]
-        case .integrations:
-            [.mcpServers, .engine]
-        case .preferences:
-            [.voice, .appearance, .behavior, .privacy, .expert]
+        case .bobe:
+            [.souls, .appearance, .voice, .devices]
+        case .you:
+            [.userProfiles, .goals, .memories]
+        case .initiative:
+            [.behavior, .privacy]
+        case .engineRoom:
+            [.engine, .mcpServers, .runtime, .expert]
         }
     }
 
     var label: String {
         switch self {
-        case .context: L10n.tr("settings.group.context")
-        case .integrations: L10n.tr("settings.group.integrations")
-        case .preferences: L10n.tr("settings.group.preferences")
+        case .bobe: L10n.tr("settings.group.bobe")
+        case .you: L10n.tr("settings.group.you")
+        case .initiative: L10n.tr("settings.group.initiative")
+        case .engineRoom: L10n.tr("settings.group.engine_room")
         }
     }
 }
 
 struct SettingsWindow: View {
-    /// Optional initial category to navigate to on first appearance. Used by
-    /// the overlay's MicButton "needs setup" deep-link to land directly on
-    /// the Voice pane, and the Finish-Setup pill to land on Engine/Voice.
     let initialCategory: SettingsCategory?
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selectedCategory: SettingsCategory?
     @State private var searchQuery = ""
     @State private var editCoordinator = SettingsEditCoordinator.shared
+    @State private var gaze: CGSize = .zero
     private let themeStore = ThemeStore.shared
 
     init(initialCategory: SettingsCategory? = nil) {
         self.initialCategory = initialCategory
-        // SwiftUI ignores the initial value of @State after the first render,
-        // so we set it explicitly via _selectedCategory's wrapped value.
         self._selectedCategory = State(initialValue: initialCategory)
     }
 
@@ -94,40 +196,38 @@ struct SettingsWindow: View {
         self.themeStore.currentTheme
     }
 
-    private var headerGradient: LinearGradient {
-        LinearGradient(
-            colors: [self.theme.colors.tertiary.opacity(0.25), self.theme.colors.border.opacity(0.2)],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
     var body: some View {
-        NavigationSplitView {
-            self.settingsSidebar
-                .navigationSplitViewColumnWidth(min: 220, ideal: 220, max: 280)
-        } detail: {
-            VStack(spacing: 0) {
-                self.settingsHeader
-                self.settingsContent
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(self.theme.colors.background)
+        HStack(spacing: 0) {
+            SettingsSidebar(
+                selection: self.selectedCategory,
+                searchQuery: self.$searchQuery,
+                gaze: self.gaze,
+                onSelect: self.requestCategory
+            )
+            .frame(width: 244)
+
+            self.stage
         }
-        .navigationSplitViewStyle(.balanced)
+        .background(self.theme.ground.ignoresSafeArea())
+        .ignoresSafeArea(.container, edges: .top)
+        .onContinuousHover { phase in
+            if case let .active(location) = phase {
+                self.gaze = PointerTracker.gaze(
+                    from: CGPoint(x: 44, y: 60),
+                    to: CGPoint(x: location.x, y: 120 - location.y),
+                    reach: 320
+                )
+            } else {
+                self.gaze = .zero
+            }
+        }
         .environment(SettingsStore.shared)
         .environment(ExpertMode.shared)
         .environment(ThemeStore.shared)
         .environment(VoicePipeline.shared)
         .environment(\.theme, self.theme)
         .preferredColorScheme(self.theme.isDark ? .dark : .light)
-        .background(self.theme.colors.background)
-        .ignoresSafeArea(.container, edges: .top)
-        .toolbar(removing: .sidebarToggle)
         .frame(minWidth: 760, minHeight: 520)
-        .onChange(of: self.reduceMotion, initial: true) { _, new in
-            OverlayMotionRuntime.reduceMotion = new
-        }
         .confirmationDialog(
             L10n.tr("settings.unsaved.title"),
             isPresented: self.$editCoordinator.showsConfirmation,
@@ -147,165 +247,28 @@ struct SettingsWindow: View {
         }
     }
 
-    private var settingsSidebar: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text(L10n.tr("settings.window.sidebar_title"))
-                    .bobeTextStyle(.sectionLabel)
-                    .tracking(1.2)
-                    .foregroundStyle(self.theme.colors.primary)
-                Spacer()
+    private var stage: some View {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        return VStack(spacing: 0) {
+            if let category = self.selectedCategory {
+                SettingsPageHeader(category: category)
+                    .id(category)
+                    .transition(.bobeRise)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 8)
-            .frame(maxWidth: .infinity)
-            .frame(height: 44)
-            .background(self.headerGradient)
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(self.theme.colors.border)
-                    .frame(height: 1)
-            }
-
-            // Search field. Filters category visibility by case-insensitive
-            // label substring. Pure client-side, no daemon round-trip.
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(self.theme.colors.textMuted)
-                TextField(L10n.tr("settings.window.search.placeholder"), text: self.$searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundStyle(self.theme.colors.text)
-                if !self.searchQuery.isEmpty {
-                    Button {
-                        self.searchQuery = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(self.theme.colors.textMuted)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(self.theme.colors.surface)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(self.theme.colors.border.opacity(0.5), lineWidth: 1)
-                    )
-            )
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
-
-            List {
-                ForEach(SettingsCategoryGroup.allCases, id: \.self) { group in
-                    let visible = self.visibleCategories(in: group)
-                    if !visible.isEmpty {
-                        Section {
-                            ForEach(visible) { category in
-                                Button { self.requestCategory(category) } label: {
-                                    self.sidebarRow(for: category)
-                                }
-                                .buttonStyle(.plain)
-                                .listRowInsets(.init(top: 2, leading: 8, bottom: 2, trailing: 8))
-                                .listRowSeparator(.hidden)
-                                .listRowBackground(Color.clear)
-                            }
-                        } header: {
-                            Text(group.label)
-                                .bobeTextStyle(.sectionLabel)
-                                .tracking(0.8)
-                                .foregroundStyle(self.theme.colors.textMuted)
-                        }
-                    }
-                }
-                if self.allVisibleCategories.isEmpty {
-                    Text(String(format: L10n.tr("settings.window.search.no_results"), self.searchQuery))
-                        .font(.system(size: 11))
-                        .foregroundStyle(self.theme.colors.textMuted)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 12)
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(Color.clear)
-                }
-            }
-            .listStyle(.sidebar)
-            .tint(self.theme.colors.primary)
-            .scrollContentBackground(.hidden)
-            .padding(.top, 2)
+            self.settingsContent
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .id(self.selectedCategory)
+                .transition(.bobeRise)
         }
-        .background(self.theme.colors.background)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipShape(shape)
+        .bobeRaised(in: shape, fill: self.theme.colors.background)
+        .padding(.vertical, 8)
+        .padding(.trailing, 8)
+        .animation(BobeMotion.soft, value: self.selectedCategory)
     }
 
-    private var allVisibleCategories: [SettingsCategory] {
-        SettingsCategoryGroup.allCases.flatMap { self.visibleCategories(in: $0) }
-    }
-
-    private func visibleCategories(in group: SettingsCategoryGroup) -> [SettingsCategory] {
-        let query = self.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return group.categories.filter { category in
-            guard !query.isEmpty else { return true }
-            return category.label.lowercased().contains(query)
-        }
-    }
-
-    private func sidebarRow(for category: SettingsCategory) -> some View {
-        let isSelected = self.selectedCategory == category
-
-        return HStack(spacing: 10) {
-            Image(systemName: category.icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(isSelected ? self.theme.colors.primary : self.theme.colors.textMuted)
-                .frame(width: 16)
-
-            Text(category.label)
-                .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                .foregroundStyle(self.theme.colors.text)
-
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? self.theme.colors.primary.opacity(self.theme.isDark ? 0.24 : 0.14) : .clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? self.theme.colors.primary.opacity(0.55) : .clear, lineWidth: 1)
-        )
-        .contentShape(Rectangle())
-    }
-
-    private var settingsHeader: some View {
-        HStack(alignment: .bottom) {
-            Text(self.selectedCategory?.label ?? "")
-                .bobeTextStyle(.windowTitle)
-                .foregroundStyle(self.theme.colors.text)
-            Spacer()
-            Button(L10n.tr("settings.window.check_updates")) {
-                UpdaterManager.shared.checkForUpdates()
-            }
-            .buttonStyle(.bordered)
-            .disabled(!UpdaterManager.shared.canCheckForUpdates)
-        }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 8)
-        .frame(height: 44)
-        .background(self.headerGradient)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(self.theme.colors.border)
-                .frame(height: 1)
-        }
-    }
-
-    private func requestCategory(_ category: SettingsCategory) {
+    private func requestCategory(_ category: SettingsCategory?) {
         self.editCoordinator.requestTransition { self.selectedCategory = category }
     }
 
@@ -313,7 +276,7 @@ struct SettingsWindow: View {
     private var settingsContent: some View {
         switch self.selectedCategory {
         case nil:
-            SettingsOverview(onNavigate: self.requestCategory)
+            SettingsOverview(gaze: self.gaze, onNavigate: self.requestCategory)
         case .souls:
             SoulsEditor()
         case .goals:
@@ -326,8 +289,12 @@ struct SettingsWindow: View {
             MCPServersPanel()
         case .engine:
             EnginePanel()
+        case .runtime:
+            RuntimePanel()
         case .voice:
             VoicePanel()
+        case .devices:
+            DevicesPanel()
         case .appearance:
             AppearancePanel()
         case .behavior:
@@ -340,78 +307,321 @@ struct SettingsWindow: View {
     }
 }
 
+struct SettingsPageHeader: View {
+    let category: SettingsCategory
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: 13) {
+            BobeIconTile(systemName: self.category.icon, tint: self.category.tint, size: 36)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(self.category.label)
+                    .bobeTextStyle(.display)
+                    .foregroundStyle(self.theme.colors.text)
+                Text(self.category.lede)
+                    .bobeTextStyle(.body)
+                    .foregroundStyle(self.theme.colors.textMuted)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 20)
+        .padding(.bottom, 14)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(self.theme.hairline.opacity(0.7))
+                .frame(height: 1)
+        }
+    }
+}
+
+struct SettingsSidebar: View {
+    let selection: SettingsCategory?
+    @Binding var searchQuery: String
+    let gaze: CGSize
+    let onSelect: (SettingsCategory?) -> Void
+
+    @Environment(\.theme) private var theme
+    @Namespace private var activePill
+    @FocusState private var searchFocused: Bool
+
+    private var allVisibleCategories: [SettingsCategory] {
+        SettingsCategoryGroup.allCases.flatMap { self.visibleCategories(in: $0) }
+    }
+
+    private func visibleCategories(in group: SettingsCategoryGroup) -> [SettingsCategory] {
+        group.categories.filter { $0.matchesSearch(self.searchQuery) }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            self.identity
+                .padding(.top, 34)
+                .padding(.horizontal, 12)
+
+            self.search
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(SettingsCategoryGroup.allCases, id: \.self) { group in
+                        let visible = self.visibleCategories(in: group)
+                        if !visible.isEmpty {
+                            Text(group.label)
+                                .bobeTextStyle(.sectionLabel)
+                                .foregroundStyle(self.theme.colors.textMuted.opacity(0.85))
+                                .padding(.horizontal, 10)
+                                .padding(.top, 14)
+                                .padding(.bottom, 4)
+                            ForEach(visible) { category in
+                                self.row(for: category)
+                            }
+                        }
+                    }
+                    if self.allVisibleCategories.isEmpty {
+                        Text(String(format: L10n.tr("settings.window.search.no_results"), self.searchQuery))
+                            .bobeTextStyle(.helper)
+                            .foregroundStyle(self.theme.colors.textMuted)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 14)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+
+            Button {
+                BobeCommandRouter.shared.checkForUpdates()
+            } label: {
+                Label(L10n.tr("settings.window.check_updates"), systemImage: "arrow.triangle.2.circlepath")
+            }
+            .bobeButton(.ghost, size: .small)
+            .disabled(!BobeCommandRouter.shared.canCheckForUpdates)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 14)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private var identity: some View {
+        Button {
+            self.onSelect(nil)
+        } label: {
+            HStack(spacing: 6) {
+                BobeCharacter(
+                    mood: .idle,
+                    size: 38,
+                    palette: self.theme.avatar,
+                    gaze: self.gaze
+                )
+                Text(L10n.tr("overlay.avatar.brand_label"))
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .foregroundStyle(self.theme.colors.text)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
+            .background {
+                if self.selection == nil {
+                    self.pill
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(BobePressStyle(scale: 0.98))
+        .accessibilityLabel(L10n.tr("settings.window.title"))
+        .accessibilityIdentifier("settings.sidebar.home")
+        .accessibilityAddTraits(self.selection == nil ? .isSelected : [])
+    }
+
+    private var pill: some View {
+        RoundedRectangle(cornerRadius: 13, style: .continuous)
+            .fill(self.theme.colors.surface)
+            .shadow(color: self.theme.shadowTint.opacity(self.theme.isDark ? 0.35 : 0.1), radius: 4, x: 1, y: 2)
+            .overlay {
+                RoundedRectangle(cornerRadius: 13, style: .continuous)
+                    .strokeBorder(self.theme.hairline, style: BobeStroke.hairline)
+            }
+            .matchedGeometryEffect(id: "active", in: self.activePill)
+    }
+
+    private var search: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(self.theme.colors.textMuted)
+            ZStack(alignment: .leading) {
+                if self.searchQuery.isEmpty {
+                    Text(L10n.tr("settings.window.search.placeholder"))
+                        .font(.system(size: 13))
+                        .foregroundStyle(self.theme.colors.textMuted.opacity(0.8))
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+                TextField("", text: self.$searchQuery)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundStyle(self.theme.colors.text)
+                    .tint(self.theme.colors.primary)
+                    .focused(self.$searchFocused)
+                    .accessibilityLabel(L10n.tr("settings.window.search.placeholder"))
+                    .accessibilityIdentifier("settings.search")
+            }
+            if !self.searchQuery.isEmpty {
+                Button {
+                    self.searchQuery = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(self.theme.colors.textMuted)
+                }
+                .buttonStyle(BobePressStyle(scale: 0.85))
+                .accessibilityLabel(L10n.tr("settings.editor.action.cancel"))
+                .transition(.bobePop())
+            }
+        }
+        .padding(.horizontal, 11)
+        .frame(height: 32)
+        .bobeWell(in: .bobePill)
+        .animation(BobeMotion.snappy, value: self.searchQuery.isEmpty)
+    }
+
+    private func row(for category: SettingsCategory) -> some View {
+        SettingsSidebarRow(
+            category: category,
+            isSelected: self.selection == category,
+            pill: self.selection == category ? AnyView(self.pill) : nil
+        ) {
+            withAnimation(BobeMotion.standard) {
+                self.onSelect(category)
+            }
+        }
+    }
+}
+
+private struct SettingsSidebarRow: View {
+    let category: SettingsCategory
+    let isSelected: Bool
+    let pill: AnyView?
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: self.action) {
+            HStack(spacing: 10) {
+                BobeIconTile(systemName: self.category.icon, tint: self.category.tint, size: 24)
+                    .scaleEffect(self.isHovered && !self.isSelected ? 1.08 : 1)
+                Text(self.category.label)
+                    .font(.system(size: 13.5, weight: self.isSelected ? .semibold : .regular))
+                    .foregroundStyle(self.theme.colors.text)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .frame(height: 36)
+            .background {
+                if let pill {
+                    pill
+                } else if self.isHovered {
+                    RoundedRectangle(cornerRadius: 13, style: .continuous)
+                        .fill(self.theme.well.opacity(0.75))
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(BobePressStyle(scale: 0.98))
+        .accessibilityIdentifier("settings.sidebar.\(self.category.rawValue)")
+        .accessibilityAddTraits(self.isSelected ? .isSelected : [])
+        .animation(BobeMotion.snappy, value: self.isHovered)
+        .onHover { self.isHovered = $0 }
+    }
+}
+
 struct SettingsOverview: View {
+    var gaze: CGSize = .zero
     var onNavigate: (SettingsCategory) -> Void
     @Environment(\.theme) private var theme
 
     @State private var goalsActive: Int?
     @State private var soulsCustom: Int?
     @State private var profileKnown: Bool?
+    @State private var hasAppeared = false
+    @State private var greeted = false
+
+    private var cards: [(category: SettingsCategory, status: String)] {
+        [
+            (.goals, self.goalsLabel),
+            (.souls, self.soulsLabel),
+            (.userProfiles, self.profilesLabel),
+            (.behavior, L10n.tr("settings.window.overview.row.behavior.label")),
+        ]
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(L10n.tr("settings.window.overview.eyebrow"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .tracking(2.4)
-                    .foregroundStyle(self.theme.colors.textMuted)
-                    .padding(.top, 48)
+            VStack(spacing: 0) {
+                BobeCharacter(
+                    mood: self.greeted ? .idle : .happy,
+                    size: 128,
+                    palette: self.theme.avatar,
+                    gaze: self.gaze
+                )
+                .padding(.top, 44)
+                .scaleEffect(self.hasAppeared ? 1 : 0.8)
+                .opacity(self.hasAppeared ? 1 : 0)
 
                 Text(L10n.tr("settings.window.overview.title"))
-                    .font(.system(size: 30, weight: .bold))
+                    .font(.system(size: 30, weight: .semibold, design: .rounded))
                     .foregroundStyle(self.theme.colors.text)
-                    .padding(.top, 10)
+                    .padding(.top, 14)
 
                 Text(L10n.tr("settings.window.overview.lede"))
-                    .font(.system(size: 14))
+                    .bobeTextStyle(.setupBody)
                     .foregroundStyle(self.theme.colors.textMuted)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 14)
-                    .frame(maxWidth: 540, alignment: .leading)
+                    .frame(maxWidth: 520)
+                    .padding(.top, 8)
 
-                VStack(spacing: 0) {
-                    self.adaptiveRow(
-                        label: self.goalsLabel,
-                        actionLabel: L10n.tr("settings.window.overview.row.goals.action"),
-                        accent: self.theme.colors.primary,
-                        category: .goals
-                    )
-                    self.adaptiveRow(
-                        label: self.soulsLabel,
-                        actionLabel: L10n.tr("settings.window.overview.row.souls.action"),
-                        accent: self.theme.colors.secondary,
-                        category: .souls
-                    )
-                    self.adaptiveRow(
-                        label: self.profilesLabel,
-                        actionLabel: L10n.tr("settings.window.overview.row.profiles.action"),
-                        accent: self.theme.colors.tertiary,
-                        category: .userProfiles
-                    )
-                    self.adaptiveRow(
-                        label: L10n.tr("settings.window.overview.row.behavior.label"),
-                        actionLabel: L10n.tr("settings.window.overview.row.behavior.action"),
-                        accent: self.theme.colors.primary.opacity(0.7),
-                        category: .behavior,
-                        isLast: true
-                    )
+                LazyVGrid(
+                    columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)],
+                    spacing: 14
+                ) {
+                    ForEach(Array(self.cards.enumerated()), id: \.element.category) { index, card in
+                        OverviewCard(category: card.category, status: card.status) {
+                            self.onNavigate(card.category)
+                        }
+                        .opacity(self.hasAppeared ? 1 : 0)
+                        .offset(y: self.hasAppeared ? 0 : 10)
+                        .animation(BobeMotion.stagger(index, step: 0.05), value: self.hasAppeared)
+                    }
                 }
-                .padding(.top, 32)
+                .frame(maxWidth: 680)
+                .padding(.top, 30)
 
-                Text(L10n.tr("settings.window.overview.footer"))
-                    .font(.system(size: 12))
+                Label(L10n.tr("settings.window.overview.footer"), systemImage: "lock.fill")
+                    .bobeTextStyle(.helper)
                     .foregroundStyle(self.theme.colors.textMuted)
-                    .padding(.top, 28)
-                    .padding(.bottom, 48)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 26)
+                    .padding(.bottom, 40)
             }
-            .frame(maxWidth: 620, alignment: .leading)
             .padding(.horizontal, 40)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
         .task { await self.loadCounts() }
+        .task {
+            withAnimation(BobeMotion.soft) { self.hasAppeared = true }
+            try? await Task.sleep(for: .seconds(1.3))
+            self.greeted = true
+        }
     }
-
-    // MARK: - Adaptive copy
 
     private var goalsLabel: String {
         switch self.goalsActive {
@@ -444,25 +654,6 @@ struct SettingsOverview: View {
         }
     }
 
-    // MARK: - Row
-
-    private func adaptiveRow(
-        label: String,
-        actionLabel: String,
-        accent: Color,
-        category: SettingsCategory,
-        isLast: Bool = false
-    ) -> some View {
-        AdaptiveOverviewRow(
-            label: label,
-            actionLabel: actionLabel,
-            accent: accent,
-            category: category,
-            isLast: isLast,
-            onNavigate: self.onNavigate
-        )
-    }
-
     private func loadCounts() async {
         async let goalsTask = try? await DaemonClient.shared.listGoals()
         async let soulsTask = try? await DaemonClient.shared.listSouls()
@@ -473,55 +664,50 @@ struct SettingsOverview: View {
         let profiles = await profilesTask
 
         self.goalsActive = goals?.activeCount
-        // SoulListResponse.count includes the default soul; only show "custom" personalities.
         self.soulsCustom = souls.map { max(0, $0.count - 1) }
         self.profileKnown = profiles.map { list in list.profiles.contains { !$0.isDefault } }
     }
 }
 
-private struct AdaptiveOverviewRow: View {
-    let label: String
-    let actionLabel: String
-    let accent: Color
+private struct OverviewCard: View {
     let category: SettingsCategory
-    let isLast: Bool
-    let onNavigate: (SettingsCategory) -> Void
+    let status: String
+    let action: () -> Void
 
     @Environment(\.theme) private var theme
     @State private var isHovered = false
 
     var body: some View {
-        Button { self.onNavigate(self.category) } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 16) {
-                Text(self.label)
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundStyle(self.theme.colors.text)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                HStack(spacing: 6) {
-                    Text(self.actionLabel)
-                        .font(.system(size: 13, weight: .semibold))
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .offset(x: self.isHovered ? 3 : 0)
+        Button(action: self.action) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    BobeIconTile(systemName: self.category.icon, tint: self.category.tint, size: 34)
+                    Spacer()
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(self.isHovered ? self.theme.colors.primary : self.theme.colors.textMuted.opacity(0.5))
+                        .offset(x: self.isHovered ? 2 : 0, y: self.isHovered ? -2 : 0)
                 }
-                .foregroundStyle(self.accent)
-                .opacity(self.isHovered ? 1 : 0.78)
-            }
-            .padding(.vertical, 18)
-            .overlay(alignment: .bottom) {
-                if !self.isLast {
-                    Rectangle()
-                        .fill(self.theme.colors.border.opacity(self.isHovered ? 0.9 : 0.5))
-                        .frame(height: 1)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(self.category.label)
+                        .bobeTextStyle(.title)
+                        .foregroundStyle(self.theme.colors.text)
+                    Text(self.status)
+                        .bobeTextStyle(.body)
+                        .foregroundStyle(self.theme.colors.textMuted)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .padding(16)
+            .frame(maxWidth: .infinity, minHeight: 124, alignment: .topLeading)
+            .bobeRaised(cornerRadius: BobeRadius.card, elevation: self.isHovered ? .lifted : .resting)
+            .offset(y: self.isHovered ? -2 : 0)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .onHover { hover in
-            withAnimation(.easeOut(duration: 0.18)) { self.isHovered = hover }
-        }
+        .buttonStyle(BobePressStyle(scale: 0.98))
+        .animation(BobeMotion.standard, value: self.isHovered)
+        .onHover { self.isHovered = $0 }
     }
 }

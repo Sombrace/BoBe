@@ -183,7 +183,7 @@ struct GuidedMarkdownEditor: View {
                         L10n.tr("settings.context_editor.title.placeholder"),
                         text: self.$draft.title
                     )
-                    .textFieldStyle(.roundedBorder)
+                    .bobeField()
                 }
 
                 self.field(
@@ -217,11 +217,7 @@ struct GuidedMarkdownEditor: View {
                         BobeProseEditor(text: $section.body, minHeight: 96)
                     }
                     .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(self.theme.colors.surface)
-                            .stroke(self.theme.colors.border, lineWidth: 1)
-                    )
+                    .bobeRaised(cornerRadius: 16)
                 }
 
                 Button {

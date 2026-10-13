@@ -1,0 +1,10 @@
+schema_version = 2
+name = "ui-golden"
+description = "Render every BoBe face through the production LVGL renderer and verify canonical pixels."
+claim = "logical"
+requires = ["lvgl-native"]
+
+[[steps]]
+id = "render-all-faces"
+operation = "ui_golden"
+set = "all-expressions"

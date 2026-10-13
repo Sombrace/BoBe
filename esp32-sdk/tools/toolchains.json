@@ -1,0 +1,6 @@
+{
+  "default": "6.1",
+  "tested_versions": ["6.0.2", "6.1"],
+  "library_targets": ["esp32", "esp32c3", "esp32c6", "esp32s3"],
+  "voice_targets": ["esp32s3"]
+}

@@ -1,23 +1,27 @@
-//! Voice engine loader — reads the Kokoro TTS model from the BoBe data
-//! dir's `models/` subdir (`~/.bobe/models/` by default, override via
-//! `$BOBE_DATA_DIR`) and constructs the runtime engine snapshot. Mode B:
-//! daemon owns TTS only; STT/VAD/smart-turn moved to the Swift client
-//! (FluidAudio). Called at bootstrap and again by `VoiceInstallService`
-//! on install completion (single source of truth).
-
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tracing::{info, warn};
 
 use crate::voice::engines::VoiceEnginesSnapshot;
 
-/// Build a `VoiceEnginesSnapshot` from the models currently on disk.
-/// Includes async TTS filler-library synthesis when TTS loads.
-pub(super) async fn build_voice_engines_snapshot() -> VoiceEnginesSnapshot {
-    let tts = match tokio::task::spawn_blocking(load_tts).await {
+pub(super) async fn build_voice_engines_snapshot(models_root: PathBuf) -> VoiceEnginesSnapshot {
+    let stt_models_root = models_root.clone();
+    let (tts, stt) = tokio::join!(
+        tokio::task::spawn_blocking(move || load_tts(&models_root)),
+        tokio::task::spawn_blocking(move || load_stt(&stt_models_root)),
+    );
+    let tts = match tts {
         Ok(tts) => tts,
         Err(error) => {
             warn!(%error, "voice.tts_load_join_failed");
+            None
+        }
+    };
+    let stt = match stt {
+        Ok(stt) => stt,
+        Err(error) => {
+            warn!(%error, "voice.stt_load_join_failed");
             None
         }
     };
@@ -28,21 +32,13 @@ pub(super) async fn build_voice_engines_snapshot() -> VoiceEnginesSnapshot {
         None => None,
     };
     VoiceEnginesSnapshot {
+        stt,
         tts,
         filler_library,
     }
 }
 
-/// Best-effort load of Kokoro TTS from the BoBe data dir's `models/`
-/// subdir (`bobe_data_dir().join("models")`). Sync because the loader is
-/// sync (sherpa-onnx init).
-///
-/// Provider selection per platform: macOS → CoreML EP, others → CPU.
-/// Env overrides: `BOBE_VOICE_PROVIDER` (cpu|coreml|cuda|directml),
-/// `BOBE_VOICE_NUM_THREADS` (default 4).
-fn load_tts() -> Option<Arc<dyn crate::speech::TtsEngine>> {
-    let models_root = crate::util::paths::bobe_data_dir().join("models");
-
+fn load_stt(models_root: &Path) -> Option<Arc<dyn crate::speech::SttEngine>> {
     let provider = std::env::var("BOBE_VOICE_PROVIDER").unwrap_or_else(|_| {
         if cfg!(target_os = "macos") {
             "coreml".to_string()
@@ -52,28 +48,43 @@ fn load_tts() -> Option<Arc<dyn crate::speech::TtsEngine>> {
     });
     let num_threads: i32 = std::env::var("BOBE_VOICE_NUM_THREADS")
         .ok()
-        .and_then(|v| v.parse().ok())
+        .and_then(|value| value.parse().ok())
         .unwrap_or(4);
-
-    let dir = models_root.join(crate::constants::voice_wire::KOKORO_MODEL_DIR);
-    let model = dir.join("model.onnx");
-    let voices = dir.join("voices.bin");
-    if !model.exists() || !voices.exists() {
-        warn!(path = %dir.display(), "voice.tts_model_missing");
+    let dir = models_root.join(crate::constants::voice_wire::STREAMING_STT_MODEL_DIR);
+    if !dir.is_dir() {
+        info!(path = %dir.display(), "voice.stt_model_not_installed");
         return None;
     }
-    match crate::speech::providers::sherpa::kokoro_tts::LocalKokoroTts::load(
-        &model,
-        &voices,
+    match crate::speech::providers::sherpa::streaming_stt::SherpaStreamingStt::load(
+        &dir,
         &provider,
         num_threads,
     ) {
-        Ok(e) => {
-            info!(path = %dir.display(), provider, "voice.tts_loaded");
-            Some(Arc::new(e) as Arc<dyn crate::speech::TtsEngine>)
+        Ok(engine) => {
+            let rtf = crate::speech::SttEngine::health(&engine).real_time_factor;
+            info!(path = %dir.display(), provider, rtf, "voice.stt_loaded");
+            Some(Arc::new(engine) as Arc<dyn crate::speech::SttEngine>)
         }
-        Err(e) => {
-            warn!(error = %e, "voice.tts_load_failed");
+        Err(error) => {
+            warn!(%error, "voice.stt_load_failed");
+            None
+        }
+    }
+}
+
+fn load_tts(models_root: &Path) -> Option<Arc<dyn crate::speech::TtsEngine>> {
+    let dir = models_root.join(crate::constants::voice_wire::POCKET_TTS_MODEL_DIR);
+    if !dir.is_dir() {
+        info!(path = %dir.display(), "voice.tts_model_not_installed");
+        return None;
+    }
+    match crate::speech::providers::pocket::PocketTts::load(&dir) {
+        Ok(engine) => {
+            info!(path = %dir.display(), engine = "pocket_tts", language = "en", "voice.tts_loaded");
+            Some(Arc::new(engine) as Arc<dyn crate::speech::TtsEngine>)
+        }
+        Err(error) => {
+            warn!(%error, "voice.tts_load_failed");
             None
         }
     }

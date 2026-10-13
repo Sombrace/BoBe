@@ -1,7 +1,5 @@
 import SwiftUI
 
-// MARK: - Voice setup step
-
 struct VoiceSetupStepView: View {
     let onContinue: () -> Void
 
@@ -9,23 +7,21 @@ struct VoiceSetupStepView: View {
     @State private var pipeline = VoicePipeline.shared
     @State private var phase: Phase = .checking
     @State private var errorMessage: String?
+    @State private var installTask: Task<Void, Never>?
+    @State private var installGeneration: UInt64 = 0
+    @State private var preparingModels = false
+    @State private var cancelingInstall = false
 
     enum Phase {
-        case checking, idle, installing, complete, failed, skipped
+        case checking, idle, installing, complete, failed
     }
 
-    /// Reads through the pipeline's shared snapshot so the wizard, mic
-    /// button, and settings card all see the same daemon install state.
     private var status: VoiceInstallSnapshot? {
         self.pipeline.installSnapshot
     }
 
-    /// True once daemon-side install completes AND FluidAudio is loaded.
-    /// Pulled straight from `pipeline.readiness` for consistency with every
-    /// other consumer; falls back through the underlying signals only as a
-    /// readability convenience in the per-model UI.
     private var allReady: Bool {
-        self.pipeline.readiness == .ready
+        self.pipeline.modelPreparation == .ready
     }
 
     private var selectedTtsBackend: VoiceTtsBackend {
@@ -33,7 +29,8 @@ struct VoiceSetupStepView: View {
     }
 
     private var visibleDaemonModels: [VoiceModelProgress] {
-        self.selectedTtsBackend == .serverKokoro ? (self.status?.models ?? []) : []
+        guard self.selectedTtsBackend == .serverPocket else { return [] }
+        return (self.status?.models ?? []).filter { $0.kind == VoiceWire.modelKindTts }
     }
 
     private var sttLabel: String {
@@ -69,32 +66,32 @@ struct VoiceSetupStepView: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            VStack(spacing: 8) {
-                Text(L10n.tr("setup.voice.title"))
-                    .bobeTextStyle(.setupTitle)
-                    .foregroundStyle(self.theme.colors.text)
-                Text(L10n.tr("setup.voice.body"))
-                    .bobeTextStyle(.setupBody)
-                    .foregroundStyle(self.theme.colors.textMuted)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(4)
-            }
+            SetupStepHeader(
+                title: L10n.tr("setup.voice.title"),
+                message: L10n.tr("setup.voice.body")
+            )
+            .padding(.top, 8)
 
             self.bodyContent
 
             Spacer()
 
             self.actionRow
+                .disabled(self.cancelingInstall)
         }
         .task { await self.refreshStatus() }
+        .onDisappear {
+            self.installGeneration &+= 1
+            self.installTask?.cancel()
+            self.installTask = nil
+        }
     }
 
     @ViewBuilder
     private var bodyContent: some View {
         switch self.phase {
         case .checking:
-            ProgressView()
-                .progressViewStyle(.circular)
+            BobeSpinner(size: 18)
                 .padding(.top, 20)
         case .idle:
             self.installPrompt
@@ -104,22 +101,18 @@ struct VoiceSetupStepView: View {
             self.completeSummary
         case .failed:
             self.failureSummary
-        case .skipped:
-            Text(L10n.tr("setup.voice.skipped_note"))
-                .bobeTextStyle(.setupBody)
-                .foregroundStyle(self.theme.colors.textMuted)
-                .multilineTextAlignment(.center)
         }
     }
 
     private var installPrompt: some View {
-        VStack(spacing: 12) {
-            ForEach(self.visibleDaemonModels, id: \.id) { model in
+        VStack(spacing: 10) {
+            ForEach(Array(self.visibleDaemonModels.enumerated()), id: \.element.id) { index, model in
                 VoiceModelRow(model: model)
+                    .setupStagger(index)
             }
             VoiceModelRow(model: self.sttModel)
+                .setupStagger(self.visibleDaemonModels.count)
         }
-        .padding(.vertical, 8)
     }
 
     private var progressList: some View {
@@ -133,9 +126,7 @@ struct VoiceSetupStepView: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(self.theme.colors.secondary)
                 case .downloading, .notLoaded:
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .controlSize(.small)
+                    BobeSpinner(size: 14)
                 case .failed:
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(self.theme.colors.primary)
@@ -186,60 +177,103 @@ struct VoiceSetupStepView: View {
             EmptyView()
         case .idle:
             HStack(spacing: 12) {
-                Button(L10n.tr("setup.voice.skip")) { self.phase = .skipped }
+                Button(L10n.tr("setup.voice.skip")) {
+                    VoiceSetupPreference.setDeferred(true)
+                    self.onContinue()
+                }
                     .bobeButton(.secondary, size: .regular)
-                Button(L10n.tr("setup.voice.install_button")) { Task { await self.kickoff() } }
+                Button(L10n.tr("setup.voice.install_button")) {
+                    self.installTask = Task { await self.kickoff() }
+                }
                     .bobeButton(.primary, size: .regular)
                     .keyboardShortcut(.defaultAction)
             }
         case .installing:
             Button(L10n.tr("setup.voice.cancel")) {
-                Task { await self.cancelAll() }
+                self.installGeneration &+= 1
+                self.installTask?.cancel()
+                self.installTask = nil
+                self.preparingModels = false
+                self.phase = .idle
+                self.cancelingInstall = true
+                Task {
+                    await self.cancelAll()
+                    self.cancelingInstall = false
+                }
             }
             .bobeButton(.secondary, size: .regular)
-        case .complete, .failed, .skipped:
+        case .complete:
             Button(L10n.tr("setup.voice.continue"), action: self.onContinue)
                 .bobeButton(.primary, size: .regular)
                 .keyboardShortcut(.defaultAction)
+        case .failed:
+            HStack(spacing: 12) {
+                Button(L10n.tr("setup.voice.continue_without"), action: self.continueWithoutVoice)
+                    .bobeButton(.secondary, size: .regular)
+                Button(L10n.tr("setup.voice.try_again")) {
+                    self.installTask = Task { await self.kickoff() }
+                }
+                .bobeButton(.primary, size: .regular)
+                .keyboardShortcut(.defaultAction)
+            }
         }
     }
 
+    private func continueWithoutVoice() {
+        VoiceSetupPreference.setDeferred(true)
+        self.onContinue()
+    }
+
     private func refreshStatus() async {
+        self.errorMessage = nil
+        self.phase = .checking
+        let generation = self.installGeneration
         await self.pipeline.refreshDaemonState()
+        guard !Task.isCancelled, generation == self.installGeneration else { return }
+        if self.pipeline.sttStatus == .notLoaded { self.pipeline.bootstrapSttPresence() }
         guard let s = self.status else {
             self.errorMessage = L10n.tr("setup.voice.daemon_unreachable")
             self.phase = .failed
             return
         }
-        // Reflect current FluidAudio state too; if either side is
-        // unfinished we go back to idle/installing.
         if self.allReady {
             self.phase = .complete
         } else if s.isRunning || self.pipeline.sttStatus == .downloading {
             self.phase = .installing
             Task { await self.pipeline.ensureSttLoaded() }
+        } else if case let .failed(message) = self.pipeline.modelPreparation {
+            self.errorMessage = message
+            self.phase = .failed
         } else {
             self.phase = .idle
         }
     }
 
     private func kickoff() async {
-        // Install the selected TTS backend and active client STT in parallel.
-        Task { await self.pipeline.ensureSttLoaded() }
+        guard self.phase != .installing else { return }
+        self.installGeneration &+= 1
+        let generation = self.installGeneration
+        self.preparingModels = true
+        defer { if generation == self.installGeneration { self.preparingModels = false } }
+        self.phase = .installing
+        VoiceSetupPreference.setDeferred(false)
+        async let stt: Void = self.pipeline.ensureSttLoaded()
         do {
             try await self.pipeline.prepareSelectedTts()
-            self.phase = .installing
+            await stt
+            guard !Task.isCancelled, generation == self.installGeneration else { return }
+            await self.refreshStatus()
         } catch {
+            guard !Task.isCancelled, generation == self.installGeneration else { return }
             self.errorMessage = error.localizedDescription
             self.phase = .failed
         }
     }
 
-    /// Cancel both download pipelines. FluidAudio 0.15's ModelHub preserves
-    /// valid cached files and resumable partial state.
     private func cancelAll() async {
+        let client = DaemonClient(endpoint: self.pipeline.daemonStateSelection.endpoint)
         async let daemon: Void = {
-            try? await DaemonClient.shared.cancelVoiceInstall()
+            try? await client.cancelVoiceInstall()
         }()
         async let stt: Void = self.pipeline.cancelSttLoading()
         _ = await (daemon, stt)
@@ -248,16 +282,18 @@ struct VoiceSetupStepView: View {
     private func poll() async {
         while !Task.isCancelled, self.phase == .installing {
             try? await Task.sleep(for: .milliseconds(500))
-            // STT failure short-circuits the poll loop AND cancels the
-            // daemon-side install so the user doesn't see a half-running
-            // background download after the failure screen.
+            guard !Task.isCancelled, self.phase == .installing else { return }
+            if self.preparingModels { continue }
             if case let .failed(msg) = self.pipeline.sttStatus {
                 self.errorMessage = msg
                 await self.cancelAll()
+                guard !Task.isCancelled, self.phase == .installing else { return }
                 self.phase = .failed
                 return
             }
             await self.pipeline.refreshDaemonState()
+            guard !Task.isCancelled, self.phase == .installing else { return }
+            if self.preparingModels { continue }
             guard let s = self.status else {
                 self.errorMessage = L10n.tr("setup.voice.daemon_unreachable")
                 self.phase = .failed
@@ -273,9 +309,12 @@ struct VoiceSetupStepView: View {
                 self.phase = .failed; return
             case .canceled:
                 self.phase = .idle; return
-            case .idle, .running, .complete:
-                // Daemon may already be complete while FluidAudio is
-                // still downloading; keep polling until both finish.
+            case .idle, .complete:
+                if self.pipeline.modelPreparation == .missing {
+                    self.phase = .idle
+                    return
+                }
+            case .running:
                 continue
             }
         }

@@ -1,5 +1,11 @@
+pub(crate) mod capabilities;
 pub(crate) mod gateway;
 pub(crate) mod handlers;
+pub(crate) mod identity;
+pub(crate) mod interactions;
 pub(crate) mod outbound;
 pub(crate) mod protocol;
 pub(crate) mod server;
+pub(crate) mod tls_identity;
+pub(crate) mod update;
+pub(crate) mod wake_arbitrator;

@@ -1,43 +1,30 @@
 import AppKit
+import Observation
 import SwiftUI
 
-enum OverlayMotionPrimitive {
-    case breathing
-    case chatTransition
-    case indicatorTransition
-    case badgePulse
-    case statusLabelTransition
-}
+@MainActor
+@Observable
+final class AccessibilityRuntime {
+    static let shared = AccessibilityRuntime()
 
-enum OverlayMotionRuntime {
-    static let chatTransitionSeconds: TimeInterval = 0.16
+    private(set) var reduceMotion: Bool
 
-    @MainActor static var reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    @ObservationIgnored private var displayOptionsObserver: NSObjectProtocol?
 
-    @MainActor static var shouldAnimate: Bool {
-        !reduceMotion
-    }
-
-    @MainActor
-    static func animation(for primitive: OverlayMotionPrimitive) -> Animation? {
-        guard self.shouldAnimate else { return nil }
-        switch primitive {
-        case .breathing:
-            return .easeInOut(duration: 2.8)
-        case .chatTransition:
-            return .easeOut(duration: self.chatTransitionSeconds)
-        case .indicatorTransition:
-            return .easeOut(duration: 0.18)
-        case .badgePulse:
-            return .easeInOut(duration: 2.0)
-        case .statusLabelTransition:
-            return .easeInOut(duration: 0.2)
+    private init(workspace: NSWorkspace = .shared) {
+        self.reduceMotion = workspace.accessibilityDisplayShouldReduceMotion
+        self.displayOptionsObserver = workspace.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refresh(from: .shared)
+            }
         }
     }
 
-    @MainActor
-    static func breathingScale(isExpanded: Bool) -> CGFloat {
-        guard self.shouldAnimate else { return 1.0 }
-        return isExpanded ? 1.012 : 0.994
+    private func refresh(from workspace: NSWorkspace) {
+        self.reduceMotion = workspace.accessibilityDisplayShouldReduceMotion
     }
 }

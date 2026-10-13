@@ -1,12 +1,10 @@
-//! Detection-first: reuse user's existing Ollama on `:11434`; only spawn managed `ollama serve` if absent.
-
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use tokio::sync::{Mutex, watch};
 use tracing::{info, warn};
 
@@ -17,7 +15,6 @@ const PULL_TIMEOUT: Duration = Duration::from_hours(2);
 const STARTUP_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const STARTUP_MAX_ATTEMPTS: u32 = 30;
 
-/// `completed`/`total` are `None` early in the pull (manifest fetch phase).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct PullProgress {
     pub(crate) status: String,
@@ -35,24 +32,6 @@ struct TagsResponse {
 #[derive(Debug, Deserialize)]
 pub(crate) struct InstalledModel {
     pub(crate) name: String,
-    #[serde(default)]
-    pub(crate) details: Option<InstalledModelDetails>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct InstalledModelDetails {
-    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
-    pub(crate) families: Vec<String>,
-    #[serde(default)]
-    pub(crate) family: Option<String>,
-}
-
-fn deserialize_vec_or_default<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    Option::<Vec<T>>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,15 +49,10 @@ struct OllamaPullEvent {
 pub(crate) struct OllamaManager {
     http_client: Arc<reqwest::Client>,
     base_url: String,
-    /// `Some` only if WE started Ollama; reused daemons stay `None`. The
-    /// child is killed on Drop (Tokio process Drop semantics); explicit
-    /// shutdown is handled by the daemon's graceful shutdown path which
-    /// drops the OllamaInstallService.
     child: Mutex<Option<tokio::process::Child>>,
 }
 
 impl OllamaManager {
-    /// `base_url` is the root (no `/v1`); Ollama's native API isn't OpenAI-prefixed.
     pub(crate) fn new(http_client: Arc<reqwest::Client>, base_url: &str) -> Self {
         Self {
             http_client,
@@ -129,7 +103,6 @@ impl OllamaManager {
     async fn spawn_daemon(&self, binary: &Path) -> Result<(), AppError> {
         info!(binary = %binary.display(), "ollama_manager.spawning");
 
-        // OLLAMA_HOST + OLLAMA_ORIGINS pin to localhost; mirrors daemon's security posture.
         let child = tokio::process::Command::new(binary)
             .arg("serve")
             .stdout(Stdio::null())
@@ -160,8 +133,6 @@ impl OllamaManager {
         )))
     }
 
-    /// Cancellation races both connection establishment and every stream read,
-    /// so a stalled Ollama server cannot pin the install until the HTTP timeout.
     pub(crate) async fn pull_model(
         &self,
         name: &str,
@@ -197,9 +168,6 @@ impl OllamaManager {
 
         let mut stream = resp.bytes_stream();
         let mut buf = String::new();
-        // Throttle in-phase emissions; status transitions and the final
-        // success line bypass the throttle so consumers don't miss state
-        // changes. Same shape as voice install_service throttle.
         let throttle = Duration::from_millis(250);
         let mut last_emit = Instant::now();
         let mut last_status: Option<String> = None;
@@ -272,7 +240,6 @@ impl OllamaManager {
             }
         }
 
-        // No `"status":"success"` line — usually a mid-pull disconnect; caller retries.
         Err(AppError::ServiceUnavailable(
             "Ollama pull ended without success confirmation".into(),
         ))
@@ -284,7 +251,6 @@ impl OllamaManager {
         Ok(models.into_iter().map(|model| model.name).collect())
     }
 
-    /// `http://host/v1` → `http://host` for Ollama's native API root.
     pub(crate) fn root_from_provider_url(provider_url: &str) -> String {
         provider_url
             .trim_end_matches('/')
@@ -427,7 +393,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn installed_models_include_details_from_native_tags_endpoint() {
+    async fn installed_model_names_ignore_catalog_only_metadata() {
         crate::util::tls::install_crypto_provider().expect("TLS provider should install");
         let app = Router::new().route(
             "/api/tags",
@@ -440,7 +406,7 @@ mod tests {
                             "families": ["qwen", "vision"]
                         }
                     }, {
-                        "name": "legacy-model",
+                        "name": "untagged-model",
                         "details": {
                             "family": null,
                             "families": null
@@ -469,12 +435,7 @@ mod tests {
 
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].name, "qwen-vl");
-        let details = models[0].details.as_ref().expect("details should exist");
-        assert_eq!(details.family.as_deref(), Some("qwen"));
-        assert_eq!(details.families, ["qwen", "vision"]);
-        let legacy_details = models[1].details.as_ref().expect("details should exist");
-        assert_eq!(legacy_details.family, None);
-        assert!(legacy_details.families.is_empty());
+        assert_eq!(models[1].name, "untagged-model");
         server.abort();
         drop(server.await);
     }

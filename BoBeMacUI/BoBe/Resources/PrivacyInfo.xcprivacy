@@ -2,38 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!--
-	    BoBe Privacy Manifest.
 
-	    Microphone access itself is NOT declared here — `Info.plist`
-	    `NSMicrophoneUsageDescription` already covers that, and microphone
-	    is not one of the Required Reason API categories (which are
-	    iOS-specific anyway: FileTimestamp / SystemBootTime / DiskSpace /
-	    ActiveKeyboards / UserDefaults).
 
-	    What IS declared:
-	     - Two Required Reason API uses (UserDefaults, DiskSpace).
-	     - Three NSPrivacyCollectedDataType entries: user-typed/spoken
-	       content, photos (the screen captures are visual content
-	       Apple groups under Photos), and a GitHub identifier when the
-	       user is signed in to Copilot Cloud.
-	     - Tracking: false (we do not link user data across apps/sites).
-	-->
+
 	<key>NSPrivacyTracking</key>
 	<false/>
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array>
-		<!--
-		    User-typed messages + voice transcripts. We persist the
-		    transcript text locally (SQLite) and, when the user is on
-		    the Copilot Cloud engine, transmit it to GitHub Copilot for
-		    LLM inference. When the user is on the local engine
-		    (Ollama / llama.cpp), nothing leaves the device. Linked +
-		    not used for tracking because storage is local; when sent
-		    to Copilot it is identifier-bound to the user's GitHub auth.
-		-->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeOtherUserContent</string>
@@ -47,16 +24,6 @@
 				<string>NSPrivacyCollectedDataTypePurposeProductPersonalization</string>
 			</array>
 		</dict>
-		<!--
-		    Periodic screen captures used to give BoBe context-aware
-		    proactive suggestions. The capture is processed by the
-		    daemon and may be sent to a vision-capable LLM (cloud
-		    Copilot or local Ollama). Apple's Photos data type covers
-		    visual content broadly — we use it rather than rolling our
-		    own data type because that's what the manifest schema
-		    allows. Screen capture is gated by the macOS Screen
-		    Recording TCC prompt and the in-app toggle.
-		-->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypePhotosorVideos</string>
@@ -70,13 +37,6 @@
 				<string>NSPrivacyCollectedDataTypePurposeProductPersonalization</string>
 			</array>
 		</dict>
-		<!--
-		    GitHub user login (the @login string returned by
-		    `/auth/status`). Stored locally; sent to GitHub Copilot
-		    with each LLM request. Only present when the user has
-		    signed in to the Copilot Cloud engine. Local-engine users
-		    never have a UserID under this manifest.
-		-->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeUserID</string>
@@ -92,30 +52,12 @@
 	</array>
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array>
-		<!--
-		    UserDefaults — we store the locale override, theme id,
-		    onboarding-completed flag, expert-mode flag, and voice
-		    coachmark seen flag. CA92.1 = "Access info from same app".
-		-->
 		<dict>
 			<key>NSPrivacyAccessedAPIType</key>
 			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
 			<key>NSPrivacyAccessedAPITypeReasons</key>
 			<array>
 				<string>CA92.1</string>
-			</array>
-		</dict>
-		<!--
-		    Disk space — BackendService checks port availability and the
-		    voice install path probes filesystem presence on the model
-		    bundles. E174.1 = "Display free space on a device".
-		-->
-		<dict>
-			<key>NSPrivacyAccessedAPIType</key>
-			<string>NSPrivacyAccessedAPICategoryDiskSpace</string>
-			<key>NSPrivacyAccessedAPITypeReasons</key>
-			<array>
-				<string>E174.1</string>
 			</array>
 		</dict>
 	</array>

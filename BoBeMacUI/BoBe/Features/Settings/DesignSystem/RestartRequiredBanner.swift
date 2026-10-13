@@ -1,20 +1,20 @@
 import SwiftUI
 
-/// Surfaces fields needing daemon restart; some subsystems (Checkin, MCP) ignore live PATCH.
 struct RestartRequiredBanner: View {
     let fields: Set<String>
     let onDismiss: () -> Void
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(self.theme.colors.warning)
-                .padding(.top, 1)
+        HStack(alignment: .center, spacing: 10) {
+            BobeIconTile(systemName: "arrow.triangle.2.circlepath", tint: self.theme.colors.warning, size: 26)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(L10n.tr("settings.shared.restart_banner.message"))
+                Text(L10n.tr(
+                    DaemonConfig.endpoint.canRestartRuntime
+                        ? "settings.shared.restart_banner.message"
+                        : "settings.providers.restart.external"
+                ))
                     .bobeTextStyle(.helper)
                     .fontWeight(.medium)
                     .foregroundStyle(self.theme.colors.text)
@@ -29,38 +29,33 @@ struct RestartRequiredBanner: View {
 
             Spacer(minLength: 8)
 
-            // Restart Now is the high-leverage action — without it the user
-            // has to quit-and-relaunch BoBe from the tray to apply changes
-            // they were just told would need a restart. Surfacing the action
-            // here closes that loop in one click.
-            Button(L10n.tr("settings.shared.restart_banner.restart_now")) {
-                Task {
-                    try? await BackendService.shared.userRestart()
-                    self.onDismiss()
+            if DaemonConfig.endpoint.canRestartRuntime {
+                Button(L10n.tr("settings.shared.restart_banner.restart_now")) {
+                    Task {
+                        do {
+                            try await BackendService.shared.userRestart()
+                            self.onDismiss()
+                        } catch {
+                        }
+                    }
                 }
+                .bobeButton(.primary, size: .mini)
             }
-            .bobeButton(.primary, size: .mini)
 
             Button(L10n.tr("settings.shared.restart_banner.dismiss"), action: self.onDismiss)
                 .bobeButton(.ghost, size: .mini)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(self.theme.colors.tertiary.opacity(0.12))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(self.theme.colors.tertiary.opacity(0.4), lineWidth: 1)
-        )
+        .bobeRaised(cornerRadius: 18)
+        .transition(.bobeRise)
     }
 }
 
 #if !SPM_BUILD
     #Preview("RestartRequiredBanner") {
         RestartRequiredBanner(
-            fields: ["checkin_enabled", "checkin_times"],
+            fields: ["example_static_field"],
             onDismiss: {}
         )
         .environment(\.theme, allThemes[0])

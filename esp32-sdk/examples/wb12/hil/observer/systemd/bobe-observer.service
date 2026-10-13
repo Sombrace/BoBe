@@ -1,0 +1,45 @@
+[Unit]
+Description=BoBe independent physical observer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bobe-observer
+Group=bobe-observer
+ExecStart=/opt/bobe-observer/venv/bin/python -I -m bobe_observer serve
+LoadCredential=tls-key.pem:/etc/bobe-observer/server-key.pem
+LoadCredential=observer-key.pem:/etc/bobe-observer/evidence-key.pem
+WorkingDirectory=/var/lib/bobe-observer
+UMask=0077
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+DevicePolicy=closed
+StateDirectory=bobe-observer
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/bobe-observer
+
+[Install]
+WantedBy=multi-user.target

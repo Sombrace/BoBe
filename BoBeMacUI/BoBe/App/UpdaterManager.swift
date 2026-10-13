@@ -29,7 +29,6 @@ final class UpdaterManager: NSObject, SPUUpdaterDelegate {
 
     func setup() {
         _ = self.controller
-        self.controller.updater.clearFeedURLFromUserDefaults()
 
         guard self.isConfigured else {
             updaterLogger.info("Sparkle disabled: no valid SUFeedURL configured")

@@ -3,24 +3,38 @@ import OSLog
 
 private let logger = Logger(subsystem: "com.bobe.app", category: "SystemPower")
 
-/// Observes `NSWorkspace` sleep/wake notifications and routes them to
-/// `VoicePipeline` so the always-on capture/playback engines don't keep
-/// running across a long sleep (mic indicator stays on, the realtime tap
-/// queue can accumulate buffers, AGC is wedged on resume).
-///
-/// `BobeStore.registerSleepWakeObservers` already handles SSE reconnect
-/// on wake; this is the parallel for the voice subsystem.
+enum SurfacePowerState: Equatable {
+    case stopped
+    case running
+    case sleeping
+    case terminating
+
+    mutating func prepareForSleep() -> Bool {
+        guard self == .running else { return false }
+        self = .sleeping
+        return true
+    }
+
+    mutating func resumeAfterWake() -> Bool {
+        guard self == .sleeping else { return false }
+        self = .running
+        return true
+    }
+}
+
 @MainActor
 final class SystemPowerObserver {
     static let shared = SystemPowerObserver()
 
     private var sleepObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
+    private(set) var state: SurfacePowerState = .stopped
 
     private init() {}
 
-    /// Idempotent — safe to call multiple times during app launch.
     func start() {
+        guard self.state != .terminating else { return }
+        self.state = .running
         let center = NSWorkspace.shared.notificationCenter
         if self.sleepObserver == nil {
             self.sleepObserver = center.addObserver(
@@ -29,10 +43,7 @@ final class SystemPowerObserver {
                 queue: .main
             ) { _ in
                 Task { @MainActor in
-                    logger.info("System will sleep — disconnecting voice pipeline")
-                    // `disconnect()` already tears down the audio engines
-                    // and clears `isWarm` so the next prewarm restarts cleanly.
-                    VoicePipeline.shared.disconnect()
+                    await SystemPowerObserver.shared.prepareForSleep()
                 }
             }
         }
@@ -43,18 +54,60 @@ final class SystemPowerObserver {
                 queue: .main
             ) { _ in
                 Task { @MainActor in
-                    // Re-prewarm only if the user previously had voice running
-                    // (i.e., MicButton's prewarm path will run on next overlay
-                    // appear; we don't force it here to respect the muted state).
-                    logger.info("System did wake — voice pipeline will rewarm on next interaction")
+                    await SystemPowerObserver.shared.resumeAfterWake()
                 }
             }
         }
     }
 
+    func prepareForSleep() async {
+        guard self.state.prepareForSleep() else { return }
+        logger.info("System will sleep — suspending voice and event stream")
+        VoicePipeline.shared.disconnect()
+        await BobeStore.shared.suspendEventStream()
+    }
+
+    func resumeAfterWake() async {
+        guard self.state.resumeAfterWake() else { return }
+        logger.info("System did wake — restoring runtime and event stream")
+
+        let isManagedDevelopment = DaemonConfig.endpoint.managesLocalProcess
+            && ProcessInfo.processInfo.environment["BOBE_DEV"] != nil
+        if !isManagedDevelopment {
+            do {
+                try await BackendService.shared.start()
+            } catch {
+                logger.warning(
+                    "Runtime health restoration after wake failed: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+
+        do {
+            _ = try await EndpointAttachService.shared.attachConfiguredEndpoint()
+        } catch {
+            logger.warning(
+                "Runtime attach verification after wake failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+
+        if SetupWindowManager.shared.isOnboardingCompleted {
+            BobeStore.shared.resumeEventStream()
+        }
+        await VoicePipeline.shared.refreshDaemonState()
+        VoicePipeline.shared.bootstrapSttPresence()
+    }
+
     func stop() {
+        self.state = .terminating
         let center = NSWorkspace.shared.notificationCenter
-        if let s = self.sleepObserver { center.removeObserver(s); self.sleepObserver = nil }
-        if let w = self.wakeObserver { center.removeObserver(w); self.wakeObserver = nil }
+        if let sleepObserver = self.sleepObserver {
+            center.removeObserver(sleepObserver)
+            self.sleepObserver = nil
+        }
+        if let wakeObserver = self.wakeObserver {
+            center.removeObserver(wakeObserver)
+            self.wakeObserver = nil
+        }
     }
 }

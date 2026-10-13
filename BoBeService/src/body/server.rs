@@ -1,7 +1,10 @@
+#[cfg(any(not(target_os = "macos"), test))]
 use std::collections::HashMap;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
+#[cfg(target_os = "macos")]
+use std::process::{Command as StdCommand, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,29 +20,36 @@ use rustls::{
     SignatureScheme,
 };
 use secrecy::ExposeSecret;
+use sha2::Digest;
+#[cfg(target_os = "macos")]
+use tokio::process::{Child, Command as TokioCommand};
+#[cfg(target_os = "macos")]
+use tokio::task::JoinHandle;
+#[cfg(target_os = "macos")]
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use super::gateway::BodyGateway;
 use super::handlers::{adapter_stream, body_stream};
+use super::identity::BodyIdentityIndex;
 use super::protocol::BODY_MDNS_AUTH;
-use crate::api::middleware::{ApiToken, bearer_auth};
+use crate::api::middleware::{ApiToken, fixed_bearer_auth};
 use crate::config::BodyConfig;
 
-struct PinnedClientCertVerifier {
+struct RegistryClientCertVerifier {
     inner: Arc<dyn ClientCertVerifier>,
-    enrolled_leaf: CertificateDer<'static>,
+    identities: Arc<BodyIdentityIndex>,
 }
 
-impl fmt::Debug for PinnedClientCertVerifier {
+impl fmt::Debug for RegistryClientCertVerifier {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("PinnedClientCertVerifier")
-            .field("enrolled_leaf_len", &self.enrolled_leaf.as_ref().len())
+            .debug_struct("RegistryClientCertVerifier")
             .finish_non_exhaustive()
     }
 }
 
-impl ClientCertVerifier for PinnedClientCertVerifier {
+impl ClientCertVerifier for RegistryClientCertVerifier {
     fn offer_client_auth(&self) -> bool {
         self.inner.offer_client_auth()
     }
@@ -61,7 +71,8 @@ impl ClientCertVerifier for PinnedClientCertVerifier {
         let verified = self
             .inner
             .verify_client_cert(end_entity, intermediates, now)?;
-        if end_entity.as_ref() != self.enrolled_leaf.as_ref() {
+        let digest: [u8; 32] = sha2::Sha256::digest(end_entity.as_ref()).into();
+        if self.identities.by_certificate(&digest).is_none() {
             return Err(CertificateError::ApplicationVerificationFailure.into());
         }
         Ok(verified)
@@ -108,7 +119,10 @@ fn load_private_key(path: &Path) -> anyhow::Result<PrivateKeyDer<'static>> {
         .with_context(|| format!("parse private key {}", path.display()))
 }
 
-fn tls_config(config: &BodyConfig) -> anyhow::Result<axum_server::tls_rustls::RustlsConfig> {
+fn tls_config(
+    config: &BodyConfig,
+    identities: Arc<BodyIdentityIndex>,
+) -> anyhow::Result<axum_server::tls_rustls::RustlsConfig> {
     let cert_path = config
         .tls_cert_path
         .as_deref()
@@ -121,10 +135,6 @@ fn tls_config(config: &BodyConfig) -> anyhow::Result<axum_server::tls_rustls::Ru
         .client_ca_path
         .as_deref()
         .context("BodyLink requires client_ca_path")?;
-    let enrolled_path = config
-        .enrolled_client_cert_path
-        .as_deref()
-        .context("BodyLink requires enrolled_client_cert_path")?;
 
     let server_chain = load_certificates(Path::new(cert_path))?;
     anyhow::ensure!(!server_chain.is_empty(), "BodyLink server chain is empty");
@@ -136,15 +146,13 @@ fn tls_config(config: &BodyConfig) -> anyhow::Result<axum_server::tls_rustls::Ru
             .context("add BodyLink client CA certificate")?;
     }
     anyhow::ensure!(!client_roots.is_empty(), "BodyLink client CA file is empty");
-    let enrolled_leaf = CertificateDer::from_pem_file(Path::new(enrolled_path))
-        .context("parse enrolled BodyLink client certificate")?;
 
     let webpki: Arc<dyn ClientCertVerifier> = WebPkiClientVerifier::builder(Arc::new(client_roots))
         .build()
         .context("build BodyLink client certificate verifier")?;
-    let pinned: Arc<dyn ClientCertVerifier> = Arc::new(PinnedClientCertVerifier {
+    let pinned: Arc<dyn ClientCertVerifier> = Arc::new(RegistryClientCertVerifier {
         inner: webpki,
-        enrolled_leaf,
+        identities,
     });
     let mut server_config = rustls::ServerConfig::builder()
         .with_client_cert_verifier(pinned)
@@ -156,11 +164,8 @@ fn tls_config(config: &BodyConfig) -> anyhow::Result<axum_server::tls_rustls::Ru
     ))
 }
 
-fn start_mdns(config: &BodyConfig) -> Option<mdns_sd::ServiceDaemon> {
-    if !config.mdns_enabled {
-        return None;
-    }
-    let daemon = mdns_sd::ServiceDaemon::new().ok()?;
+#[cfg(any(not(target_os = "macos"), test))]
+fn body_mdns_service(config: &BodyConfig) -> mdns_sd::Result<mdns_sd::ServiceInfo> {
     let hostname = config
         .advertised_hostname
         .trim_end_matches('.')
@@ -174,14 +179,190 @@ fn start_mdns(config: &BodyConfig) -> Option<mdns_sd::ServiceDaemon> {
         ("kid".to_string(), config.trust_key_id.clone()),
         ("scope".to_string(), "local".to_string()),
     ]);
-    let service = match mdns_sd::ServiceInfo::new(
+    mdns_sd::ServiceInfo::new(
         "_bobe-body-hub._tcp.local.",
         &format!("BoBe Body Hub on {hostname}"),
         &fqdn,
         "",
         config.port,
         properties,
-    ) {
+    )
+    .map(mdns_sd::ServiceInfo::enable_addr_auto)
+}
+
+enum MdnsRegistration {
+    #[cfg(not(target_os = "macos"))]
+    Library(mdns_sd::ServiceDaemon),
+    #[cfg(target_os = "macos")]
+    Native(NativeMdnsRegistration),
+}
+
+impl MdnsRegistration {
+    #[cfg_attr(
+        not(target_os = "macos"),
+        allow(
+            clippy::unused_async_trait_impl,
+            reason = "macOS shutdown awaits native mDNS task completion"
+        )
+    )]
+    async fn shutdown(self) {
+        match self {
+            #[cfg(not(target_os = "macos"))]
+            Self::Library(daemon) => drop(daemon.shutdown()),
+            #[cfg(target_os = "macos")]
+            Self::Native(registration) => registration.shutdown().await,
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn primary_ipv4() -> anyhow::Result<Ipv4Addr> {
+    fn interface_address(interface: &str) -> Option<Ipv4Addr> {
+        let output = StdCommand::new("/usr/sbin/ipconfig")
+            .args(["getifaddr", interface])
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).trim().parse().ok())
+            .flatten()
+            .filter(|address: &Ipv4Addr| !address.is_loopback() && !address.is_unspecified())
+    }
+
+    let route = StdCommand::new("/sbin/route")
+        .args(["-n", "get", "default"])
+        .output()
+        .context("inspect default network route")?;
+    if route.status.success() {
+        let text = String::from_utf8_lossy(&route.stdout);
+        if let Some(interface) = text
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("interface:").map(str::trim))
+            && let Some(address) = interface_address(interface)
+        {
+            return Ok(address);
+        }
+    }
+
+    let interfaces = StdCommand::new("/sbin/ifconfig")
+        .arg("-l")
+        .output()
+        .context("enumerate network interfaces")?;
+    String::from_utf8_lossy(&interfaces.stdout)
+        .split_whitespace()
+        .filter(|interface| *interface != "lo0")
+        .find_map(interface_address)
+        .context("BodyLink has no routable IPv4 address")
+}
+
+#[cfg(target_os = "macos")]
+fn native_mdns_command(config: &BodyConfig, address: Ipv4Addr) -> TokioCommand {
+    let mut command = TokioCommand::new("/usr/bin/dns-sd");
+    command.args([
+        "-P".to_string(),
+        "BoBe Body Hub".to_string(),
+        "_bobe-body-hub._tcp".to_string(),
+        "local".to_string(),
+        config.port.to_string(),
+        config.advertised_hostname.trim_end_matches('.').to_string(),
+        address.to_string(),
+        "pv=1".to_string(),
+        "path=/body/v1".to_string(),
+        "tls=1".to_string(),
+        format!("auth={BODY_MDNS_AUTH}"),
+        format!("kid={}", config.trust_key_id),
+        "scope=local".to_string(),
+    ]);
+    command.stdout(Stdio::null()).stderr(Stdio::null());
+    command.kill_on_drop(true);
+    command
+}
+
+#[cfg(target_os = "macos")]
+struct NativeMdnsRegistration {
+    cancel: CancellationToken,
+    task: Option<JoinHandle<()>>,
+}
+
+#[cfg(target_os = "macos")]
+impl NativeMdnsRegistration {
+    async fn shutdown(mut self) {
+        self.cancel.cancel();
+        if let Some(task) = self.task.take() {
+            drop(task.await);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for NativeMdnsRegistration {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+        if let Some(task) = self.task.take() {
+            task.abort();
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn supervise_native_mdns(config: BodyConfig, cancel: CancellationToken) {
+    let mut child: Option<Child> = None;
+    let mut registered_address = None;
+    loop {
+        match primary_ipv4() {
+            Ok(address) => {
+                let stopped = child
+                    .as_mut()
+                    .is_none_or(|process| process.try_wait().ok().flatten().is_some());
+                if registered_address != Some(address) || stopped {
+                    if let Some(mut process) = child.take() {
+                        drop(process.kill().await);
+                        drop(process.wait().await);
+                    }
+                    match native_mdns_command(&config, address).spawn() {
+                        Ok(process) => {
+                            info!(%address, "body.mdns_native_registered");
+                            child = Some(process);
+                            registered_address = Some(address);
+                        }
+                        Err(error) => {
+                            warn!(%error, "body.mdns_register_failed");
+                            registered_address = None;
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                warn!(%error, "body.mdns_address_failed");
+            }
+        }
+
+        tokio::select! {
+            () = cancel.cancelled() => break,
+            () = tokio::time::sleep(Duration::from_secs(5)) => {}
+        }
+    }
+    if let Some(mut process) = child {
+        drop(process.kill().await);
+        drop(process.wait().await);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn start_mdns(config: &BodyConfig) -> Option<MdnsRegistration> {
+    let cancel = CancellationToken::new();
+    let task = tokio::spawn(supervise_native_mdns(config.clone(), cancel.clone()));
+    Some(MdnsRegistration::Native(NativeMdnsRegistration {
+        cancel,
+        task: Some(task),
+    }))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn start_mdns(config: &BodyConfig) -> Option<MdnsRegistration> {
+    let daemon = mdns_sd::ServiceDaemon::new().ok()?;
+    let service = match body_mdns_service(config) {
         Ok(service) => service,
         Err(error) => {
             warn!(%error, "body.mdns_service_failed");
@@ -192,11 +373,14 @@ fn start_mdns(config: &BodyConfig) -> Option<mdns_sd::ServiceDaemon> {
         warn!(%error, "body.mdns_register_failed");
         return None;
     }
-    Some(daemon)
+    Some(MdnsRegistration::Library(daemon))
 }
 
 pub(crate) async fn run(
     gateway: Arc<BodyGateway>,
+    identities: Arc<BodyIdentityIndex>,
+    endpoints: Arc<crate::db::endpoint_repo::EndpointRepo>,
+    registry_lock: Arc<tokio::sync::Mutex<()>>,
     config: BodyConfig,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
@@ -207,16 +391,23 @@ pub(crate) async fn run(
         .context("parse BodyLink host")?;
     let address = SocketAddr::new(host, config.port);
     let adapter_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), config.adapter_port);
-    let tls = tls_config(&config)?;
-    let mdns = (!host.is_loopback()).then(|| start_mdns(&config)).flatten();
+    let adapter_enabled = !config.adapter_token.expose_secret().is_empty();
+    let tls = tls_config(&config, Arc::clone(&identities))?;
+    let mdns = (!host.is_loopback() && config.mdns_enabled)
+        .then(|| start_mdns(&config))
+        .flatten();
 
     let body_app = Router::new()
         .route("/body/v1", get(body_stream))
+        .layer(axum::Extension(endpoints))
+        .layer(axum::Extension(registry_lock))
         .with_state(Arc::clone(&gateway));
     let adapter_app = Router::new()
         .route("/body/adapter", get(adapter_stream))
-        .layer(axum_middleware::from_fn(bearer_auth))
-        .layer(axum::Extension(ApiToken::new(config.adapter_token.clone())))
+        .layer(axum_middleware::from_fn(fixed_bearer_auth))
+        .layer(axum::Extension(ApiToken::adapter(
+            config.adapter_token.clone(),
+        )))
         .with_state(Arc::clone(&gateway));
 
     let body_handle = axum_server::Handle::new();
@@ -229,43 +420,93 @@ pub(crate) async fn run(
         adapter_shutdown.graceful_shutdown(Some(Duration::from_secs(5)));
     });
 
-    info!(%address, %adapter_address, "body.gateway_listening");
-    let body_server = axum_server::bind_rustls(address, tls)
+    info!(%address, adapter = ?adapter_enabled.then_some(adapter_address), "body.gateway_listening");
+    let body_server = axum_server::Server::bind(address)
+        .acceptor(crate::body::tls_identity::BodyIdentityAcceptor::new(
+            axum_server::tls_rustls::RustlsAcceptor::new(tls),
+            Arc::clone(&identities),
+        ))
         .handle(body_handle)
         .serve(body_app.into_make_service());
     let adapter_server = axum_server::bind(adapter_address)
         .handle(adapter_handle)
         .serve(adapter_app.into_make_service());
     gateway.mark_running();
-    let result = tokio::try_join!(body_server, adapter_server);
+    let result = if adapter_enabled {
+        tokio::try_join!(body_server, adapter_server).map(|_| ())
+    } else {
+        body_server.await
+    };
     gateway.mark_stopped();
     if let Some(mdns) = mdns {
-        drop(mdns.shutdown());
+        mdns.shutdown().await;
     }
-    result.map(|_| ()).context("BodyLink gateway server")
+    result.context("BodyLink gateway server")
 }
 
 fn validate_config(config: &BodyConfig) -> anyhow::Result<()> {
     anyhow::ensure!(config.enabled, "BodyLink gateway is disabled");
     anyhow::ensure!(
-        config.controller_epoch > 0,
-        "BodyLink controller_epoch must be positive"
-    );
-    anyhow::ensure!(
-        !config.enrolled_device_id.trim().is_empty(),
-        "BodyLink enrolled_device_id is required"
+        (1..=9_007_199_254_740_991).contains(&config.controller_epoch),
+        "BodyLink controller_epoch must be a positive JSON-safe integer"
     );
     anyhow::ensure!(
         !config.trust_key_id.trim().is_empty(),
         "BodyLink trust_key_id is required"
     );
     anyhow::ensure!(
-        !config.adapter_token.expose_secret().is_empty(),
-        "BodyLink adapter_token is required"
-    );
-    anyhow::ensure!(
-        config.port != config.adapter_port,
+        config.adapter_token.expose_secret().is_empty() || config.port != config.adapter_port,
         "BodyLink body and adapter ports must differ"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_audio_gateway_does_not_require_a_speech_adapter() {
+        let config = BodyConfig {
+            enabled: true,
+            trust_key_id: "test-key".into(),
+            ..BodyConfig::default()
+        };
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn body_mdns_service_tracks_host_addresses() {
+        let config = BodyConfig {
+            trust_key_id: "test-kid".into(),
+            ..BodyConfig::default()
+        };
+        let service = body_mdns_service(&config).unwrap();
+
+        assert!(service.is_addr_auto());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_mdns_registers_the_pinned_hostname_and_protocol() {
+        let config = BodyConfig {
+            advertised_hostname: "bobe-body-hub.local".into(),
+            trust_key_id: "test-kid".into(),
+            ..BodyConfig::default()
+        };
+        let command = native_mdns_command(&config, Ipv4Addr::new(192, 0, 2, 10));
+        let arguments = command
+            .as_std()
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(
+            arguments
+                .windows(2)
+                .any(|pair| { pair == ["bobe-body-hub.local", "192.0.2.10"] })
+        );
+        assert!(arguments.iter().any(|value| value == "auth=mtls-pinned"));
+        assert!(arguments.iter().any(|value| value == "kid=test-kid"));
+    }
 }

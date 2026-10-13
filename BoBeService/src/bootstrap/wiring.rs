@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use tracing::info;
-
 use crate::config::Config;
 use crate::config::manager::ConfigManager;
 use crate::runtime::behavior_context::BehaviorContext;
@@ -15,8 +13,6 @@ use crate::runtime::triggers::{CheckinScheduler, CheckinTrigger, GoalTrigger};
 use crate::services::goals::goals_service::GoalsService;
 use crate::services::souls_service::SoulsService;
 use crate::services::user_profile_service::UserProfileService;
-use crate::util::capture::ScreenCapture;
-use crate::util::sse::connection_manager::SseConnectionManager;
 
 use super::infra::Infrastructure;
 use super::repos::Repositories;
@@ -29,33 +25,16 @@ pub(crate) struct Wired {
     pub(crate) config_manager: Arc<ConfigManager>,
 }
 
-impl Wired {
-    pub(crate) async fn wire_sse_callbacks(&self, cm: &Arc<SseConnectionManager>) {
-        let on_connect = {
-            let rs = Arc::clone(&self.runtime_session);
-            Box::new(move || {
-                let rs = Arc::clone(&rs);
-                tokio::spawn(async move { rs.on_connection().await });
-            })
-        };
-        let on_disconnect = {
-            let rs = Arc::clone(&self.runtime_session);
-            Box::new(move || {
-                let rs = Arc::clone(&rs);
-                tokio::spawn(async move { rs.on_disconnection().await });
-            })
-        };
-        cm.set_callbacks(on_connect, on_disconnect).await;
-        info!("bootstrap.sse_callbacks_wired");
-    }
-}
-
 pub(crate) async fn wire(
     config: &Config,
+    config_root: &std::path::Path,
     infra: &Infrastructure,
     repos: &Repositories,
-    workers: Arc<crate::copilot::registry::WorkerRegistry>,
+    workers: Arc<dyn crate::provider::AgentRuntime>,
     goals_service: Arc<GoalsService>,
+    personal_data_lifecycle: Arc<tokio::sync::RwLock<()>>,
+    jobs: Arc<crate::db::agent_job_repo::AgentJobRepo>,
+    runs: Arc<crate::runtime::run_registry::RunRegistry>,
 ) -> Wired {
     let config_arc = &infra.config_arc;
 
@@ -76,7 +55,12 @@ pub(crate) async fn wire(
     let capture_learner = Arc::new(CaptureLearner::new(
         Arc::clone(&workers),
         workers.memory_file(),
+        config.memory.enabled,
     ));
+
+    let turn_admission = crate::runtime::turn_admission::TurnAdmission::with_capacity(
+        config.agent.execution.live_channels,
+    );
 
     let proactive_generator = Arc::new(ProactiveGenerator::new(
         Arc::clone(&workers),
@@ -85,20 +69,19 @@ pub(crate) async fn wire(
         Arc::clone(&repos.cooldown_repo),
         Arc::clone(&behavior_context),
         Arc::clone(config_arc),
+        Arc::clone(&turn_admission),
+        Arc::clone(&infra.connection_manager),
+        Arc::clone(&runs),
     ));
 
-    let screen_capture = Arc::new(ScreenCapture::new());
-
-    let turn_admission = crate::runtime::turn_admission::TurnAdmission::new();
-
     let capture_trigger = CaptureTrigger::new(
-        Arc::clone(&screen_capture),
+        Arc::clone(&infra.connection_manager),
         capture_learner,
         Arc::clone(&proactive_generator),
         Arc::clone(&repos.cooldown_repo),
         Arc::clone(&infra.event_queue),
         Arc::clone(config_arc),
-        Arc::clone(&turn_admission),
+        Arc::clone(&personal_data_lifecycle),
     );
 
     let checkin_trigger = CheckinTrigger::new(
@@ -112,16 +95,15 @@ pub(crate) async fn wire(
         Arc::clone(&conversation_service),
         Arc::clone(&repos.cooldown_repo),
         Arc::clone(config_arc),
-        Arc::clone(&turn_admission),
+        Arc::clone(&personal_data_lifecycle),
     );
 
     let goal_trigger = Arc::new(GoalTrigger::new(
         Arc::clone(&goals_service),
-        Arc::clone(&proactive_generator),
-        Arc::clone(&repos.cooldown_repo),
-        Arc::clone(&infra.event_queue),
+        Arc::clone(&jobs),
+        config.routes.goals.clone(),
         Arc::clone(config_arc),
-        Arc::clone(&turn_admission),
+        Arc::clone(&personal_data_lifecycle),
     ));
 
     let runtime_session = Arc::new(RuntimeSession::new(
@@ -134,17 +116,21 @@ pub(crate) async fn wire(
             Arc::clone(&repos.cooldown_repo),
             Arc::clone(&infra.event_queue),
             behavior_context,
+            jobs,
         )),
         Arc::clone(&conversation_service),
         Arc::clone(&repos.cooldown_repo),
         Arc::clone(&infra.event_queue),
         Arc::clone(config_arc),
+        Arc::clone(&infra.connection_manager),
         turn_admission,
+        runs,
     ));
 
     let config_manager = Arc::new(ConfigManager::new(
         Arc::clone(config_arc),
-        std::path::PathBuf::from(&config.data_dir),
+        config_root.to_path_buf(),
+        Arc::clone(&infra.config_write_lock),
     ));
 
     Wired {

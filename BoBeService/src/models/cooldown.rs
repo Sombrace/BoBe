@@ -5,11 +5,9 @@ use super::ids::CooldownId;
 #[derive(Debug, Clone)]
 pub(crate) struct CooldownInfo {
     pub(crate) remaining: Duration,
-    /// Either `"user_response"` or `"ai_engagement"`.
     pub(crate) cooldown_type: String,
 }
 
-/// Single-row table (enforced by application). Survives restarts (ADR-0003).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
 pub(crate) struct Cooldown {
     pub(crate) id: CooldownId,

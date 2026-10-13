@@ -56,15 +56,49 @@ macro_rules! define_id {
 
 define_id!(ConversationId);
 define_id!(ConversationTurnId);
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, sqlx::Type,
+)]
+#[serde(transparent)]
+#[sqlx(transparent)]
+pub(crate) struct ConversationChannelId(Uuid);
+
+impl fmt::Display for ConversationChannelId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 define_id!(GoalId);
 define_id!(SoulId);
 define_id!(UserProfileId);
 define_id!(CooldownId);
 
-/// Wire-format message id used by SSE consumers (Swift overlay,
-/// response_streamer.rs). The `msg_` prefix and simple-uuid form are part
-/// of the published contract — do not change without coordinating the
-/// client.
+impl ConversationChannelId {
+    pub(crate) const OWNER: Self = Self(Uuid::nil());
+
+    pub(crate) fn for_endpoint(endpoint_id: &str) -> Self {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(format!("bobe-channel:{endpoint_id}").as_bytes());
+        let mut bytes = [0; 16];
+        bytes.copy_from_slice(&digest[..16]);
+        Self(Uuid::from_bytes(bytes))
+    }
+}
+
+impl FromStr for ConversationChannelId {
+    type Err = uuid::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Uuid::parse_str(value).map(Self)
+    }
+}
+
+impl Default for ConversationChannelId {
+    fn default() -> Self {
+        Self::OWNER
+    }
+}
+
 pub(crate) fn new_message_id() -> String {
     message_id_for_turn(ConversationTurnId::new())
 }
@@ -81,19 +115,8 @@ pub(crate) fn conversation_turn_id_from_wire_id(
     Uuid::parse_str(uuid_suffix).map(ConversationTurnId::from)
 }
 
-/// Wire-format voice-turn id. `voice_` prefix is the published contract
-/// the Swift voice client decodes against. Wake-triggered turns prefix
-/// `voice_wake_` so log filtering can separate them — pass `true` for
-/// `wake_triggered`.
-pub(crate) fn new_turn_id(wake_triggered: bool) -> String {
-    let turn_id = ConversationTurnId::new();
-    let uuid = Uuid::from(turn_id);
-    let suffix = uuid.simple();
-    if wake_triggered {
-        format!("voice_wake_{suffix}")
-    } else {
-        format!("voice_{suffix}")
-    }
+pub(crate) fn new_turn_id() -> String {
+    format!("voice_{}", Uuid::from(ConversationTurnId::new()).simple())
 }
 
 #[cfg(test)]
@@ -134,12 +157,6 @@ mod tests {
     }
 
     #[test]
-    fn different_id_types_are_incompatible() {
-        let _goal = GoalId::new();
-        let _soul = SoulId::new();
-    }
-
-    #[test]
     fn wire_message_id_round_trips_to_conversation_turn_id() {
         let turn_id = ConversationTurnId::new();
         let wire_id = message_id_for_turn(turn_id);
@@ -151,12 +168,10 @@ mod tests {
 
     #[test]
     fn voice_wire_id_maps_to_conversation_turn_id() {
-        for wake_triggered in [false, true] {
-            let wire_id = new_turn_id(wake_triggered);
-            let parsed = conversation_turn_id_from_wire_id(&wire_id).expect("valid voice turn id");
-            let uuid = Uuid::from(parsed);
+        let wire_id = new_turn_id();
+        let parsed = conversation_turn_id_from_wire_id(&wire_id).expect("valid voice turn id");
+        let uuid = Uuid::from(parsed);
 
-            assert!(wire_id.ends_with(&uuid.simple().to_string()));
-        }
+        assert!(wire_id.ends_with(&uuid.simple().to_string()));
     }
 }

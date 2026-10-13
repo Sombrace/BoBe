@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import os
 import OSLog
+import Security
 
 private let logger = Logger(subsystem: "com.bobe.app", category: "BackendService")
 
@@ -16,19 +17,11 @@ private enum ManagedProcessIdentity {
     case unverifiable
 }
 
-/// Seconds we wait between SIGTERM and SIGKILL during graceful daemon
-/// stop. Past this the daemon is considered wedged.
-private let terminateGraceSeconds: TimeInterval = 12
-/// Initial poll cadence after spawn; ramps geometrically toward the cap.
+private let terminateGrace: Duration = .seconds(45)
 private let healthCheckInitialDelay: TimeInterval = 0.2
-/// Multiplier applied to the poll cadence after each failure.
 private let healthCheckBackoffMultiplier: Double = 1.5
-/// Maximum delay between consecutive health checks.
 private let healthCheckMaxDelay: TimeInterval = 5.0
-/// Total number of health-check attempts before giving up.
 private let healthCheckMaxAttempts = 30
-/// In-memory stderr ring capacity for the daemon child; older lines are
-/// discarded so a stuck process doesn't bloat the host.
 private let stderrBufferMaxLines = 50
 
 actor BackendService {
@@ -38,49 +31,32 @@ actor BackendService {
     private var state: ServiceState = .stopped
     private var stopping = false
     private var restartCount = 0
+    private var readySince: ContinuousClock.Instant?
     private var lifecycleGeneration: UInt64 = 0
     private var restartTask: Task<Void, Never>?
+    private var stopTask: Task<Void, Never>?
+    private var lastStartManagedLocal: Bool?
     private let maxRestartAttempts = 3
     private let dataDir: URL
     private let pidFilePath: URL
     private(set) var lastError: String?
-    /// Non-fatal — daemon /health OK but a subsystem reported degraded.
     private(set) var startupWarning: String?
-    /// Multi-cast continuations — every `stateStream` subscriber gets its
-    /// own continuation appended here, so two consumers (`BobeStore` and
-    /// `SettingsStore`) both receive every transition. Prior implementation
-    /// was a single `AsyncStream` with one buffered continuation, which is
-    /// single-subscriber — whichever consumer hit `next()` first won every
-    /// value and the other starved. `SettingsStore`'s "refetch on daemon
-    /// recovery" silently never fired under that model.
     private var stateContinuations: [UUID: AsyncStream<ServiceState>.Continuation] = [:]
 
     private init() {
-        self.dataDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(BobePaths.dataDirName)
+        self.dataDir = DaemonConfig.managedDataDirectory
         self.pidFilePath = self.dataDir.appendingPathComponent("bobe-service.pid")
     }
 
-    /// Returns a fresh `AsyncStream<ServiceState>` for each subscriber. The
-    /// continuation is registered in `stateContinuations` and removed on
-    /// stream termination so subscribers that go away don't leak.
-    nonisolated var stateStream: AsyncStream<ServiceState> {
-        AsyncStream { continuation in
-            let id = UUID()
-            Task { await self.registerContinuation(id: id, continuation: continuation) }
-            continuation.onTermination = { @Sendable _ in
-                Task { await self.unregisterContinuation(id: id) }
-            }
-        }
-    }
-
-    private func registerContinuation(
-        id: UUID,
-        continuation: AsyncStream<ServiceState>.Continuation
-    ) {
+    var stateStream: AsyncStream<ServiceState> {
+        let (stream, continuation) = AsyncStream.makeStream(of: ServiceState.self)
+        let id = UUID()
         self.stateContinuations[id] = continuation
-        // Emit the current state on subscribe so late subscribers see the
-        // present state, not just future transitions.
         continuation.yield(self.state)
+        continuation.onTermination = { @Sendable _ in
+            Task { await self.unregisterContinuation(id: id) }
+        }
+        return stream
     }
 
     private func unregisterContinuation(id: UUID) {
@@ -95,10 +71,32 @@ actor BackendService {
     }
 
     func start() async throws {
-        guard DaemonConfig.endpoint.managesLocalProcess else {
+        if let stopTask { await stopTask.value }
+        let selection = EndpointStore.shared.selection
+        let managesLocalProcess = DaemonConfig.endpoint.managesLocalProcess
+        if let lastStartManagedLocal, lastStartManagedLocal != managesLocalProcess {
+            await self.stop()
+        }
+        guard EndpointStore.shared.selection == selection else {
+            throw BackendServiceError.stoppedDuringHealthCheck
+        }
+        self.lastStartManagedLocal = managesLocalProcess
+
+        guard managesLocalProcess else {
+            self.lifecycleGeneration &+= 1
+            let generation = self.lifecycleGeneration
+            self.stopping = false
             self.transition(to: .starting)
-            _ = try await DaemonClient.shared.health()
-            self.transition(to: .ready)
+            do {
+                _ = try await DaemonClient.shared.health()
+                guard generation == self.lifecycleGeneration, !self.stopping else {
+                    throw BackendServiceError.stoppedDuringHealthCheck
+                }
+                self.transition(to: .ready)
+            } catch {
+                if generation == self.lifecycleGeneration { self.transition(to: .stopped) }
+                throw error
+            }
             return
         }
         guard self.state != .starting, self.state != .ready else { return }
@@ -106,33 +104,49 @@ actor BackendService {
         self.restartTask?.cancel()
         self.restartTask = nil
         self.stopping = false
-
-        await self.cleanStalePID()
-        try self.createDataDirIfNeeded()
-
+        let generation = self.lifecycleGeneration
         self.transition(to: .starting)
         do {
+            await self.cleanStalePID()
+            guard generation == self.lifecycleGeneration, !self.stopping else {
+                throw BackendServiceError.stoppedDuringHealthCheck
+            }
+            try self.createDataDirIfNeeded()
             try await self.spawnAndWaitHealthy()
         } catch {
-            await self.stop()
+            if generation == self.lifecycleGeneration { await self.stop() }
             throw error
         }
     }
 
     func stop() async {
-        guard DaemonConfig.endpoint.managesLocalProcess else {
-            self.transition(to: .stopped)
-            return
-        }
         self.lifecycleGeneration &+= 1
         self.restartTask?.cancel()
         self.restartTask = nil
         self.stopping = true
-        if self.process == nil {
-            self.cleanup()
+        self.readySince = nil
+        await self.settleOwnedProcess()
+    }
+
+    private func settleOwnedProcess() async {
+        if let stopTask {
+            await stopTask.value
             return
         }
-        guard let proc = process, proc.isRunning else {
+        let operation = Task {
+            await self.stopOwnedProcess()
+            self.stopTask = nil
+        }
+        self.stopTask = operation
+        await operation.value
+    }
+
+    private func stopOwnedProcess() async {
+        guard let proc = self.process else {
+            self.transition(to: .stopped)
+            return
+        }
+        guard proc.isRunning else {
             self.cleanup()
             return
         }
@@ -140,32 +154,168 @@ actor BackendService {
         logger.info("Stopping bobe backend (PID: \(proc.processIdentifier))")
         proc.terminate()
 
-        let deadline = Date.now.addingTimeInterval(terminateGraceSeconds)
-        while proc.isRunning, Date.now < deadline {
-            try? await Task.sleep(for: .milliseconds(100))
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: terminateGrace)
+        while proc.isRunning, clock.now < deadline {
+            try? await clock.sleep(for: .milliseconds(100))
         }
 
         if proc.isRunning {
             logger.warning("bobe backend didn't exit gracefully, sending SIGKILL")
             kill(proc.processIdentifier, SIGKILL)
+            let killDeadline = clock.now.advanced(by: .seconds(5))
+            while proc.isRunning, clock.now < killDeadline {
+                try? await clock.sleep(for: .milliseconds(100))
+            }
         }
-
+        guard !proc.isRunning else {
+            self.lastError = "The managed daemon did not stop. No replacement was started."
+            logger.error("Managed daemon has not exited; retaining process ownership")
+            self.transition(to: .fatal)
+            return
+        }
         self.cleanup()
         logger.info("bobe backend stopped")
     }
 
-    /// User-initiated restart from the overlay's "Daemon down" CTA. Stops
-    /// the current process (if any) then starts fresh. Resets the auto-
-    /// restart counter so a manual retry isn't blocked by the backoff.
     func userRestart() async throws {
+        guard DaemonConfig.endpoint.canRestartRuntime else {
+            throw BackendServiceError.restartUnavailable
+        }
         self.restartCount = 0
         await self.stop()
         try await self.start()
     }
 
-    // MARK: - Spawn & Health
+
+    private struct LocalEnrollmentRequest: Encodable {
+        let bootstrapSecret: String
+        let endpointId: String
+        let label: String
+        let protocolMin: Int
+        let protocolMax: Int
+        let capabilities: [String: Bool]
+
+        enum CodingKeys: String, CodingKey {
+            case bootstrapSecret = "bootstrap_secret"
+            case endpointId = "endpoint_id"
+            case label
+            case protocolMin = "protocol_min"
+            case protocolMax = "protocol_max"
+            case capabilities
+        }
+    }
+
+    private struct LocalEnrollmentResponse: Decodable {
+        let endpointId: String
+        let credential: String
+        let runtimeAuthorityId: UUID
+        let runtimeAuthorityEpoch: Int
+
+        enum CodingKeys: String, CodingKey {
+            case endpointId = "endpoint_id"
+            case credential
+            case runtimeAuthorityId = "runtime_authority_id"
+            case runtimeAuthorityEpoch = "runtime_authority_epoch"
+        }
+    }
+
+    private func enrollManagedLocal(bootstrapSecret: Data) async throws {
+        let selection = EndpointStore.shared.selection
+        guard let profile = EndpointStore.shared.profile,
+              profile.mode == .managedLocal
+        else { throw BackendServiceError.spawnFailed("Managed endpoint profile is unavailable") }
+        var request = URLRequest(
+            url: profile.baseURL.appendingPathComponent("v2/local-enrollment/complete")
+        )
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try Self.localEnrollmentBody(
+            bootstrapSecret: bootstrapSecret,
+            endpointId: SurfaceIdentity.current()
+        )
+        let session = DaemonTransportPolicy.session(
+            for: .managedLocal(bearerToken: nil),
+            purpose: .attach
+        )
+        var enrollmentResponse: (Data, URLResponse)?
+        var delay = healthCheckInitialDelay
+        var lastConnectionError: (any Error)?
+        for attempt in 1 ... healthCheckMaxAttempts {
+            if self.stopping || EndpointStore.shared.selection != selection {
+                throw BackendServiceError.stoppedDuringHealthCheck
+            }
+            if self.process?.isRunning != true { throw BackendServiceError.processExitedDuringHealthCheck }
+
+            do {
+                enrollmentResponse = try await session.data(for: request)
+                break
+            } catch {
+                lastConnectionError = error
+                guard attempt < healthCheckMaxAttempts else { break }
+                logger.debug(
+                    "Enrollment connection attempt \(attempt)/\(healthCheckMaxAttempts) failed, retrying in \(delay)s"
+                )
+                try await Task.sleep(for: .seconds(delay))
+                delay = min(delay * healthCheckBackoffMultiplier, healthCheckMaxDelay)
+            }
+        }
+        guard var (data, response) = enrollmentResponse else {
+            throw lastConnectionError ?? BackendServiceError.healthCheckFailed
+        }
+        if (response as? HTTPURLResponse)?.statusCode == 409 {
+            request.httpBody = try Self.localEnrollmentBody(
+                bootstrapSecret: bootstrapSecret,
+                endpointId: SurfaceIdentity.renew()
+            )
+            (data, response) = try await session.data(for: request)
+        }
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw BackendServiceError.spawnFailed("Managed endpoint enrollment failed")
+        }
+        guard !self.stopping, EndpointStore.shared.selection == selection else {
+            throw BackendServiceError.stoppedDuringHealthCheck
+        }
+        let result = try JSONDecoder().decode(LocalEnrollmentResponse.self, from: data)
+        let reference = profile.credentialReference ?? UUID().uuidString
+        let updated = EndpointProfile(
+            id: profile.id,
+            mode: profile.mode,
+            baseURL: profile.baseURL,
+            runtimeAuthorityId: result.runtimeAuthorityId,
+            runtimeAuthorityEpoch: result.runtimeAuthorityEpoch,
+            endpointId: UUID(uuidString: result.endpointId),
+            friendlyName: profile.friendlyName,
+            credentialReference: reference,
+            trustMode: .loopback
+        )
+        try EndpointStore.shared.persist(updated, credential: result.credential)
+    }
+
+    private static func localEnrollmentBody(bootstrapSecret: Data, endpointId: UUID) throws -> Data {
+        try JSONEncoder().encode(
+            LocalEnrollmentRequest(
+                bootstrapSecret: bootstrapSecret.base64EncodedString(),
+                endpointId: endpointId.uuidString,
+                label: Host.current().localizedName ?? "This Mac",
+                protocolMin: Int(AttachWire.protocolMin),
+                protocolMax: Int(AttachWire.protocolMax),
+                capabilities: [
+                    "microphone": true,
+                    "playback": true,
+                    "local_stt": true,
+                    "local_tts": true,
+                    "screen_context": true,
+                ]
+            )
+        )
+    }
 
     private func spawnAndWaitHealthy() async throws {
+        guard self.process?.isRunning != true else {
+            throw BackendServiceError.spawnFailed("The previous managed daemon is still running")
+        }
+        let generation = self.lifecycleGeneration
         let binaryPath = self.findBinaryPath()
         guard let binaryPath else {
             if ProcessInfo.processInfo.environment["BOBE_DEV"] != nil {
@@ -186,26 +336,39 @@ actor BackendService {
         proc.executableURL = URL(fileURLWithPath: binaryPath)
         proc.arguments = [
             "serve",
-            "--host", DaemonConfig.defaultHost,
-            "--port", String(DaemonConfig.defaultPort),
+            "--port", String(DaemonConfig.managedPort),
+            "--managed-bootstrap-stdin",
         ]
         proc.currentDirectoryURL = self.dataDir
 
         var env = ProcessInfo.processInfo.environment
         env["HOME"] = FileManager.default.homeDirectoryForCurrentUser.path
         env["BOBE_DATA_DIR"] = self.dataDir.path
-        guard let copilotCLIPath = Self.resolveCopilotCLIPath(
+        guard let agentRuntime = Self.resolveAgentRuntime(
             environment: env,
             bundleURL: Bundle.main.bundleURL,
-            isExecutableFile: { FileManager.default.isExecutableFile(atPath: $0) }
+            isExecutableFile: { FileManager.default.isExecutableFile(atPath: $0) },
+            isReadableFile: { FileManager.default.isReadableFile(atPath: $0) }
         ) else {
             self.transition(to: .fatal)
-            self.lastError = "Copilot CLI helper is missing. Try reinstalling BoBe."
-            throw BackendServiceError.spawnFailed("Copilot CLI helper not found")
+            self.lastError = "The bundled agent runtime is missing. Try reinstalling BoBe."
+            throw BackendServiceError.spawnFailed("Node or BoBe agent files not found")
         }
-        env["COPILOT_CLI_PATH"] = copilotCLIPath
+        env["BOBE_NODE_PATH"] = agentRuntime.node
+        env["BOBE_AGENT_ENTRY"] = agentRuntime.entry
         proc.environment = env
 
+        let bootstrapPipe = Pipe()
+        var bootstrapSecret = Data(count: 32)
+        defer { bootstrapSecret.resetBytes(in: bootstrapSecret.startIndex..<bootstrapSecret.endIndex) }
+        let status = bootstrapSecret.withUnsafeMutableBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else { return errSecParam }
+            return SecRandomCopyBytes(kSecRandomDefault, bytes.count, baseAddress)
+        }
+        guard status == errSecSuccess else {
+            throw BackendServiceError.spawnFailed("Could not create local enrollment secret")
+        }
+        proc.standardInput = bootstrapPipe
         let outPipe = Pipe()
         let errPipe = Pipe()
         proc.standardOutput = outPipe
@@ -226,26 +389,12 @@ actor BackendService {
             }
         }
 
-        if self.isPortInUse(DaemonConfig.defaultPort) {
-            await self.cleanStalePID()
-
-            if self.isPortInUse(DaemonConfig.defaultPort) {
-                self.lastError =
-                    "Port \(DaemonConfig.defaultPort) is already in use by another application. "
-                        + "Close the conflicting application, then relaunch BoBe."
-                throw BackendServiceError.healthCheckFailed
-            }
+        if self.isPortInUse(DaemonConfig.managedPort) {
+            self.lastError =
+                "Port \(DaemonConfig.managedPort) is already in use by another application. "
+                    + "Close the conflicting application, then relaunch BoBe."
+            throw BackendServiceError.healthCheckFailed
         }
-
-        do {
-            try proc.run()
-        } catch {
-            self.transition(to: .fatal)
-            throw BackendServiceError.spawnFailed(error.localizedDescription)
-        }
-
-        self.process = proc
-        self.writePID(proc.processIdentifier)
 
         proc.terminationHandler = { [weak self] terminatedProc in
             Task { [weak self] in
@@ -255,10 +404,39 @@ actor BackendService {
                 )
             }
         }
+        do {
+            try proc.run()
+            self.process = proc
+            self.writePID(proc.processIdentifier)
+            try bootstrapPipe.fileHandleForWriting.write(contentsOf: bootstrapSecret)
+            try bootstrapPipe.fileHandleForWriting.close()
+        } catch {
+            self.transition(to: .fatal)
+            throw BackendServiceError.spawnFailed(error.localizedDescription)
+        }
 
         do {
+            let existingCredential = EndpointStore.shared.profile.flatMap(
+                EndpointStore.shared.credential
+            )
+            if let profile = EndpointStore.shared.profile,
+               profile.mode == .managedLocal,
+               let existingCredential,
+               (try? await EndpointAttachService.shared.attach(
+                   profile: profile,
+                   credential: existingCredential
+               )) != nil {
+                bootstrapSecret.resetBytes(in: bootstrapSecret.startIndex..<bootstrapSecret.endIndex)
+            } else {
+                try await self.enrollManagedLocal(bootstrapSecret: bootstrapSecret)
+                bootstrapSecret.resetBytes(in: bootstrapSecret.startIndex..<bootstrapSecret.endIndex)
+            }
             try await self.waitForHealth()
+            guard generation == self.lifecycleGeneration, self.process === proc, !self.stopping else {
+                throw BackendServiceError.stoppedDuringHealthCheck
+            }
         } catch {
+            guard generation == self.lifecycleGeneration else { throw error }
             let captured = stderrBuf.text
             if !captured.isEmpty {
                 self.lastError = captured
@@ -267,11 +445,10 @@ actor BackendService {
             throw error
         }
         self.transition(to: .ready)
-        self.restartCount = 0
+        self.readySince = ContinuousClock().now
         logger.info("bobe backend healthy (PID: \(proc.processIdentifier))")
     }
 
-    /// Daemon returns 200 even on degraded DB — inspect body, not status.
     private func waitForHealth() async throws {
         var delay = healthCheckInitialDelay
 
@@ -281,8 +458,8 @@ actor BackendService {
 
             do {
                 let response = try await DaemonClient.shared.health()
-                if let services = response.services, services.database != "ok" {
-                    logger.warning("Backend database degraded: \(services.database, privacy: .public)")
+                if response.services.database != "ok" {
+                    logger.warning("Backend database degraded: \(response.services.database, privacy: .public)")
                     self.startupWarning = L10n.tr("app.service_warning.database_degraded")
                 }
                 return
@@ -295,7 +472,6 @@ actor BackendService {
         throw BackendServiceError.healthCheckFailed
     }
 
-    // MARK: - Crash Recovery
 
     private func handleExit(pid: Int32, exitCode: Int) {
         guard self.process?.processIdentifier == pid else {
@@ -308,6 +484,10 @@ actor BackendService {
         guard !self.stopping else { return }
 
         logger.warning("bobe backend exited unexpectedly (code: \(exitCode))")
+        if let readySince, readySince.duration(to: ContinuousClock().now) >= .seconds(60) {
+            self.restartCount = 0
+        }
+        self.readySince = nil
         if self.state == .starting {
             self.transition(to: .stopped)
             return
@@ -350,27 +530,25 @@ actor BackendService {
         } catch {
             logger.error("Restart failed: \(error.localizedDescription, privacy: .public)")
             guard generation == self.lifecycleGeneration else { return }
-            if let proc = self.process, proc.isRunning {
-                proc.terminate()
-            }
-            self.process = nil
+            await self.settleOwnedProcess()
+            guard generation == self.lifecycleGeneration, !self.stopping, self.process == nil else { return }
             self.transition(to: .crashed)
             self.scheduleAutomaticRestart()
         }
     }
 
-    // MARK: - PID File Management
 
     private func writePID(_ pid: Int32) {
-        try? "\(pid)".write(to: self.pidFilePath, atomically: true, encoding: .utf8)
+        do { try "\(pid)".write(to: self.pidFilePath, atomically: true, encoding: .utf8) }
+        catch { logger.error("Could not save managed daemon PID: \(error.localizedDescription, privacy: .public)") }
     }
 
     private func cleanStalePID() async {
         guard let pidStr = try? String(contentsOf: pidFilePath, encoding: .utf8),
               let pid = Int32(pidStr.trimmingCharacters(in: .whitespacesAndNewlines))
         else {
-            if self.isPortInUse(DaemonConfig.defaultPort) {
-                logger.warning("Port \(DaemonConfig.defaultPort) is in use but no PID file exists — another process may be bound")
+            if self.isPortInUse(DaemonConfig.managedPort) {
+                logger.warning("Port \(DaemonConfig.managedPort) is in use but no PID file exists — another process may be bound")
             }
             return
         }
@@ -379,25 +557,29 @@ actor BackendService {
         case let .verifiedDaemon(path):
             logger.info("Cleaning stale bobe daemon (PID: \(pid), path: \(path, privacy: .public))")
             kill(pid, SIGTERM)
-            try? await Task.sleep(for: .seconds(2))
-            if kill(pid, 0) == 0 {
+            let clock = ContinuousClock()
+            let deadline = clock.now.advanced(by: terminateGrace)
+            while kill(pid, 0) == 0, clock.now < deadline {
+                try? await clock.sleep(for: .milliseconds(100))
+            }
+            if case .verifiedDaemon = self.inspectManagedProcess(pid: pid) {
                 kill(pid, SIGKILL)
             }
         case let .otherProcess(path):
             logger.warning(
                 "PID file points to a different live process (PID: \(pid), path: \(path, privacy: .public)); refusing to terminate it"
             )
-            if self.isPortInUse(DaemonConfig.defaultPort) {
-                logger.warning("Port \(DaemonConfig.defaultPort) remains in use by another process")
+            if self.isPortInUse(DaemonConfig.managedPort) {
+                logger.warning("Port \(DaemonConfig.managedPort) remains in use by another process")
             }
         case .notRunning:
-            if self.isPortInUse(DaemonConfig.defaultPort) {
-                logger.warning("Port \(DaemonConfig.defaultPort) in use but PID \(pid) from PID file is not running — stale PID file")
+            if self.isPortInUse(DaemonConfig.managedPort) {
+                logger.warning("Port \(DaemonConfig.managedPort) in use but PID \(pid) from PID file is not running — stale PID file")
             }
         case .unverifiable:
             logger.warning("Could not verify PID \(pid) from PID file as bobe-daemon; refusing to terminate it")
-            if self.isPortInUse(DaemonConfig.defaultPort) {
-                logger.warning("Port \(DaemonConfig.defaultPort) remains in use by another process")
+            if self.isPortInUse(DaemonConfig.managedPort) {
+                logger.warning("Port \(DaemonConfig.managedPort) remains in use by another process")
             }
         }
         try? FileManager.default.removeItem(at: self.pidFilePath)
@@ -465,24 +647,31 @@ actor BackendService {
         try FileManager.default.createDirectory(at: self.dataDir, withIntermediateDirectories: true)
     }
 
-    // MARK: - Binary Discovery
 
-    nonisolated static func resolveCopilotCLIPath(
+    struct AgentRuntimePaths: Equatable, Sendable {
+        let node: String
+        let entry: String
+    }
+
+    nonisolated static func resolveAgentRuntime(
         environment: [String: String],
         bundleURL: URL,
-        isExecutableFile: (String) -> Bool
-    ) -> String? {
-        let helperPath = bundleURL
-            .appendingPathComponent("Contents/Helpers/copilot", isDirectory: false)
-            .path
-        if isExecutableFile(helperPath) {
-            return helperPath
+        isExecutableFile: (String) -> Bool,
+        isReadableFile: (String) -> Bool
+    ) -> AgentRuntimePaths? {
+        let bundled = AgentRuntimePaths(
+            node: bundleURL.appendingPathComponent("Contents/MacOS/node").path,
+            entry: bundleURL.appendingPathComponent("Contents/Resources/agent/dist/main.js").path
+        )
+        if isExecutableFile(bundled.node), isReadableFile(bundled.entry) {
+            return bundled
         }
 
-        if let configuredPath = environment["COPILOT_CLI_PATH"],
-           !configuredPath.isEmpty,
-           isExecutableFile(configuredPath) {
-            return configuredPath
+        if let node = environment["BOBE_NODE_PATH"],
+           let entry = environment["BOBE_AGENT_ENTRY"],
+           node.hasPrefix("/"), entry.hasPrefix("/"),
+           isExecutableFile(node), isReadableFile(entry) {
+            return AgentRuntimePaths(node: node, entry: entry)
         }
         return nil
     }
@@ -494,10 +683,6 @@ actor BackendService {
             if FileManager.default.isExecutableFile(atPath: siblingPath) {
                 return siblingPath
             }
-        }
-
-        if let bundlePath = Bundle.main.path(forResource: "bobe-daemon", ofType: nil) {
-            return bundlePath
         }
 
         let devPaths = [
@@ -517,6 +702,7 @@ enum BackendServiceError: Error, LocalizedError {
     case spawnFailed(String)
     case stoppedDuringHealthCheck
     case processExitedDuringHealthCheck
+    case restartUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -524,6 +710,7 @@ enum BackendServiceError: Error, LocalizedError {
         case let .spawnFailed(msg): "Failed to start backend: \(msg)"
         case .stoppedDuringHealthCheck: "Service was stopped during health check"
         case .processExitedDuringHealthCheck: "Backend process exited during health check"
+        case .restartUnavailable: "This BoBe runtime is managed outside the app"
         }
     }
 }

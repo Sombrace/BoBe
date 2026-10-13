@@ -1,0 +1,117 @@
+name: BoBe
+options:
+  bundleIdPrefix: com.bobe
+  deploymentTarget:
+    iOS: "26.0"
+  xcodeVersion: "26.0"
+  generateEmptyDirectories: false
+  groupSortPosition: none
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    ENABLE_PREVIEWS: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+    GCC_TREAT_WARNINGS_AS_ERRORS: YES
+    CODE_SIGN_STYLE: Automatic
+    DEAD_CODE_STRIPPING: YES
+  configs:
+    Debug:
+      SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+      SWIFT_COMPILATION_MODE: singlefile
+      GCC_OPTIMIZATION_LEVEL: "0"
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+      DEBUG_INFORMATION_FORMAT: "dwarf"
+      ENABLE_TESTABILITY: YES
+    Release:
+      SWIFT_OPTIMIZATION_LEVEL: "-O"
+      SWIFT_COMPILATION_MODE: wholemodule
+      GCC_OPTIMIZATION_LEVEL: s
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: ""
+      DEBUG_INFORMATION_FORMAT: "dwarf-with-dsym"
+      ENABLE_TESTABILITY: NO
+
+targets:
+  PairingClient:
+    type: library.static
+    platform: iOS
+    sources:
+      - path: ../BoBeMacUI/PairingClient
+        group: Shared
+        excludes:
+          - PairingClient-Bridging-Header.h
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bobe.ios.pairing-client
+        SWIFT_OBJC_BRIDGING_HEADER: ../BoBeMacUI/PairingClient/PairingClient-Bridging-Header.h
+  BoBe:
+    type: application
+    platform: iOS
+    sources:
+      - path: BoBe
+        excludes:
+          - Resources/Info.plist
+      - path: ../BoBeMacUI/BoBe/Design/Character
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/Design/BobeMotion.swift
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/Design/BobeMaterial.swift
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/Theme/ThemeConfig.swift
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/Utilities/Localization.swift
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/Utilities/Bundle+Resources.swift
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/Services/PairingExchange.swift
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/Services/PairingTrustDelegate.swift
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/Services/SurfaceIdentity.swift
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/DTOs/APITypes.swift
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/DTOs/AgentWorkTypes.swift
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/DTOs/AttachTypes.swift
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/DTOs/ConversationTypes.swift
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/DTOs/EntityTypes.swift
+        group: Shared
+      - path: ../BoBeMacUI/BoBe/DTOs/SettingsTypes.swift
+        group: Shared
+    dependencies:
+      - target: PairingClient
+      - framework: ../build/pairing-ios/BoBePairingFFI.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bobe.ios
+        PRODUCT_NAME: BoBe
+        INFOPLIST_FILE: BoBe/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        OTHER_LDFLAGS: "$(inherited) -framework Security"
+    preBuildScripts:
+      - name: SwiftLint
+        basedOnDependencyAnalysis: false
+        shell: /bin/bash
+        script: |
+          SWIFTLINT="${PROJECT_DIR}/../.tools/bin/swiftlint"
+          if [[ ! -x "$SWIFTLINT" ]]; then
+            echo "error: Project SwiftLint is missing. Run: scripts/tasks/bootstrap-tools.sh"
+            exit 1
+          fi
+          cd "${PROJECT_DIR}" && "$SWIFTLINT" lint --quiet
+
+schemes:
+  BoBe:
+    build:
+      targets:
+        BoBe: all
+    run:
+      config: Debug

@@ -1,5 +1,3 @@
-//! Goals are file-backed at `~/.bobe/goals/<id>.md`; chat agent edits via SDK tools hit the same `GoalsService`.
-
 use std::sync::Arc;
 
 use axum::Json;

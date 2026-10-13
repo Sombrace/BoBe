@@ -1,11 +1,9 @@
-# SwiftLint configuration for BoBe macOS desktop app
 included:
   - BoBe
 excluded:
   - .build
   - Package.swift
 
-# Rules matching macOS SwiftUI best practices
 disabled_rules:
   - trailing_comma
   - identifier_name

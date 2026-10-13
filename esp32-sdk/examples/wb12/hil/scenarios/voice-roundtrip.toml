@@ -1,0 +1,44 @@
+schema_version = 2
+name = "voice-roundtrip"
+description = "Drive a real BodyLink capture/playback turn with nonce-derived acoustic evidence."
+claim = "physical"
+requires = [
+    "wb12",
+    "pico-fixture",
+    "openwrt",
+    "bodylink-stub",
+    "audio-fixture",
+    "fixed-camera-rig",
+]
+
+[[steps]]
+id = "start-bodylink"
+operation = "bodylink_stub"
+scenario = "voice-roundtrip"
+timeout_seconds = 300
+background = true
+
+[[steps]]
+id = "press-action"
+operation = "fixture_press"
+control = "action"
+duration_ms = 1800
+
+[[steps]]
+id = "capture-speaker"
+operation = "capture_audio"
+direction = "speaker"
+duration_seconds = 8
+
+[[steps]]
+id = "capture-speaking-frame"
+operation = "capture_frame"
+state = "speaking"
+
+[[cleanup]]
+id = "release-fixture"
+operation = "fixture_release_all"
+
+[[cleanup]]
+id = "stop-bodylink"
+operation = "bodylink_stop"

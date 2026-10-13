@@ -6,11 +6,8 @@ struct BehaviorPanel: View {
     @State private var newCheckinTime: Date = Calendar.current.date(
         bySettingHour: 9, minute: 0, second: 0, of: .now
     ) ?? .now
-    @State private var bannerDismissed = false
     @Environment(\.theme) private var theme
 
-    /// Format check-in time as "HH:mm" for the daemon. Pinning to POSIX keeps
-    /// the wire format stable across locales (e.g., 24h vs 12h users).
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
@@ -18,20 +15,13 @@ struct BehaviorPanel: View {
         return formatter
     }()
 
-    private var visibleRestartFields: Set<String> {
-        self.bannerDismissed ? [] : self.store.restartFields
-    }
-
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if !self.visibleRestartFields.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                if !self.store.restartFields.isEmpty {
                     RestartRequiredBanner(
-                        fields: self.visibleRestartFields,
-                        onDismiss: {
-                            self.bannerDismissed = true
-                            self.store.clearRestartFields()
-                        }
+                        fields: self.store.restartFields,
+                        onDismiss: { self.store.clearRestartFields() }
                     )
                 }
 
@@ -39,11 +29,15 @@ struct BehaviorPanel: View {
                     SettingsErrorBanner(message: error)
                 }
 
-                if let savedMessage = self.store.savedMessage {
-                    SettingsSavedToast(message: savedMessage)
-                }
-
-                if self.store.settings != nil {
+                if let settings = self.store.settings {
+                    PresenceDial(
+                        level: Self.level(for: settings),
+                        onSelect: self.apply
+                    )
+                    if let savedMessage = self.store.savedMessage {
+                        SettingsSavedToast(message: savedMessage)
+                            .padding(.horizontal, 6)
+                    }
                     self.captureSection
                     self.checkinSection
                     self.conversationSection
@@ -59,22 +53,47 @@ struct BehaviorPanel: View {
                     .padding(.top, 40)
                 }
             }
+            .frame(maxWidth: BobeMetrics.pageMaxWidth, alignment: .leading)
             .padding(24)
+            .frame(maxWidth: .infinity)
+            .animation(BobeMotion.standard, value: self.store.savedMessage)
         }
         .task { await self.store.loadIfNeeded() }
         .onDisappear { self.store.cancelToast() }
     }
 
+    static func level(for settings: DaemonSettings) -> ProactivityLevel? {
+        switch (settings.captureEnabled, settings.checkinEnabled) {
+        case (false, false): .quiet
+        case (true, false): .balanced
+        case (true, true): .proactive
+        case (false, true): nil
+        }
+    }
+
+    private func apply(_ level: ProactivityLevel) {
+        let target = level.settings
+        self.store.update {
+            $0.captureEnabled = target.captureEnabled
+            $0.captureIntervalSeconds = target.captureIntervalSeconds
+            $0.checkinEnabled = target.checkinEnabled
+        }
+    }
+
     private var captureSection: some View {
         CollapsibleSection(
             title: L10n.tr("settings.behavior.capture.title"),
-            icon: "camera.fill",
+            icon: "viewfinder",
             description: L10n.tr("settings.behavior.capture.description"),
-            toggleBinding: self.store.binding(\.captureEnabled, fallback: false, touched: "capture_enabled")
+            toggleBinding: Binding(
+                get: { self.store.settings?.captureEnabled ?? false },
+                set: { enabled in self.store.update { $0.captureEnabled = enabled } }
+            ),
+            initiallyExpanded: false
         ) {
             SettingsRow(label: L10n.tr("settings.behavior.capture.interval"), suffix: L10n.tr("settings.units.seconds")) {
                 DebouncedNumberInput(
-                    value: self.store.binding(\.captureIntervalSeconds, fallback: 60, touched: "capture_interval_seconds"),
+                    value: self.store.binding(\.captureIntervalSeconds, fallback: 120),
                     range: 1 ... 600
                 )
             }
@@ -104,33 +123,43 @@ struct BehaviorPanel: View {
             title: L10n.tr("settings.behavior.checkins.title"),
             icon: "clock.fill",
             description: L10n.tr("settings.behavior.checkins.description"),
-            toggleBinding: self.store.binding(\.checkinEnabled, fallback: false, touched: "checkin_enabled")
+            toggleBinding: self.store.binding(\.checkinEnabled, fallback: false),
+            initiallyExpanded: false
         ) {
             SettingsRow(label: L10n.tr("settings.behavior.checkins.schedule")) {
                 EmptyView()
             }
             FlowLayout(spacing: 6) {
                 ForEach(self.store.settings?.checkinTimes ?? [], id: \.self) { time in
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(self.theme.colors.primary)
                         Text(time)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.system(size: 12.5, weight: .medium).monospacedDigit())
+                            .foregroundStyle(self.theme.colors.text)
                         Button {
                             self.removeCheckinTime(time)
                         } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 10))
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .bold))
                                 .foregroundStyle(self.theme.colors.textMuted)
+                                .frame(width: 16, height: 16)
+                                .contentShape(Circle())
                         }
-                        .bobeButton(.ghost, size: .mini)
+                        .buttonStyle(BobePressStyle(scale: 0.85))
                         .accessibilityLabel(
                             L10n.tr("settings.behavior.checkins.remove_time_accessibility_format", time)
                         )
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(self.theme.colors.border.opacity(0.5)))
+                    .padding(.leading, 10)
+                    .padding(.trailing, 5)
+                    .frame(height: 28)
+                    .bobeWell(in: .bobePill)
+                    .transition(.bobePop())
                 }
             }
+            .animation(BobeMotion.snappy, value: self.store.settings?.checkinTimes)
 
             HStack(spacing: 6) {
                 DatePicker(
@@ -147,7 +176,7 @@ struct BehaviorPanel: View {
 
             SettingsRow(label: L10n.tr("settings.behavior.checkins.jitter"), suffix: L10n.tr("settings.units.minutes")) {
                 DebouncedNumberInput(
-                    value: self.store.binding(\.checkinJitterMinutes, fallback: 0, touched: "checkin_jitter_minutes"),
+                    value: self.store.binding(\.checkinJitterMinutes, fallback: 0),
                     range: 0 ... 30
                 )
             }
@@ -158,7 +187,8 @@ struct BehaviorPanel: View {
         CollapsibleSection(
             title: L10n.tr("settings.behavior.conversation.title"),
             icon: "message.fill",
-            description: L10n.tr("settings.behavior.conversation.description")
+            description: L10n.tr("settings.behavior.conversation.description"),
+            initiallyExpanded: false
         ) {
             SettingsRow(
                 label: L10n.tr("settings.behavior.conversation.auto_close_after"),
@@ -184,15 +214,12 @@ struct BehaviorPanel: View {
         }
     }
 
-    /// Goal-loop cadence. Lives under Behavior because it's a knob that
-    /// shapes how often BoBe proactively re-evaluates goals — that's
-    /// behavioural, not "advanced." The former Advanced panel collapsed
-    /// into the panels its toggles actually belonged to.
     private var goalsSection: some View {
         CollapsibleSection(
             title: L10n.tr("settings.behavior.goals.title"),
             icon: "target",
-            description: L10n.tr("settings.behavior.goals.description")
+            description: L10n.tr("settings.behavior.goals.description"),
+            initiallyExpanded: false
         ) {
             SettingsRow(
                 label: L10n.tr("settings.behavior.goals.check_interval"),
@@ -202,7 +229,7 @@ struct BehaviorPanel: View {
                 DebouncedNumberInput(
                     value: self.store.durationMinutesBinding(
                         \.goalCheckIntervalSeconds,
-                        fallbackSeconds: 300
+                        fallbackSeconds: 3600
                     ),
                     range: 1 ... 120
                 )
@@ -215,19 +242,93 @@ struct BehaviorPanel: View {
         guard let settings = self.store.settings,
               !settings.checkinTimes.contains(formatted)
         else { return }
-        self.store.update(touched: "checkin_times") {
+        self.store.update {
             $0.checkinTimes.append(formatted)
         }
     }
 
     private func removeCheckinTime(_ time: String) {
-        self.store.update(touched: "checkin_times") {
+        self.store.update {
             $0.checkinTimes.removeAll { $0 == time }
         }
     }
 }
 
-// MARK: - Shared Components
+struct PresenceDial: View {
+    let level: ProactivityLevel?
+    let onSelect: (ProactivityLevel) -> Void
+
+    @Environment(\.theme) private var theme
+    @Namespace private var thumb
+
+    private var mood: BobeMood {
+        switch self.level {
+        case .quiet: .asleep
+        case .balanced, nil: .idle
+        case .proactive: .eager
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack(alignment: .center, spacing: 14) {
+                BobeCharacter(
+                    mood: self.mood,
+                    size: 72,
+                    palette: self.theme.avatar,
+                    wantsAttention: self.level == .proactive
+                )
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(self.level?.title ?? L10n.tr("settings.category.behavior"))
+                        .bobeTextStyle(.display)
+                        .foregroundStyle(self.theme.colors.text)
+                        .id(self.level)
+                        .transition(.bobeRise)
+                    if let level {
+                        Text(level.description)
+                            .bobeTextStyle(.settingsBody)
+                            .foregroundStyle(self.theme.colors.textMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .id(level)
+                            .transition(.bobeRise)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack(spacing: 2) {
+                ForEach(ProactivityLevel.allCases, id: \.self) { option in
+                    Button {
+                        withAnimation(BobeMotion.snappy) { self.onSelect(option) }
+                    } label: {
+                        Label(option.title, systemImage: option.icon)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(self.level == option ? self.theme.colors.text : self.theme.colors.textMuted)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 34)
+                            .background {
+                                if self.level == option {
+                                    Capsule(style: .circular)
+                                        .fill(self.theme.colors.surface)
+                                        .shadow(color: self.theme.shadowTint.opacity(0.16), radius: 3, y: 1.5)
+                                        .matchedGeometryEffect(id: "thumb", in: self.thumb)
+                                }
+                            }
+                            .contentShape(Capsule(style: .circular))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("settings.behavior.presence.\(option.rawValue)")
+                    .accessibilityAddTraits(self.level == option ? .isSelected : [])
+                }
+            }
+            .padding(3)
+            .bobeWell(in: .bobePill)
+        }
+        .padding(18)
+        .bobeRaised(cornerRadius: BobeRadius.card, elevation: .lifted)
+        .animation(BobeMotion.standard, value: self.level)
+    }
+}
 
 struct FlowLayout: Layout {
     let spacing: CGFloat

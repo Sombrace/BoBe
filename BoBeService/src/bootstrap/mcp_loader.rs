@@ -1,35 +1,21 @@
-//! MCP server config loading for the SDK. Resolved at boot from the
-//! user's MCP config file; passed to the SDK's `SessionConfig::mcp_servers`.
-
-use github_copilot_sdk::IndexMap;
 use tracing::{info, warn};
 
 use crate::config::Config;
+use crate::provider::McpRuntimeConfig;
 
-pub(crate) struct LoadedMcpServers {
-    pub(crate) servers: IndexMap<String, github_copilot_sdk::types::McpServerConfig>,
-    pub(crate) excluded_tools: Vec<String>,
-}
-
-pub(crate) fn load_mcp_servers_for_sdk(config: &Config) -> LoadedMcpServers {
+pub(crate) fn load_mcp_servers(config: &Config) -> McpRuntimeConfig {
     if !config.mcp.enabled {
-        return LoadedMcpServers {
-            servers: IndexMap::new(),
-            excluded_tools: Vec::new(),
-        };
+        return McpRuntimeConfig::default();
     }
 
     let path = match crate::mcp::config::resolve_mcp_config_path(
         std::path::Path::new(&config.data_dir),
         config.mcp.config_file.as_deref(),
     ) {
-        Ok(p) => p,
-        Err(e) => {
-            warn!(error = %e, "bootstrap.mcp_config_path_resolution_failed");
-            return LoadedMcpServers {
-                servers: IndexMap::new(),
-                excluded_tools: Vec::new(),
-            };
+        Ok(path) => path,
+        Err(error) => {
+            warn!(%error, "bootstrap.mcp_config_path_resolution_failed");
+            return McpRuntimeConfig::default();
         }
     };
 
@@ -39,22 +25,16 @@ pub(crate) fn load_mcp_servers_for_sdk(config: &Config) -> LoadedMcpServers {
         &config.mcp.dangerous_env_keys,
     ) {
         Ok(servers) => servers,
-        Err(e) => {
-            warn!(error = %e, path = %path.display(), "bootstrap.mcp_config_parse_failed");
-            return LoadedMcpServers {
-                servers: IndexMap::new(),
-                excluded_tools: Vec::new(),
-            };
+        Err(error) => {
+            warn!(%error, path = %path.display(), "bootstrap.mcp_config_parse_failed");
+            return McpRuntimeConfig::default();
         }
     };
 
     let count = parsed.len();
-    let (servers, excluded_tools) = crate::mcp::config::to_sdk_mcp_servers(parsed);
-    info!(count, "bootstrap.mcp_servers_registered_via_sdk");
-    LoadedMcpServers {
-        servers,
-        excluded_tools,
-    }
+    let runtime = crate::mcp::config::to_runtime_mcp_config(parsed);
+    info!(count, "bootstrap.mcp_servers_loaded");
+    runtime
 }
 
 #[cfg(test)]
@@ -62,14 +42,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn disabled_mcp_produces_an_empty_runtime_map() {
+    fn disabled_mcp_produces_an_empty_runtime_config() {
         let mut config = Config::default();
         config.mcp.enabled = false;
         config.mcp.config_file = Some("/path/that/must/not/be/read.json".to_owned());
 
-        let loaded = load_mcp_servers_for_sdk(&config);
+        let loaded = load_mcp_servers(&config);
 
         assert!(loaded.servers.is_empty());
-        assert!(loaded.excluded_tools.is_empty());
     }
 }

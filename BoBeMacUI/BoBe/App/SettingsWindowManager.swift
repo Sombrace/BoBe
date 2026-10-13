@@ -14,8 +14,6 @@ final class SettingsWindowManager: NSObject, NSWindowDelegate {
             window.title = L10n.tr("settings.window.title")
             window.makeKeyAndOrderFront(nil)
             NSApp.activate()
-            // Re-host the view so the initial category takes effect even when
-            // the window already exists.
             if let initialCategory {
                 SettingsEditCoordinator.shared.requestTransition {
                     let frame = window.frame
@@ -29,11 +27,6 @@ final class SettingsWindowManager: NSObject, NSWindowDelegate {
         }
 
         let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-        // Honest initial floors so the window never opens too small to show
-        // a panel's content (especially Engine and Goals, which are dense).
-        // Bumped a second time after user feedback that 1020x680 still felt
-        // cramped — descriptions and pickers were still colliding when
-        // resized down.
         let initialSize = Self.initialSize(for: screen)
 
         let window = BobeWindowFactory.make(
@@ -42,9 +35,20 @@ final class SettingsWindowManager: NSObject, NSWindowDelegate {
             title: L10n.tr("settings.window.title"),
             rootView: SettingsWindow(initialCategory: initialCategory)
         )
-        // Use the productive desktop floor when the display allows it, while
-        // still fitting smaller external displays instead of opening offscreen.
+        window.backgroundColor = NSColor(ThemeStore.shared.currentTheme.ground)
+        window.setAccessibilityIdentifier("window.settings")
         window.minSize = Self.minimumSize(for: screen)
+        window.setFrameAutosaveName("BobeSettingsWindow")
+        if window.setFrameUsingName("BobeSettingsWindow") {
+            window.setFrame(
+                Self.clampedFrame(
+                    window.frame,
+                    to: screen,
+                    minimumSize: window.minSize
+                ),
+                display: false
+            )
+        }
         window.delegate = self
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
@@ -64,6 +68,31 @@ final class SettingsWindowManager: NSObject, NSWindowDelegate {
         NSSize(
             width: min(1100, max(760, screen.width - 40)),
             height: min(720, max(520, screen.height - 40))
+        )
+    }
+
+    static func clampedFrame(
+        _ frame: NSRect,
+        to visibleFrame: NSRect,
+        minimumSize: NSSize
+    ) -> NSRect {
+        let width = min(
+            max(frame.width, minimumSize.width),
+            visibleFrame.width
+        )
+        let height = min(
+            max(frame.height, minimumSize.height),
+            visibleFrame.height
+        )
+        let minX = visibleFrame.minX
+        let maxX = visibleFrame.maxX - width
+        let minY = visibleFrame.minY
+        let maxY = visibleFrame.maxY - height
+        return NSRect(
+            x: min(max(frame.minX, minX), maxX),
+            y: min(max(frame.minY, minY), maxY),
+            width: width,
+            height: height
         )
     }
 

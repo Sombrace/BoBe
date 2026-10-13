@@ -3,36 +3,32 @@ import OSLog
 
 private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline.WebSocket")
 
-/// WebSocket-side of the voice pipeline — receive loop, daemon control-
-/// message dispatch, phase application, keepalive, and the canonical
-/// `sendClient(_:)` write path.
-///
-/// Split out of `VoicePipeline.swift` (the type definition + lifecycle)
-/// purely to keep the core file under the SwiftLint file-length cap.
-/// All members are `internal` rather than `private` so they can live in
-/// this separate file — the convention is that nothing outside the
-/// `Voice/` directory calls these directly.
 @MainActor
 extension VoicePipeline {
-    // MARK: - Receive loop
 
-    func receiveLoop() {
-        guard let currentTask = self.task else { return }
-        currentTask.receive { [weak self, weak currentTask] result in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                // Stale callback from an old WS task — discard.
-                guard self.task === currentTask else { return }
-                switch result {
-                case let .success(msg):
-                    await self.handleIncoming(msg)
-                    self.receiveLoop()
-                case let .failure(err):
-                    let reason = err.localizedDescription
-                    self.lastError = "recv: \(reason)"
-                    logger.error("recv: \(reason, privacy: .public)")
-                    self.tearDownConnection(finalState: .failed(reason), sendAbort: false)
+    func startReceiveLoop(socket: URLSessionWebSocketTask, generation: UInt64) {
+        self.receiveTask?.cancel()
+        self.receiveTask = Task { @MainActor [weak self, weak socket] in
+            guard let self, let socket else { return }
+            do {
+                while !Task.isCancelled {
+                    let message = try await socket.receive()
+                    guard !Task.isCancelled,
+                          self.task === socket,
+                          self.connectionGeneration == generation
+                    else { return }
+                    await self.handleIncoming(message)
                 }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard self.task === socket,
+                      self.connectionGeneration == generation
+                else { return }
+                let reason = error.localizedDescription
+                self.lastError = "recv: \(reason)"
+                logger.error("recv: \(reason, privacy: .public)")
+                self.tearDownConnection(finalState: .failed(reason), sendAbort: false)
             }
         }
     }
@@ -54,41 +50,112 @@ extension VoicePipeline {
         do {
             decoded = try Self.jsonDecoder.decode(ServerVoiceMessage.self, from: data)
         } catch {
-            logger.warning("malformed control JSON: \(text, privacy: .public)")
+            logger.warning(
+                "malformed voice control frame bytes=\(data.count, privacy: .public) errorType=\(String(describing: type(of: error)), privacy: .public)"
+            )
             return
         }
         switch decoded {
-        case let .helloAck(voicePack, _):
-            logger.info("voice.hello_ack voicePack=\(voicePack, privacy: .public)")
+        case let .speechPlan(plan):
+            guard self.validateSpeechPlan(plan) else {
+                let reason = "Daemon selected an unavailable speech capability"
+                self.lastError = reason
+                self.tearDownConnection(finalState: .failed(reason), sendAbort: false)
+                return
+            }
+            self.sessionSpeechPlan = plan
+            self.handshakeComplete = true
+            logger.info(
+                "voice.speech_plan stt=\(plan.sttSite.rawValue, privacy: .public) tts=\(plan.ttsSite.rawValue, privacy: .public)"
+            )
+        case let .captureCredit(streamId, creditFrames):
+            guard creditFrames > 0 else {
+                self.tearDownConnection(
+                    finalState: .failed("Daemon sent invalid capture credit"),
+                    sendAbort: false
+                )
+                return
+            }
+            if let active = self.captureStreamId, active != streamId {
+                self.tearDownConnection(
+                    finalState: .failed("Daemon changed capture stream identity"),
+                    sendAbort: false
+                )
+                return
+            }
+            self.captureStreamId = streamId
+            self.captureCreditFrames = self.captureCreditFrames.addingReportingOverflow(creditFrames).partialValue
+        case let .sttPartial(_, text):
+            self.partialTranscript = text
+        case let .sttFinal(_, text):
+            self.partialTranscript = text
         case let .state(phase, _):
             self.applyPhase(phase)
         case let .transcriptFinal(_, transcript):
+            self.partialTranscript = ""
             if !transcript.isEmpty {
                 BobeStore.shared.appendUserVoiceMessage(transcript)
             }
         case let .ttsEnd(turnId):
             self.partialTranscript = ""
-            await self.finishClientTtsTurn(turnId: turnId)
+            if self.clientTtsTurnId == turnId {
+                await self.finishClientTtsTurn(turnId: turnId)
+            } else {
+                self.reportServerPlaybackDrained(turnId: turnId)
+            }
         case let .ttsText(turnId, sequence, text):
             await self.enqueueClientTts(turnId: turnId, sequence: sequence, text: text)
-        case let .truncate(_, keepMs):
-            if self.clientTtsActive {
+        case .truncate:
+            if self.sessionSpeechPlan?.ttsSite == .endpoint {
                 self.cancelClientTtsTurn()
             } else {
-                self.truncatePlayback(keepMs: keepMs)
+                self.truncatePlayback()
             }
         case let .error(code, message):
-            self.lastError = "\(code): \(message)"
+            let reason = "\(code): \(message)"
+            self.terminalServerErrorCode = code
+            self.lastError = reason
             logger.error("server: \(code, privacy: .public): \(message, privacy: .public)")
-            // Errors during handshake should transition the mic UI to
-            // .failed immediately rather than waiting for the WS close
-            // to bounce us through receiveLoop's failure branch.
-            if self.state == .connecting {
-                self.state = .failed("\(code): \(message)")
-            }
+            self.tearDownConnection(finalState: .failed(reason), sendAbort: false)
         case .unknown:
             break
         }
+    }
+
+    private func validateSpeechPlan(_ plan: SpeechPlanWire) -> Bool {
+        guard !plan.planId.isEmpty,
+              plan.wakeOwner == .endpoint,
+              let offer = self.sessionSpeechOffer
+        else { return false }
+        if plan.sttSite == .endpoint {
+            let offered = offer.endpointStt.contains { engine in
+                engine.ready && engine.id == plan.sttEngineId
+            }
+            guard offered,
+                  self.sttLoaded,
+                  plan.sttEngineId == self.effectiveSttEngineId,
+                  plan.uplink == .transcript,
+                  plan.eouOwner == .endpoint
+            else { return false }
+        } else {
+            guard offer.audioUplink,
+                  plan.uplink == .audio,
+                  plan.eouOwner == .daemon
+            else { return false }
+        }
+        if plan.ttsSite == .endpoint {
+            let offered = offer.endpointTts.contains { engine in
+                engine.ready
+                    && engine.id == plan.ttsEngineId
+                    && engine.voices.contains(plan.voiceId)
+            }
+            return offered
+                && self.sessionTtsBackend == .clientSupertonic
+                && plan.ttsEngineId == VoiceTtsBackend.clientSupertonic.rawValue
+                && plan.downlink == .text
+        }
+        return plan.ttsEngineId == VoiceTtsBackend.serverPocket.rawValue
+            && plan.downlink == .audio
     }
 
     private func applyPhase(_ phase: VoicePhaseWire) {
@@ -114,13 +181,15 @@ extension VoicePipeline {
             }
             self.stopTtsLevelDecay()
         case .speaking:
-            // New turn — reset the per-turn schedule bookkeeping. Capture
-            // the current player sampleTime as the baseline so
-            // playedFramesThisTurn returns 0 right at turn start.
             if self.state != .speaking {
                 self.scheduledChunks.removeAll(keepingCapacity: true)
                 self.nextScheduleFrame = 0
                 self.turnFrameBase = 0
+                self.lastPlaybackAckMs = 0
+                self.lastPlaybackAckChunkId = 0
+                self.serverDrainTask?.cancel()
+                self.serverDrainTask = nil
+                self.resetReplyPosition()
                 self.sampleTimeBase = self.currentPlayerSampleTime()
                 self.startTtsLevelDecay()
                 self.state = .speaking
@@ -129,7 +198,6 @@ extension VoicePipeline {
         }
     }
 
-    // MARK: - Keepalive
 
     func startKeepalive() {
         self.keepaliveTask?.cancel()
@@ -154,11 +222,7 @@ extension VoicePipeline {
         self.keepaliveTask = nil
     }
 
-    // MARK: - Outbound
 
-    /// Canonical client-message write path. All control JSON sent to the
-    /// daemon flows through here — encoders are shared (see `Self.jsonEncoder`)
-    /// so we don't allocate per-frame during transcript-partial bursts.
     func sendClient(_ msg: ClientVoiceMessage) async {
         guard let task = self.task else { return }
         guard let data = try? Self.jsonEncoder.encode(msg),

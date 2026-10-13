@@ -4,16 +4,8 @@ enum VoiceControlAction: String, Codable {
     case abort
     case mute
     case unmute
-    case reset
 }
 
-/// Subset of `VoicePipeline.State` that's authoritative from the daemon.
-/// The client-only states (`.connecting`, `.cancelling`, `.failed`,
-/// `.capturing`) are driven from local audio/WS events, not the wire.
-///
-/// **Wire contract:** match `BoBeService/src/speech/protocol.rs::VoicePhase`
-/// variant set. Adding a daemon-side variant without the Swift counterpart
-/// makes this decode throw — clients drop the whole state message.
 enum VoicePhaseWire: String, Codable {
     case idle
     case listening
@@ -21,29 +13,12 @@ enum VoicePhaseWire: String, Codable {
     case speaking
 }
 
-/// **Wire contract:** the `type` discriminator values encoded by this
-/// enum must match `BoBeService/src/speech/protocol.rs::ClientMessage`
-/// serde variant snake_case form, AND each variant's `CodingKeys` must
-/// align with the Rust struct field set. Drift here makes the daemon
-/// reject the JSON at deserialization.
 enum ClientVoiceMessage: Codable {
-    case hello(
-        sessionId: String,
-        playbackRate: UInt32,
-        voiceId: String?,
-        speed: Float?,
-        language: String?,
-        ttsBackend: String?
-    )
-    case bargeIn(tsMs: UInt64, playbackMsPlayed: UInt64, partialText: String?)
-    case wake(phrase: String, score: Float, tsMs: UInt64)
+    case hello(sessionId: String, voiceId: String?, speed: Float?, speechOffer: SpeechOfferWire)
+    case bargeIn(tsMs: UInt64, playbackMsPlayed: UInt64, partialText: String?, playheadChunk: UInt64)
     case playbackAck(chunkId: UInt64, playedMs: UInt64)
     case control(action: VoiceControlAction)
-    /// Streaming partial transcript from the client's local ASR. Daemon
-    /// stores it for cancel-phrase + MinWords barge-in gating.
     case transcriptPartial(turnId: String, text: String)
-    /// Finalized transcript at end-of-utterance. Daemon admits the turn
-    /// and runs the LLM + TTS pipeline.
     case transcriptFinal(turnId: String, text: String)
     case ttsPlaybackStarted(turnId: String, synthesisMs: UInt64)
     case ttsPlaybackComplete(turnId: String)
@@ -51,24 +26,18 @@ enum ClientVoiceMessage: Codable {
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case let .hello(sessionId, playbackRate, voiceId, speed, language, ttsBackend):
+        case let .hello(sessionId, voiceId, speed, speechOffer):
             try c.encode("hello", forKey: .type)
             try c.encode(sessionId, forKey: .sessionId)
-            try c.encode(playbackRate, forKey: .playbackRate)
             try c.encodeIfPresent(voiceId, forKey: .voiceId)
             try c.encodeIfPresent(speed, forKey: .speed)
-            try c.encodeIfPresent(language, forKey: .language)
-            try c.encodeIfPresent(ttsBackend, forKey: .ttsBackend)
-        case let .bargeIn(tsMs, playbackMsPlayed, partialText):
+            try c.encode(speechOffer, forKey: .speechOffer)
+        case let .bargeIn(tsMs, playbackMsPlayed, partialText, playheadChunk):
             try c.encode("barge_in", forKey: .type)
             try c.encode(tsMs, forKey: .tsMs)
             try c.encode(playbackMsPlayed, forKey: .playbackMsPlayed)
             try c.encodeIfPresent(partialText, forKey: .partialText)
-        case let .wake(phrase, score, tsMs):
-            try c.encode("wake", forKey: .type)
-            try c.encode(phrase, forKey: .phrase)
-            try c.encode(score, forKey: .score)
-            try c.encode(tsMs, forKey: .tsMs)
+            try c.encode(playheadChunk, forKey: .playheadChunk)
         case let .playbackAck(chunkId, playedMs):
             try c.encode("playback_ack", forKey: .type)
             try c.encode(chunkId, forKey: .chunkId)
@@ -95,7 +64,6 @@ enum ClientVoiceMessage: Codable {
     }
 
     init(from _: Decoder) throws {
-        // Client encodes only — outbound messages aren't decoded locally.
         throw DecodingError.dataCorrupted(
             DecodingError.Context(codingPath: [], debugDescription: "ClientVoiceMessage is encode-only")
         )
@@ -104,16 +72,13 @@ enum ClientVoiceMessage: Codable {
     enum CodingKeys: String, CodingKey {
         case type
         case sessionId = "session_id"
-        case playbackRate = "playback_rate"
         case voiceId = "voice_id"
         case speed
-        case language
-        case ttsBackend = "tts_backend"
+        case speechOffer = "speech_offer"
         case tsMs = "ts_ms"
         case playbackMsPlayed = "playback_ms_played"
         case partialText = "partial_text"
-        case phrase
-        case score
+        case playheadChunk = "playhead_chunk"
         case chunkId = "chunk_id"
         case playedMs = "played_ms"
         case action
@@ -123,12 +88,11 @@ enum ClientVoiceMessage: Codable {
     }
 }
 
-/// **Wire contract:** mirrors `BoBeService/src/speech/protocol.rs::
-/// ServerMessage`. Each `case` corresponds to a Rust variant with the
-/// `type` tag in snake_case. Binary TTS frames (9-byte header + Opus
-/// payload) do NOT come through this enum — see `TtsFrameHeader` below.
 enum ServerVoiceMessage: Decodable {
-    case helloAck(voicePack: String, playbackRate: UInt32)
+    case speechPlan(SpeechPlanWire)
+    case captureCredit(streamId: UInt32, creditFrames: UInt32)
+    case sttPartial(turnId: String, text: String)
+    case sttFinal(turnId: String, text: String)
     case state(phase: VoicePhaseWire, turnId: String)
     case transcriptFinal(turnId: String, text: String)
     case ttsEnd(turnId: String)
@@ -141,10 +105,22 @@ enum ServerVoiceMessage: Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let type = try c.decode(String.self, forKey: .type)
         switch type {
-        case "hello_ack":
-            self = try .helloAck(
-                voicePack: c.decode(String.self, forKey: .voicePack),
-                playbackRate: c.decode(UInt32.self, forKey: .playbackRate)
+        case "speech_plan":
+            self = try .speechPlan(c.decode(SpeechPlanWire.self, forKey: .plan))
+        case "capture_credit":
+            self = try .captureCredit(
+                streamId: c.decode(UInt32.self, forKey: .streamId),
+                creditFrames: c.decode(UInt32.self, forKey: .creditFrames)
+            )
+        case "stt_partial":
+            self = try .sttPartial(
+                turnId: c.decode(String.self, forKey: .turnId),
+                text: c.decode(String.self, forKey: .text)
+            )
+        case "stt_final":
+            self = try .sttFinal(
+                turnId: c.decode(String.self, forKey: .turnId),
+                text: c.decode(String.self, forKey: .text)
             )
         case "state":
             self = try .state(
@@ -187,17 +163,42 @@ enum ServerVoiceMessage: Decodable {
         case keepMs = "keep_ms"
         case code
         case message
-        case voicePack = "voice_pack"
-        case playbackRate = "playback_rate"
         case sequence
+        case plan
+        case streamId = "stream_id"
+        case creditFrames = "credit_frames"
     }
 }
 
-/// Binary frame header for `tts.chunk` / `filler.chunk` (daemon→client):
-/// 8 bytes BE u64 chunk_id, then 1 byte flags, then Opus packet. Match
-/// Rust `speech::protocol::{TTS_FRAME_HEADER_LEN, FLAG_FILLER,
-/// FLAG_FIRST_OF_TURN, encode_tts_frame}`. The drift script asserts the
-/// three constants stay in lockstep.
+struct VoiceCaptureFrameEncoder {
+    static let headerLength = 13
+    static let pcmBytes = 640
+
+    static func encode(streamId: UInt32, sequence: UInt32, samples: ArraySlice<Float>) -> Data? {
+        guard streamId != 0, samples.count == 320 else { return nil }
+        var data = Data(capacity: self.headerLength + self.pcmBytes)
+        appendBigEndian(streamId, to: &data)
+        appendBigEndian(sequence, to: &data)
+        data.append(0)
+        data.append(contentsOf: [0, 0, 0, 0])
+        for sample in samples {
+            let scaled = Int32((max(-1, min(1, sample)) * 32_767).rounded())
+            let pcm = Int16(clamping: scaled)
+            let bits = UInt16(bitPattern: pcm)
+            data.append(UInt8(bits & 0xFF))
+            data.append(UInt8(bits >> 8))
+        }
+        return data
+    }
+
+    private static func appendBigEndian(_ value: UInt32, to data: inout Data) {
+        data.append(UInt8((value >> 24) & 0xFF))
+        data.append(UInt8((value >> 16) & 0xFF))
+        data.append(UInt8((value >> 8) & 0xFF))
+        data.append(UInt8(value & 0xFF))
+    }
+}
+
 struct TtsFrameHeader {
     let chunkId: UInt64
     let flags: UInt8

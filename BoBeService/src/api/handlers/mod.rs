@@ -1,21 +1,37 @@
-pub(crate) mod capture;
+pub(crate) mod backup;
+pub(crate) mod body_requests;
+pub(crate) mod config_admin;
 pub(crate) mod conversation;
-pub(crate) mod copilot_login;
-pub(crate) mod engine;
+pub(crate) mod endpoints;
 pub(crate) mod events;
 pub(crate) mod goals;
 pub(crate) mod health;
+pub(crate) mod hello;
+pub(crate) mod initialization;
+pub(crate) mod local_enrollment;
 pub(crate) mod local_runtime;
 pub(crate) mod memories;
 pub(crate) mod metrics;
+pub(crate) mod models;
+pub(crate) mod pairing;
 pub(crate) mod privacy;
+pub(crate) mod provider_login;
+pub(crate) mod providers;
 pub(crate) mod settings;
+pub(crate) mod skills;
 pub(crate) mod souls;
 pub(crate) mod tools_mcp;
 pub(crate) mod user_profile;
 pub(crate) mod voice;
 pub(crate) mod voice_install;
+pub(crate) mod workspace;
 
 pub(super) const fn default_true() -> bool {
     true
 }
+pub(crate) mod agent_context;
+pub(crate) mod agent_jobs;
+pub(crate) mod agent_schedules;
+pub(crate) mod agent_tools;
+pub(crate) mod owner_input;
+pub(crate) mod voice_preview;

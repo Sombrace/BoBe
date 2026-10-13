@@ -1,24 +1,17 @@
+import FluidAudio
 import Foundation
 
 enum FluidAudioSupertonicModelPresence {
-    static var modelDirectory: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/fluidaudio/Models/supertonic-3", isDirectory: true)
-    }
-
     static func isInstalled() -> Bool {
-        let required = [
-            "TextEncoder.mlmodelc",
-            "DurationPredictor.mlmodelc",
-            "Vocoder.mlmodelc",
-            "VectorEstimatorVariants/VectorEstimator_L128_int4.mlmodelc",
-            "tts.json",
-            "unicode_indexer.json",
-            "voice_styles/F1.json",
-        ]
+        guard let cacheRoot = try? TtsCacheDirectory.ensure() else { return false }
+        let modelDirectory = cacheRoot
+            .appendingPathComponent("Models", isDirectory: true)
+            .appendingPathComponent("supertonic-3", isDirectory: true)
+        let required = ModelNames.Supertonic3.requiredFiles(veVariant: "ane-int4")
+            .union([Supertonic3Voice.f1.fileName])
         return required.allSatisfy {
             FileManager.default.fileExists(
-                atPath: self.modelDirectory.appendingPathComponent($0).path
+                atPath: modelDirectory.appendingPathComponent($0).path
             )
         }
     }

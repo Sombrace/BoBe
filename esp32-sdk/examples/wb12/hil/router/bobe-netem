@@ -1,0 +1,274 @@
+#!/bin/sh
+
+set -eu
+
+CONFIG=/etc/bobe-hil/netem.conf
+STATE_DIR=/var/run/bobe-hil
+LEASE_FILE=$STATE_DIR/netem.lease
+LOCK_FILE=$STATE_DIR/netem.lock
+NFT_TABLE=bobe_hil
+
+fail() {
+    printf 'ERR %s\n' "$1" >&2
+    exit 1
+}
+
+load_config() {
+    [ -f "$CONFIG" ] && [ ! -L "$CONFIG" ] || fail CONFIG
+    # shellcheck disable=SC1090
+    . "$CONFIG"
+    [ -n "${TEST_INTERFACE:-}" ] || fail TEST_INTERFACE
+    [ -n "${MANAGEMENT_INTERFACE:-}" ] || fail MANAGEMENT_INTERFACE
+    case "$TEST_INTERFACE:$MANAGEMENT_INTERFACE" in
+        *[!A-Za-z0-9_.:-]*) fail INTERFACE_NAME ;;
+    esac
+    [ "$TEST_INTERFACE" != "$MANAGEMENT_INTERFACE" ] || fail INTERFACE_ALIAS
+    ip link show dev "$TEST_INTERFACE" >/dev/null 2>&1 || fail TEST_INTERFACE
+    ip link show dev "$MANAGEMENT_INTERFACE" >/dev/null 2>&1 ||
+        fail MANAGEMENT_INTERFACE
+}
+
+lock() {
+    mkdir -p "$STATE_DIR"
+    attempts=0
+    while [ "$attempts" -lt 2 ]; do
+        if (set -C; umask 077; printf '%s\n' "$$" >"$LOCK_FILE") 2>/dev/null; then
+            trap 'rm -f "$LOCK_FILE"' EXIT
+            return
+        fi
+        lock_pid=
+        if [ -f "$LOCK_FILE" ]; then
+            read -r lock_pid <"$LOCK_FILE" || true
+        fi
+        case "$lock_pid" in
+            *[!0-9]*|'') lock_pid= ;;
+        esac
+        if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+            fail BUSY
+        fi
+        rm -f "$LOCK_FILE"
+        attempts=$((attempts + 1))
+    done
+    fail BUSY
+}
+
+valid_lease() {
+    case "$1" in
+        *[!0-9a-f]*|'') return 1 ;;
+    esac
+    [ "${#1}" -eq 32 ]
+}
+
+clear_impairment() {
+    if has_netem; then
+        tc qdisc del dev "$TEST_INTERFACE" root || return 1
+    else
+        probe_result=$?
+        [ "$probe_result" -eq 1 ] || return 1
+    fi
+    if has_nft_table; then
+        nft delete table inet "$NFT_TABLE" || return 1
+    else
+        probe_result=$?
+        [ "$probe_result" -eq 1 ] || return 1
+    fi
+    netem_absent && nft_table_absent
+}
+
+has_netem() {
+    qdisc_state="$(tc qdisc show dev "$TEST_INTERFACE")" || return 2
+    printf '%s\n' "$qdisc_state" | grep -q '^qdisc netem '
+}
+
+has_nft_table() {
+    nft_state="$(nft list tables)" || return 2
+    printf '%s\n' "$nft_state" |
+        grep -Fxq "table inet $NFT_TABLE"
+}
+
+netem_absent() {
+    if has_netem; then
+        return 1
+    else
+        probe_result=$?
+        [ "$probe_result" -eq 1 ]
+    fi
+}
+
+nft_table_absent() {
+    if has_nft_table; then
+        return 1
+    else
+        probe_result=$?
+        [ "$probe_result" -eq 1 ]
+    fi
+}
+
+has_foreign_root_qdisc() {
+    qdisc_state="$(tc qdisc show dev "$TEST_INTERFACE")" || return 2
+    printf '%s\n' "$qdisc_state" |
+        grep '^qdisc .* root ' |
+        grep -vE '^qdisc (netem|noqueue) ' >/dev/null
+}
+
+valid_profile() {
+    case "$1" in
+        clean|delay-150|loss-1|loss-5|jitter-loss|rate-512|blackhole)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+verify_profile() {
+    if has_foreign_root_qdisc; then
+        return 1
+    else
+        probe_result=$?
+        [ "$probe_result" -eq 1 ] || return 2
+    fi
+    case "$1" in
+        clean)
+            netem_absent && nft_table_absent
+            ;;
+        blackhole)
+            netem_absent && has_nft_table
+            ;;
+        *)
+            has_netem && nft_table_absent
+            ;;
+    esac
+}
+
+apply_profile() {
+    profile=$1
+    case "$profile" in
+        clean)
+            ;;
+        delay-150)
+            tc qdisc replace dev "$TEST_INTERFACE" root \
+                netem delay 150ms 30ms distribution normal
+            ;;
+        loss-1)
+            tc qdisc replace dev "$TEST_INTERFACE" root netem loss 1%
+            ;;
+        loss-5)
+            tc qdisc replace dev "$TEST_INTERFACE" root netem loss 5%
+            ;;
+        jitter-loss)
+            tc qdisc replace dev "$TEST_INTERFACE" root \
+                netem delay 150ms 30ms loss 2% reorder 1% 25%
+            ;;
+        rate-512)
+            tc qdisc replace dev "$TEST_INTERFACE" root netem rate 512kbit
+            ;;
+        blackhole)
+            nft -f - <<EOF
+add table inet $NFT_TABLE
+add chain inet $NFT_TABLE forward { type filter hook forward priority -10; policy accept; }
+add rule inet $NFT_TABLE forward oifname "$TEST_INTERFACE" drop
+add rule inet $NFT_TABLE forward iifname "$TEST_INTERFACE" drop
+EOF
+            ;;
+        *)
+            fail PROFILE
+            ;;
+    esac
+}
+
+command=${1:-}
+case "$command" in
+    status)
+        load_config
+        if [ -f "$LEASE_FILE" ]; then
+            read -r lease profile expires <"$LEASE_FILE"
+            valid_lease "$lease" || fail LEASE_STATE
+            valid_profile "$profile" || fail PROFILE_STATE
+            case "$expires" in
+                *[!0-9]*|'') fail EXPIRY_STATE ;;
+            esac
+            verify_profile "$profile" || fail STATE_DRIFT
+            printf 'OK STATUS lease=%s profile=%s expires=%s\n' \
+                "$lease" "$profile" "$expires"
+        else
+            verify_profile clean || fail UNLEASED_IMPAIRMENT
+            printf 'OK STATUS lease=none profile=clean expires=0\n'
+        fi
+        tc -j qdisc show dev "$TEST_INTERFACE"
+        ;;
+    apply)
+        [ "$#" -eq 4 ] || fail ARGUMENTS
+        lease=$2
+        profile=$3
+        ttl=$4
+        valid_lease "$lease" || fail LEASE
+        case "$ttl" in
+            *[!0-9]*|'') fail TTL ;;
+        esac
+        [ "$ttl" -ge 5 ] && [ "$ttl" -le 600 ] || fail TTL
+        valid_profile "$profile" || fail PROFILE
+        load_config
+        lock
+        [ ! -f "$LEASE_FILE" ] || fail BUSY
+        if has_foreign_root_qdisc; then
+            fail FOREIGN_QDISC
+        else
+            probe_result=$?
+            [ "$probe_result" -eq 1 ] || fail QDISC_PROBE
+        fi
+        clear_impairment || fail CLEAR_FAILED
+        if ! apply_profile "$profile" || ! verify_profile "$profile"; then
+            clear_impairment || fail ROLLBACK_FAILED
+            fail APPLY_FAILED
+        fi
+        expires=$(( $(date +%s) + ttl ))
+        umask 077
+        lease_temp="$LEASE_FILE.$$.tmp"
+        if ! printf '%s %s %s\n' "$lease" "$profile" "$expires" \
+                >"$lease_temp" ||
+           ! mv "$lease_temp" "$LEASE_FILE"; then
+            rm -f "$lease_temp"
+            clear_impairment || fail ROLLBACK_FAILED
+            fail LEASE_WRITE
+        fi
+        nohup sh -c \
+            "sleep $ttl; /usr/sbin/bobe-netem expire $lease $expires" \
+            </dev/null >/dev/null 2>&1 &
+        printf 'OK APPLY lease=%s profile=%s expires=%s\n' \
+            "$lease" "$profile" "$expires"
+        ;;
+    clear)
+        [ "$#" -eq 2 ] || fail ARGUMENTS
+        lease=$2
+        valid_lease "$lease" || fail LEASE
+        load_config
+        lock
+        [ -f "$LEASE_FILE" ] || fail NO_LEASE
+        read -r current_lease _ <"$LEASE_FILE"
+        [ "$current_lease" = "$lease" ] || fail LEASE_MISMATCH
+        clear_impairment || fail CLEAR_FAILED
+        verify_profile clean || fail CLEAR_VERIFY
+        rm -f "$LEASE_FILE"
+        printf 'OK CLEAR lease=%s\n' "$lease"
+        ;;
+    expire)
+        [ "$#" -eq 3 ] || fail ARGUMENTS
+        lease=$2
+        expected_expires=$3
+        valid_lease "$lease" || fail LEASE
+        load_config
+        lock
+        if [ -f "$LEASE_FILE" ]; then
+            read -r current_lease _ current_expires <"$LEASE_FILE"
+            if [ "$current_lease" = "$lease" ] &&
+               [ "$current_expires" = "$expected_expires" ]; then
+                clear_impairment || fail CLEAR_FAILED
+                verify_profile clean || fail CLEAR_VERIFY
+                rm -f "$LEASE_FILE"
+            fi
+        fi
+        ;;
+    *)
+        fail OPCODE
+        ;;
+esac

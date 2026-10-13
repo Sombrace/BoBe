@@ -1,9 +1,116 @@
 import SwiftUI
 
+struct BobeSwitchStyle: ToggleStyle {
+    @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        Button {
+            withAnimation(BobeMotion.snappy) {
+                configuration.isOn.toggle()
+            }
+        } label: {
+            Capsule(style: .circular)
+                .fill(configuration.isOn ? self.theme.colors.primary : self.theme.colors.textMuted.opacity(0.3))
+                .frame(width: 38, height: 22)
+                .overlay(alignment: configuration.isOn ? .trailing : .leading) {
+                    Circle()
+                        .fill(.white)
+                        .shadow(color: .black.opacity(0.22), radius: 1.5, y: 1)
+                        .frame(width: 18, height: 18)
+                        .padding(2)
+                }
+                .opacity(self.isEnabled ? 1 : 0.5)
+                .contentShape(Capsule(style: .circular))
+        }
+        .buttonStyle(BobePressStyle(scale: 0.94))
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+        }
+    }
+}
+
+struct BobeLabeledSwitchStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 12) {
+            configuration.label
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Toggle(isOn: configuration.$isOn) { EmptyView() }
+                .labelsHidden()
+                .toggleStyle(BobeSwitchStyle())
+        }
+        .accessibilityRepresentation {
+            Toggle(isOn: configuration.$isOn) { configuration.label }
+        }
+    }
+}
+
+struct BobeHairline: View {
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Rectangle()
+            .fill(self.theme.hairline)
+            .frame(height: 1)
+            .accessibilityHidden(true)
+    }
+}
+
+struct BobeDisclosure<Content: View>: View {
+    let title: String
+    private let external: Binding<Bool>?
+    private let content: Content
+
+    @State private var internalExpanded = false
+    @Environment(\.theme) private var theme
+
+    init(_ title: String, isExpanded: Binding<Bool>? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.external = isExpanded
+        self.content = content()
+    }
+
+    private var isExpanded: Bool {
+        self.external?.wrappedValue ?? self.internalExpanded
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(BobeMotion.standard) {
+                    if let external {
+                        external.wrappedValue.toggle()
+                    } else {
+                        self.internalExpanded.toggle()
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
+                        .rotationEffect(.degrees(self.isExpanded ? 90 : 0))
+                    Text(self.title)
+                        .bobeTextStyle(.helper)
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(self.theme.colors.textMuted)
+                .padding(.vertical, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(BobePressStyle(scale: 0.99))
+            .accessibilityValue(self.isExpanded ? "expanded" : "collapsed")
+            if self.isExpanded {
+                self.content
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.bobeRise)
+            }
+        }
+    }
+}
+
 struct BobeToggle: View {
     @Binding var isOn: Bool
     let accessibilityLabel: String
-    @Environment(\.theme) private var theme
 
     init(isOn: Binding<Bool>, accessibilityLabel: String) {
         self._isOn = isOn
@@ -11,91 +118,58 @@ struct BobeToggle: View {
     }
 
     var body: some View {
-        Toggle("", isOn: self.$isOn)
+        Toggle(self.accessibilityLabel, isOn: self.$isOn)
             .labelsHidden()
-            .toggleStyle(.switch)
-            .tint(self.theme.colors.success)
-            .controlSize(.small)
-            .accessibilityLabel(Text(self.accessibilityLabel))
+            .toggleStyle(BobeSwitchStyle())
     }
 }
 
-/// Top-aligned icon + title + description + indented body. Pattern used by
-/// every "flat" (non-collapsible) settings section so the engine flow
-/// doesn't look visually scrambled between Disclosure-style siblings.
-struct FlatSettingsSection<Content: View>: View {
+struct SettingsSectionHeader: View {
     let icon: String
     let title: String
-    let description: String?
-    @ViewBuilder let content: Content
+    var description: String?
+    var tint: Color?
     @Environment(\.theme) private var theme
 
-    init(
-        icon: String,
-        title: String,
-        description: String? = nil,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.icon = icon
-        self.title = title
-        self.description = description
-        self.content = content()
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: self.icon)
-                    .font(.system(size: 14))
-                    .foregroundStyle(self.theme.colors.primary)
-                    .frame(width: 20)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(self.title)
-                        .bobeTextStyle(.heading)
-                        .foregroundStyle(self.theme.colors.text)
-                    if let description = self.description {
-                        Text(description)
-                            .bobeTextStyle(.helper)
-                            .foregroundStyle(self.theme.colors.textMuted)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+        HStack(spacing: 11) {
+            BobeIconTile(systemName: self.icon, tint: self.tint ?? self.theme.colors.primary, size: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(self.title)
+                    .bobeTextStyle(.heading)
+                    .foregroundStyle(self.theme.colors.text)
+                if let description {
+                    Text(description)
+                        .bobeTextStyle(.helper)
+                        .foregroundStyle(self.theme.colors.textMuted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer()
             }
-            VStack(alignment: .leading, spacing: 10) {
-                self.content
-            }
-            .padding(.leading, 30)
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
-/// Red exclamation banner used at the top of every settings panel to
-/// surface a persist/load failure. Extracted from EnginePanel / VoicePanel /
-/// BehaviorPanel which had byte-identical inline copies.
 struct SettingsErrorBanner: View {
     let message: String
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(self.theme.colors.error)
+        HStack(spacing: 10) {
+            BobeIconTile(systemName: "exclamationmark", tint: self.theme.colors.error, size: 26)
             Text(self.message)
                 .bobeTextStyle(.body)
-                .foregroundStyle(self.theme.colors.error)
+                .foregroundStyle(self.theme.colors.text)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8).fill(self.theme.colors.error.opacity(0.08))
-        )
+        .bobeRaised(cornerRadius: 18)
+        .transition(.bobeRise)
     }
 }
 
-/// "Saved ✓" toast variant used by the same panels. Auto-dismiss timing
-/// lives on `SettingsDebouncer.scheduleToastClear` — this view is presentation only.
 struct SettingsSavedToast: View {
     let message: String
     @Environment(\.theme) private var theme
@@ -106,10 +180,11 @@ struct SettingsSavedToast: View {
                 .foregroundStyle(self.theme.colors.success)
             Text(self.message)
                 .bobeTextStyle(.helper)
+                .fontWeight(.medium)
                 .foregroundStyle(self.theme.colors.success)
             Spacer()
         }
-        .transition(.opacity)
+        .transition(.bobePop(anchor: .leading))
     }
 }
 
@@ -132,7 +207,7 @@ struct SettingsPaneHeader: View {
     var body: some View {
         HStack {
             Text(self.title)
-                .font(.headline)
+                .bobeTextStyle(.title)
                 .foregroundStyle(self.theme.colors.text)
             Spacer()
             AccentAddButton(title: self.actionTitle, action: self.action)
@@ -148,35 +223,10 @@ struct SettingsRow<Content: View>: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        // HStack restructure rationale:
-        //   Previously this row used a Grid where BOTH columns asked for
-        //   `.frame(maxWidth: .infinity)` — distribution was unpredictable
-        //   and greedy controls (BobeTextField with `width: nil`) could
-        //   squeeze the label to nothing, or long descriptions could push
-        //   the control out of view.
-        //
-        //   Today: label-column has `.frame(maxWidth: .infinity)` so it
-        //   absorbs remaining width; control-column has no `.infinity`
-        //   so it sits at its intrinsic size. The control wins width
-        //   negotiation by virtue of being non-flexible (intrinsic
-        //   always beats flexible at SwiftUI's layout pass when both are
-        //   in a non-flexible parent).
-        //
-        //   `.fixedSize(horizontal: false, vertical: true)` on the text
-        //   lets descriptions wrap freely within the label column's
-        //   allotted width. `alignment: .top` so a wrapped description
-        //   doesn't push the control row down vertically.
-        //
-        //   Callers that put a greedy control (TextField with no width)
-        //   into the content slot will still distort the row — they need
-        //   to pass an explicit width to BobeTextField. Most usages
-        //   already do; the few that didn't were fixed alongside this
-        //   restructure (e.g. EnginePanel.localProviderSection).
-        HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(self.label)
-                    .bobeTextStyle(.body)
-                    .fontWeight(.medium)
+                    .bobeTextStyle(.rowTitle)
                     .foregroundStyle(self.theme.colors.text)
                     .fixedSize(horizontal: false, vertical: true)
                 if let description {
@@ -199,6 +249,7 @@ struct SettingsRow<Content: View>: View {
             }
             .fixedSize(horizontal: true, vertical: false)
         }
+        .frame(minHeight: 34)
     }
 }
 
@@ -213,8 +264,9 @@ struct ThemedSplitPane<Left: View, Right: View>: View {
             self.left
                 .frame(width: self.leftWidth)
             Rectangle()
-                .fill(self.theme.colors.border)
+                .fill(self.theme.hairline)
                 .frame(width: 1)
+                .padding(.vertical, 14)
             self.right
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -235,7 +287,7 @@ struct DebouncedNumberInput: View {
     var body: some View {
         TextField("", text: self.$text)
             .textFieldStyle(.plain)
-            .font(.system(size: 13, weight: .medium, design: .monospaced))
+            .font(.system(size: 13, weight: .medium).monospacedDigit())
             .multilineTextAlignment(.trailing)
             .foregroundStyle(self.theme.colors.text)
             .tint(self.theme.colors.primary)
@@ -278,6 +330,7 @@ struct CollapsibleSection<Content: View>: View {
     @ViewBuilder let content: Content
 
     @State private var isExpanded: Bool
+    @State private var isHeaderHovered = false
     @Environment(\.theme) private var theme
 
     init(
@@ -299,71 +352,84 @@ struct CollapsibleSection<Content: View>: View {
         self._isExpanded = State(initialValue: initiallyExpanded)
     }
 
+    private var isOff: Bool {
+        self.toggleBinding.map { !$0.wrappedValue } ?? false
+    }
+
     var body: some View {
-        DisclosureGroup(isExpanded: self.$isExpanded) {
-            VStack(alignment: .leading, spacing: 0) {
-                let isDisabled = self.toggleBinding.map { !$0.wrappedValue } ?? false
+        VStack(alignment: .leading, spacing: 0) {
+            self.header
+            if self.isExpanded {
                 VStack(alignment: .leading, spacing: 12) {
                     self.content
                 }
-                .padding(.leading, 30)
-                .padding(.top, 4)
-                .padding(.bottom, 12)
-                .disabled(isDisabled)
-                .opacity(isDisabled ? 0.5 : 1)
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+                .padding(.top, 2)
+                .disabled(self.isOff)
+                .opacity(self.isOff ? 0.45 : 1)
+                .transition(.bobeRise)
             }
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: self.icon)
-                    .font(.system(size: 14))
-                    .foregroundStyle(self.theme.colors.primary)
-                    .frame(width: 20)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .bobeRaised(cornerRadius: BobeRadius.card)
+        .animation(BobeMotion.standard, value: self.isExpanded)
+        .animation(BobeMotion.fade, value: self.isOff)
+    }
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(self.title)
-                            .bobeTextStyle(.heading)
-                            .foregroundStyle(self.theme.colors.text)
-                        if self.aiCuratedBadge {
-                            Text(L10n.tr("settings.goals.section.ai_curated_badge"))
-                                .bobeTextStyle(.badge)
-                                .foregroundStyle(self.theme.colors.tertiary)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(
-                                    Capsule().fill(self.theme.colors.tertiary.opacity(0.15))
-                                )
-                                .overlay(
-                                    Capsule().stroke(self.theme.colors.tertiary.opacity(0.4), lineWidth: 0.5)
-                                )
+    private var header: some View {
+        HStack(spacing: 11) {
+            Button {
+                self.isExpanded.toggle()
+            } label: {
+                HStack(spacing: 11) {
+                    BobeIconTile(
+                        systemName: self.icon,
+                        tint: self.isOff ? self.theme.colors.textMuted : self.theme.colors.primary,
+                        size: 28
+                    )
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            Text(self.title)
+                                .bobeTextStyle(.heading)
+                                .foregroundStyle(self.theme.colors.text)
+                            if self.aiCuratedBadge {
+                                Text(L10n.tr("settings.goals.section.ai_curated_badge"))
+                                    .bobeTextStyle(.badge)
+                                    .foregroundStyle(self.theme.colors.primary)
+                                    .padding(.horizontal, 7)
+                                    .frame(height: 18)
+                                    .background(Capsule(style: .circular).fill(self.theme.accentSoft))
+                            }
+                        }
+                        if let description {
+                            Text(description)
+                                .bobeTextStyle(.helper)
+                                .foregroundStyle(self.theme.colors.textMuted)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
-                    if let description {
-                        Text(description)
-                            .font(.system(size: 11))
-                            .foregroundStyle(self.theme.colors.textMuted)
-                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(self.theme.colors.textMuted.opacity(self.isHeaderHovered ? 1 : 0.6))
+                        .rotationEffect(.degrees(self.isExpanded ? 90 : 0))
                 }
-
-                Spacer()
-
-                if let toggleBinding {
-                    BobeToggle(
-                        isOn: toggleBinding,
-                        accessibilityLabel: L10n.tr("settings.shared.section.enabled_format", self.title)
-                    )
-                }
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, 8)
-            .padding(.horizontal, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(self.isExpanded ? self.theme.colors.surface : .clear)
-            )
+            .buttonStyle(.plain)
+            .accessibilityValue(self.isExpanded ? L10n.tr("settings.providers.on") : L10n.tr("settings.providers.off"))
+
+            if let toggleBinding {
+                BobeToggle(
+                    isOn: toggleBinding,
+                    accessibilityLabel: L10n.tr("settings.shared.section.enabled_format", self.title)
+                )
+            }
         }
-        .tint(self.theme.colors.primary)
-        .animation(OverlayMotionRuntime.reduceMotion ? nil : .easeInOut(duration: 0.2), value: self.isExpanded)
+        .padding(14)
+        .onHover { self.isHeaderHovered = $0 }
     }
 }
 

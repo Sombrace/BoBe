@@ -17,9 +17,9 @@ use crate::services::ollama::manager::PullProgress;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct InstallRequestBody {
+    pub(crate) profile: String,
     pub(crate) chat_model: String,
     pub(crate) batch_model: String,
-    pub(crate) vision_model: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -31,13 +31,24 @@ pub(crate) async fn start_install(
     State(state): State<Arc<AppState>>,
     Json(body): Json<InstallRequestBody>,
 ) -> Result<(axum::http::StatusCode, Json<InstallStartedResponse>), AppError> {
+    let profile_id = crate::provider::ProfileId::parse(&body.profile)?;
+    let config = state.config();
+    let profile = config.providers.profiles.get(&profile_id).ok_or_else(|| {
+        AppError::Validation(format!("provider profile '{}' was not found", body.profile))
+    })?;
+    if profile.local_runtime != Some(crate::provider::LocalRuntimeKind::Ollama) {
+        return Err(AppError::Validation(format!(
+            "provider profile '{}' is not an Ollama runtime",
+            body.profile
+        )));
+    }
+    drop(config);
     state
         .services
         .ollama_install
         .start(InstallRequest {
             chat_model: body.chat_model,
             batch_model: body.batch_model,
-            vision_model: body.vision_model,
         })
         .await?;
     Ok((
@@ -100,7 +111,6 @@ struct InstallSnapshotDto {
     runtime: DownloadProgressDto,
     chat_model: PullProgressDto,
     batch_model: PullProgressDto,
-    vision_model: PullProgressDto,
 }
 
 impl From<&InstallSnapshot> for InstallSnapshotDto {
@@ -118,7 +128,6 @@ impl From<&InstallSnapshot> for InstallSnapshotDto {
             runtime: DownloadProgressDto::from(&s.runtime),
             chat_model: PullProgressDto::from(&s.chat_model),
             batch_model: PullProgressDto::from(&s.batch_model),
-            vision_model: PullProgressDto::from(&s.vision_model),
         }
     }
 }

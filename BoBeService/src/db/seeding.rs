@@ -11,6 +11,7 @@ const DEFAULT_USER_PROFILES: &[(&str, &str)] = &[("USER_PROFILE.md", "default")]
 
 const DEFAULT_SOUL_MD: &str = include_str!("../assets/defaults/SOUL.md");
 const DEFAULT_USER_PROFILE_MD: &str = include_str!("../assets/defaults/USER_PROFILE.md");
+pub(crate) const DEFAULT_USER_PROFILE_BODY: &str = DEFAULT_USER_PROFILE_MD;
 
 #[derive(Debug)]
 pub(crate) struct SeedResult {

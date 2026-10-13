@@ -1,6 +1,5 @@
 import Foundation
 
-// MARK: - Goals
 
 enum GoalStatus: String, Codable, Sendable, CaseIterable {
     case active, paused, completed, archived, unknown
@@ -15,7 +14,6 @@ struct Goal: Identifiable, Codable, Sendable {
     let id: String
     var title: String
     var status: GoalStatus
-    /// 0–5; higher is more urgent.
     var priority: Int
     var summary: String
     var whyItMatters: String
@@ -62,7 +60,6 @@ struct GoalCreateRequest: Codable, Sendable {
     }
 }
 
-/// Deeper sections (patterns, attitude, etc.) belong to the chat agent only.
 struct GoalUpdateRequest: Codable, Sendable {
     var title: String?
     var status: GoalStatus?
@@ -77,13 +74,6 @@ struct GoalUpdateRequest: Codable, Sendable {
     }
 }
 
-struct GoalActionResponse: Codable, Sendable {
-    let id: String
-    let status: String
-    let message: String
-}
-
-// MARK: - Memory (single document)
 
 struct MemoryResponse: Codable, Sendable {
     let content: String
@@ -94,7 +84,6 @@ struct MemoryUpdateRequest: Codable, Sendable {
     let content: String
 }
 
-// MARK: - Souls
 
 struct Soul: Identifiable, Codable, Sendable {
     let id: String
@@ -135,14 +124,6 @@ struct SoulUpdateRequest: Codable, Sendable {
     var enabled: Bool?
 }
 
-struct SoulActionResponse: Codable, Sendable {
-    let id: String
-    let name: String
-    let enabled: Bool
-    let message: String
-}
-
-// MARK: - User Profiles
 
 struct UserProfile: Identifiable, Codable, Sendable {
     let id: String
@@ -183,20 +164,6 @@ struct UserProfileUpdateRequest: Codable, Sendable {
     var enabled: Bool?
 }
 
-struct UserProfileActionResponse: Codable, Sendable {
-    let id: String
-    let name: String
-    let enabled: Bool
-    let message: String
-}
-
-// MARK: - MCP Servers
-
-struct MCPServerTool: Codable, Sendable, Hashable {
-    let name: String
-    let description: String
-    let excluded: Bool
-}
 
 struct MCPServer: Identifiable, Codable, Sendable {
     var id: String {
@@ -207,17 +174,12 @@ struct MCPServer: Identifiable, Codable, Sendable {
     let command: String
     let args: [String]
     var connected: Bool
-    /// `nil` = chat session not spawned yet; render indeterminate, not disconnected.
     var status: String?
     var enabled: Bool
-    var tools: [MCPServerTool]?
-    var envKeys: [String]?
     var error: String?
 
     enum CodingKeys: String, CodingKey {
         case name, command, args, connected, enabled, error, status
-        case tools
-        case envKeys = "env_keys"
     }
 }
 

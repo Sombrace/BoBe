@@ -1,12 +1,15 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use tracing_appender::non_blocking::{NonBlocking, WorkerGuard};
+use tracing_appender::rolling::{Builder, InitError, RollingFileAppender, Rotation};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::config::Config;
 
 static LOG_GUARD: OnceLock<WorkerGuard> = OnceLock::new();
+
+pub(crate) const DAILY_LOG_SUFFIX: &str = "log";
 
 pub(crate) fn init_tracing(config: &Config) {
     let filter =
@@ -38,7 +41,7 @@ pub(crate) fn init_tracing(config: &Config) {
     }
 }
 
-#[allow(clippy::print_stderr)] // tracing isn't initialized yet; stderr is the only option
+#[allow(clippy::print_stderr)]
 fn build_file_writer(config: &crate::config::LoggingConfig) -> Option<NonBlocking> {
     let (dir, file_name) = daily_log_target(config)?;
 
@@ -50,16 +53,7 @@ fn build_file_writer(config: &crate::config::LoggingConfig) -> Option<NonBlockin
         return None;
     }
 
-    // Daily-rolling log files (`bobe.log.YYYY-MM-DD`) plus a
-    // `bobe.log` symlink to the current day, so `tail -f` and the
-    // Swift overlay log viewer have a stable path regardless of date.
-    let appender = match tracing_appender::rolling::Builder::new()
-        .rotation(tracing_appender::rolling::Rotation::DAILY)
-        .filename_prefix(&file_name)
-        .filename_suffix("log")
-        .latest_symlink(&file_name)
-        .build(&dir)
-    {
+    let appender = match daily_appender(&dir, &file_name) {
         Ok(appender) => appender,
         Err(err) => {
             eprintln!(
@@ -74,6 +68,18 @@ fn build_file_writer(config: &crate::config::LoggingConfig) -> Option<NonBlockin
         eprintln!("Tracing worker guard was already initialized.");
     }
     Some(writer)
+}
+
+pub(crate) fn daily_appender(
+    directory: &Path,
+    file_name: &str,
+) -> Result<RollingFileAppender, InitError> {
+    Builder::new()
+        .rotation(Rotation::DAILY)
+        .filename_prefix(file_name)
+        .filename_suffix(DAILY_LOG_SUFFIX)
+        .latest_symlink(file_name)
+        .build(directory)
 }
 
 pub(crate) fn daily_log_target(config: &crate::config::LoggingConfig) -> Option<(PathBuf, String)> {

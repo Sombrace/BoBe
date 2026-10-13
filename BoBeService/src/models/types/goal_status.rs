@@ -1,6 +1,3 @@
-//! Goal lifecycle status. File-backed at `~/.bobe/goals/<id>.md`; priority
-//! is `u8` on `GoalDoc`, not an enum.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum GoalStatus {

@@ -9,6 +9,8 @@ use super::security::{validate_mcp_command_with_args, validate_mcp_env};
 use crate::error::AppError;
 
 const DEFAULT_MCP_CONFIG_JSON: &str = include_str!("../assets/defaults/mcp_servers.json");
+const MIN_TIMEOUT_SECONDS: f64 = 0.001;
+const MAX_TIMEOUT_SECONDS: f64 = 600.0;
 
 pub(crate) const SECRET_REF_PREFIX: &str = "bobe-secret://";
 
@@ -35,6 +37,16 @@ fn default_timeout() -> f64 {
     30.0
 }
 
+pub(crate) fn timeout_millis(timeout_seconds: f64) -> Result<u32, &'static str> {
+    if timeout_seconds.is_finite()
+        && (MIN_TIMEOUT_SECONDS..=MAX_TIMEOUT_SECONDS).contains(&timeout_seconds)
+    {
+        Ok((timeout_seconds * 1000.0).round() as u32)
+    } else {
+        Err("timeout_seconds must be finite and between 0.001 and 600")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct McpConfigFile {
     #[serde(rename = "mcpServers", alias = "servers", default)]
@@ -47,7 +59,7 @@ pub(crate) struct McpParsedServer {
     pub(crate) command: String,
     pub(crate) args: Vec<String>,
     pub(crate) env: HashMap<String, String>,
-    pub(crate) timeout_seconds: f64,
+    pub(crate) timeout_ms: u32,
     pub(crate) excluded_tools: Vec<String>,
 }
 
@@ -109,40 +121,24 @@ pub(crate) fn load_mcp_config(
     parse_enabled_servers(file, blocked_commands, dangerous_env_keys)
 }
 
-pub(crate) fn to_sdk_mcp_servers(
+pub(crate) fn to_runtime_mcp_config(
     mut servers: Vec<McpParsedServer>,
-) -> (
-    github_copilot_sdk::IndexMap<String, github_copilot_sdk::types::McpServerConfig>,
-    Vec<String>,
-) {
-    use github_copilot_sdk::types::{McpServerConfig, McpStdioServerConfig};
-
-    let mut excluded_tools: Vec<String> = servers
-        .iter()
-        .flat_map(|server| server.excluded_tools.iter().cloned())
-        .collect();
-    excluded_tools.sort();
-    excluded_tools.dedup();
-
-    // Deterministic order is model-visible and preserves provider prompt-cache
-    // hits across process restarts (SDK 1.0.7 migration).
+) -> crate::provider::McpRuntimeConfig {
     servers.sort_by(|left, right| left.name.cmp(&right.name));
-    let map = servers
+    let servers = servers
         .into_iter()
         .map(|server| {
-            let timeout_ms = (server.timeout_seconds * 1000.0) as i64;
-            let cfg = McpStdioServerConfig {
-                tools: None,
-                timeout: Some(timeout_ms),
+            let spec = crate::provider::McpServerSpec {
                 command: server.command,
                 args: server.args,
                 env: server.env,
-                working_directory: None,
+                timeout_ms: server.timeout_ms,
+                excluded_tools: server.excluded_tools,
             };
-            (server.name, McpServerConfig::Stdio(cfg))
+            (server.name, spec)
         })
         .collect();
-    (map, excluded_tools)
+    crate::provider::McpRuntimeConfig { servers }
 }
 
 pub(crate) fn parse_enabled_servers(
@@ -155,6 +151,9 @@ pub(crate) fn parse_enabled_servers(
         if !entry.enabled {
             continue;
         }
+        let timeout_ms = timeout_millis(entry.timeout_seconds).map_err(|message| {
+            AppError::Config(format!("Invalid MCP server '{name}': {message}"))
+        })?;
 
         let command = resolve_value(&entry.command)?;
         let args = entry
@@ -176,7 +175,7 @@ pub(crate) fn parse_enabled_servers(
             command,
             args,
             env,
-            timeout_seconds: entry.timeout_seconds,
+            timeout_ms,
             excluded_tools: entry.excluded_tools,
         });
     }
@@ -198,14 +197,6 @@ pub(crate) fn secret_account(server_name: &str, env_key: &str) -> String {
         "mcp-v2-{}-{}",
         encoded.encode(server_name.as_bytes()),
         encoded.encode(env_key.as_bytes())
-    )
-}
-
-pub(crate) fn legacy_secret_account(server_name: &str, env_key: &str) -> String {
-    format!(
-        "mcp_{}_{}",
-        sanitize_secret_component(server_name),
-        sanitize_secret_component(env_key)
     )
 }
 
@@ -282,23 +273,6 @@ fn expand_env_templates(input: &str) -> Result<String, AppError> {
     Ok(out)
 }
 
-fn sanitize_secret_component(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-        } else {
-            out.push('_');
-        }
-    }
-
-    if out.trim_matches('_').is_empty() {
-        "value".into()
-    } else {
-        out
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -309,7 +283,7 @@ mod tests {
             command: "server".into(),
             args: Vec::new(),
             env: HashMap::new(),
-            timeout_seconds: 30.0,
+            timeout_ms: 30_000,
             excluded_tools: excluded_tools
                 .iter()
                 .map(|tool| (*tool).to_owned())
@@ -327,26 +301,60 @@ mod tests {
     }
 
     #[test]
-    fn legacy_account_remains_available_for_migration() {
-        assert_eq!(
-            legacy_secret_account("Git Hub", "API-KEY"),
-            "mcp_git_hub_api_key"
-        );
+    fn mcp_timeout_is_finite_and_bounded() {
+        assert_eq!(timeout_millis(0.001), Ok(1));
+        assert_eq!(timeout_millis(30.0), Ok(30_000));
+        assert_eq!(timeout_millis(600.0), Ok(600_000));
+        for invalid in [
+            f64::NEG_INFINITY,
+            -1.0,
+            0.0,
+            600.001,
+            f64::INFINITY,
+            f64::NAN,
+        ] {
+            assert!(timeout_millis(invalid).is_err());
+        }
     }
 
     #[test]
-    fn sdk_servers_and_exclusions_are_deterministic() {
+    fn invalid_timeout_is_rejected_when_loading_enabled_servers() {
+        let file = McpConfigFile {
+            mcp_servers: HashMap::from([(
+                "broken".into(),
+                McpServerEntry {
+                    command: "server".into(),
+                    args: Vec::new(),
+                    env: HashMap::new(),
+                    enabled: true,
+                    timeout_seconds: -1.0,
+                    excluded_tools: Vec::new(),
+                },
+            )]),
+        };
+
+        let error = parse_enabled_servers(file, &[], &[]).expect_err("negative timeout");
+        assert!(error.to_string().contains("timeout_seconds"));
+    }
+
+    #[test]
+    fn runtime_servers_and_exclusions_are_deterministic_and_server_scoped() {
         let servers = vec![
             parsed_server("zeta", &["write", "read"]),
             parsed_server("alpha", &["read"]),
         ];
 
-        let (mapped, excluded_tools) = to_sdk_mcp_servers(servers);
+        let config = to_runtime_mcp_config(servers);
 
         assert_eq!(
-            mapped.keys().map(String::as_str).collect::<Vec<_>>(),
+            config
+                .servers
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
             ["alpha", "zeta"]
         );
-        assert_eq!(excluded_tools, ["read", "write"]);
+        assert_eq!(config.servers["alpha"].excluded_tools, ["read"]);
+        assert_eq!(config.servers["zeta"].excluded_tools, ["write", "read"]);
     }
 }

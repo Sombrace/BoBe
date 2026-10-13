@@ -1,5 +1,3 @@
-//! User vs assistant turn role. Persisted as TEXT in SQLite via sqlx.
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, sqlx::Type)]
 #[sqlx(type_name = "TEXT", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]

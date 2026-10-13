@@ -1,7 +1,9 @@
+import AppKit
 import SwiftUI
 
 struct AppearancePanel: View {
     @Environment(ThemeStore.self) private var themeStore
+    @Environment(SettingsStore.self) private var settingsStore
     @Environment(\.theme) private var theme
 
     private var selectableThemes: [ThemeConfig] {
@@ -10,37 +12,175 @@ struct AppearancePanel: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                HStack(spacing: 8) {
-                    Image(systemName: "paintpalette.fill")
-                        .font(.system(size: 16))
-                        .foregroundStyle(self.theme.colors.primary)
-                    Text(L10n.tr("settings.appearance.theme.title"))
-                        .bobeTextStyle(.heading)
-                        .foregroundStyle(self.theme.colors.text)
+            VStack(alignment: .leading, spacing: 30) {
+                self.appThemeSection
+                self.physicalBodySection
+            }
+            .frame(maxWidth: BobeMetrics.pageMaxWidth + 80, alignment: .leading)
+            .padding(24)
+            .frame(maxWidth: .infinity)
+        }
+        .task {
+            await self.settingsStore.loadIfNeeded(force: true)
+            while !Task.isCancelled {
+                await self.settingsStore.refreshBodyThemeStatus()
+                try? await Task.sleep(for: .seconds(3))
+            }
+        }
+    }
+
+    private var appThemeSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsSectionHeader(
+                icon: "paintpalette.fill",
+                title: L10n.tr("settings.appearance.theme.title"),
+                description: L10n.tr("settings.appearance.theme.description"),
+                tint: SettingsCategory.appearance.tint
+            )
+
+            LazyVGrid(columns: self.gridColumns, spacing: 14) {
+                ForEach(self.selectableThemes) { themeConfig in
+                    ThemeCard(
+                        themeConfig: themeConfig,
+                        isSelected: themeConfig.themeId == self.themeStore.themeId,
+                        onSelect: {
+                            withAnimation(BobeMotion.soft) {
+                                self.themeStore.setTheme(themeConfig.themeId)
+                            }
+                        }
+                    )
                 }
+            }
+        }
+    }
 
-                Text(L10n.tr("settings.appearance.theme.description"))
-                    .bobeTextStyle(.settingsBody)
-                    .foregroundStyle(self.theme.colors.textMuted)
+    private var physicalBodySection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SettingsSectionHeader(
+                icon: "cube.fill",
+                title: L10n.tr("settings.appearance.body.title"),
+                description: L10n.tr("settings.appearance.body.description"),
+                tint: Color(rgb: 0xE0A22E)
+            )
 
-                LazyVGrid(
-                    columns: [
-                        GridItem(.flexible(), spacing: 16),
-                        GridItem(.flexible(), spacing: 16),
-                        GridItem(.flexible(), spacing: 16),
-                    ], spacing: 16
-                ) {
-                    ForEach(self.selectableThemes) { themeConfig in
-                        ThemeCard(
-                            themeConfig: themeConfig,
-                            isSelected: themeConfig.themeId == self.themeStore.themeId,
-                            onSelect: { self.themeStore.setTheme(themeConfig.themeId) }
+            if let settings = settingsStore.settings {
+                self.physicalBodyStatus(settings: settings)
+
+                LazyVGrid(columns: self.physicalBodyGridColumns, spacing: 12) {
+                    ForEach(PhysicalBodyTheme.allCases) { bodyTheme in
+                        let selected = bodyTheme == settings.bodyTheme
+                        PhysicalBodyThemeCard(
+                            bodyTheme: bodyTheme,
+                            isSelected: selected,
+                            saveState: selected ? self.settingsStore.bodyThemeSaveState : .idle,
+                            isDisabled: self.settingsStore.bodyThemeSaveState == .applying,
+                            onSelect: {
+                                Task { await self.settingsStore.setBodyTheme(bodyTheme) }
+                            }
                         )
                     }
                 }
+            } else if self.settingsStore.isLoading {
+                HStack(spacing: 8) {
+                    BobeSpinner(size: 14)
+                    Text(L10n.tr("settings.appearance.body.loading"))
+                        .bobeTextStyle(.settingsBody)
+                        .foregroundStyle(self.theme.colors.textMuted)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(
+                        self.settingsStore.error
+                            ?? L10n.tr("settings.appearance.body.load_error")
+                    )
+                    .bobeTextStyle(.settingsBody)
+                    .foregroundStyle(self.theme.colors.error)
+
+                    Button(L10n.tr("app.common.retry")) {
+                        Task { await self.settingsStore.loadIfNeeded(force: true) }
+                    }
+                    .bobeButton(.secondary, size: .small)
+                }
             }
-            .padding(24)
+        }
+    }
+
+    private var gridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 14)]
+    }
+
+    private var physicalBodyGridColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 124, maximum: 170), spacing: 12)]
+    }
+
+    @ViewBuilder
+    private func physicalBodyStatus(settings: DaemonSettings) -> some View {
+        let presentation = self.bodyStatusPresentation(settings: settings)
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                if self.settingsStore.bodyThemeSaveState == .applying {
+                    BobeSpinner(size: 12)
+                } else {
+                    Image(systemName: presentation.icon)
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                Text(presentation.text)
+                    .bobeTextStyle(.helper)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(presentation.text)
+
+            Spacer(minLength: 0)
+            if case .failed = self.settingsStore.bodyThemeSaveState {
+                Button(L10n.tr("app.common.retry")) {
+                    Task {
+                        await self.settingsStore.setBodyTheme(settings.bodyTheme)
+                    }
+                }
+                .bobeButton(.ghost, size: .small)
+                .accessibilityLabel(L10n.tr("app.common.retry"))
+            }
+        }
+        .foregroundStyle(presentation.color)
+    }
+
+    private func bodyStatusPresentation(
+        settings: DaemonSettings
+    ) -> (icon: String, text: String, color: Color) {
+        switch self.settingsStore.bodyThemeSaveState {
+        case .applying:
+            (
+                "arrow.triangle.2.circlepath",
+                L10n.tr("settings.appearance.body.status.applying"),
+                self.theme.colors.textMuted
+            )
+        case .applied:
+            (
+                "checkmark.circle.fill",
+                L10n.tr("settings.appearance.body.status.applied"),
+                self.theme.colors.success
+            )
+        case .savedOffline:
+            (
+                "wifi.slash",
+                L10n.tr("settings.appearance.body.status.offline_saved"),
+                self.theme.colors.warning
+            )
+        case let .failed(message):
+            ("exclamationmark.triangle.fill", message, self.theme.colors.error)
+        case .idle where settings.bodyConnected:
+            (
+                "dot.radiowaves.left.and.right",
+                L10n.tr("settings.appearance.body.status.connected"),
+                self.theme.colors.success
+            )
+        case .idle:
+            (
+                "wifi.slash",
+                L10n.tr("settings.appearance.body.status.offline"),
+                self.theme.colors.textMuted
+            )
         }
     }
 }
@@ -51,102 +191,229 @@ struct ThemeCard: View {
     let onSelect: () -> Void
     @State private var isHovered = false
 
+    private var shape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: BobeRadius.card, style: .continuous)
+    }
+
     var body: some View {
         Button(action: self.onSelect) {
-            VStack(alignment: .leading, spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(self.themeConfig.colors.background)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(self.themeConfig.colors.border, lineWidth: 1)
-                        )
+            VStack(spacing: 10) {
+                BobeCharacter(
+                    mood: self.isSelected ? .happy : (self.isHovered ? .idle : .asleep),
+                    size: 64,
+                    palette: self.themeConfig.avatar,
+                    isLively: self.isHovered || self.isSelected
+                )
+                .frame(height: 84)
 
-                    VStack(spacing: 8) {
-                        ZStack {
-                            Circle()
-                                .fill(self.themeConfig.colors.avatarRing)
-                                .frame(width: 48, height: 48)
-                                .overlay(
-                                    Circle()
-                                        .stroke(self.themeConfig.colors.border, lineWidth: 1.5)
-                                )
-
-                            Circle()
-                                .fill(
-                                    LinearGradient(
-                                        colors: [self.themeConfig.colors.avatarFaceLight, self.themeConfig.colors.avatarFaceDark],
-                                        startPoint: .topLeading, endPoint: .bottomTrailing
-                                    )
-                                )
-                                .frame(width: 32, height: 32)
-
-                            HStack(spacing: 6) {
-                                ClosedEyeArc(color: self.themeConfig.colors.avatarRing)
-                                ClosedEyeArc(color: self.themeConfig.colors.avatarRing)
-                            }
-                            .offset(y: 1)
-                        }
-
-                        HStack(spacing: 4) {
-                            Circle().fill(self.themeConfig.colors.primary).frame(width: 14, height: 14)
-                            Circle().fill(self.themeConfig.colors.secondary).frame(width: 14, height: 14)
-                            Circle().fill(self.themeConfig.colors.tertiary).frame(width: 14, height: 14)
-                        }
-                    }
-                }
-                .frame(height: 92)
-
-                HStack(spacing: 4) {
+                VStack(spacing: 3) {
                     Text(self.themeConfig.name)
-                        .bobeTextStyle(.rowMeta)
-                        .fontWeight(.semibold)
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundStyle(self.themeConfig.colors.text)
-                    if self.isSelected {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(self.themeConfig.colors.primary)
+                    HStack(spacing: 4) {
+                        ForEach(
+                            [self.themeConfig.colors.primary, self.themeConfig.colors.secondary, self.themeConfig.colors.tertiary],
+                            id: \.self
+                        ) { swatch in
+                            Circle().fill(swatch).frame(width: 7, height: 7)
+                        }
                     }
                 }
-
-                Text(self.themeConfig.description)
-                    .font(.system(size: 10))
-                    .foregroundStyle(self.themeConfig.colors.textMuted)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(maxWidth: .infinity, minHeight: 152, alignment: .topLeading)
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(self.themeConfig.colors.surface)
-                    .shadow(color: .black.opacity(0.05), radius: 4, y: 2)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .background(self.shape.fill(self.themeConfig.colors.background))
+            .overlay {
+                self.shape.strokeBorder(
+                    self.isSelected ? self.themeConfig.colors.primary : self.themeConfig.colors.border.opacity(0.7),
+                    lineWidth: self.isSelected ? 2 : 1
+                )
+            }
+            .overlay(alignment: .topTrailing) {
+                if self.isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(self.themeConfig.colors.primary)
+                        .padding(9)
+                        .transition(.bobePop())
+                }
+            }
+            .shadow(
+                color: .black.opacity(self.isHovered ? 0.14 : 0.06),
+                radius: self.isHovered ? 12 : 4,
+                y: self.isHovered ? 7 : 2
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(self.isSelected ? self.themeConfig.colors.primary : self.themeConfig.colors.border, lineWidth: self.isSelected ? 2 : 1)
-            )
+            .offset(y: self.isHovered ? -2 : 0)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(BobePressStyle(scale: 0.97))
         .accessibilityLabel(L10n.tr("settings.appearance.theme.accessibility_format", self.themeConfig.name))
         .accessibilityAddTraits(self.isSelected ? .isSelected : [])
-        .scaleEffect(self.isHovered && !OverlayMotionRuntime.reduceMotion ? 1.02 : 1.0)
-        .animation(OverlayMotionRuntime.reduceMotion ? nil : .easeOut(duration: 0.15), value: self.isHovered)
+        .help(self.themeConfig.description)
+        .animation(BobeMotion.standard, value: self.isHovered)
+        .animation(BobeMotion.standard, value: self.isSelected)
         .onHover { self.isHovered = $0 }
     }
 }
 
-private struct ClosedEyeArc: View {
-    let color: Color
+private struct PhysicalBodyThemeCard: View {
+    let bodyTheme: PhysicalBodyTheme
+    let isSelected: Bool
+    let saveState: BodyThemeSaveState
+    let isDisabled: Bool
+    let onSelect: () -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isHovered = false
 
     var body: some View {
-        Path { path in
-            path.move(to: CGPoint(x: 0, y: 4))
-            path.addQuadCurve(to: CGPoint(x: 6, y: 4), control: CGPoint(x: 3, y: 0))
+        Button(action: self.onSelect) {
+            VStack(alignment: .leading, spacing: 8) {
+                PhysicalBobePreview(bodyTheme: self.bodyTheme)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 86)
+                    .accessibilityHidden(true)
+
+                HStack(spacing: 5) {
+                    Text(self.bodyTheme.name)
+                        .bobeTextStyle(.rowMeta)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(self.theme.colors.text)
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+
+                if self.isSelected {
+                    HStack(spacing: 5) {
+                        self.selectionIndicator
+                            .font(.system(size: 9, weight: .semibold))
+                        Text(self.selectionLabel)
+                            .font(.system(size: 9, weight: .semibold))
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .foregroundStyle(self.selectionColor)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 138, alignment: .topLeading)
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(self.theme.colors.surface)
+                    .shadow(color: .black.opacity(0.05), radius: 4, y: 2)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        self.isSelected ? self.theme.colors.primary : self.theme.colors.border,
+                        lineWidth: self.isSelected ? 2 : 1
+                    )
+            )
         }
-        .stroke(self.color, style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
-        .frame(width: 6, height: 5)
+        .buttonStyle(.plain)
+        .disabled(self.isDisabled)
+        .accessibilityLabel(self.cardAccessibilityLabel)
+        .accessibilityHint(L10n.tr("settings.appearance.body.theme.accessibility_hint"))
+        .accessibilityAddTraits(self.isSelected ? .isSelected : [])
+        .scaleEffect(
+            self.isHovered && !self.isDisabled && !BobeMotion.isReduced
+                ? 1.02
+                : 1.0
+        )
+        .animation(
+            BobeMotion.isReduced ? nil : .easeOut(duration: 0.15),
+            value: self.isHovered
+        )
+        .onHover { self.isHovered = $0 }
+    }
+
+    @ViewBuilder
+    private var selectionIndicator: some View {
+        switch self.saveState {
+        case .applying:
+            BobeSpinner(size: 12)
+        case .savedOffline:
+            Image(systemName: "wifi.slash")
+                .foregroundStyle(self.theme.colors.warning)
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(self.theme.colors.error)
+        case .idle, .applied:
+            Image(systemName: "checkmark")
+                .foregroundStyle(self.theme.colors.primary)
+        }
+    }
+
+    private var selectionLabel: String {
+        switch self.saveState {
+        case .applying:
+            L10n.tr("settings.appearance.body.card.applying")
+        case .applied:
+            L10n.tr("settings.appearance.body.card.applied")
+        case .savedOffline:
+            L10n.tr("settings.appearance.body.card.offline_saved")
+        case .failed:
+            L10n.tr("settings.appearance.body.card.failed")
+        case .idle:
+            L10n.tr("settings.appearance.body.card.selected")
+        }
+    }
+
+    private var selectionColor: Color {
+        switch self.saveState {
+        case .savedOffline:
+            self.theme.colors.warning
+        case .failed:
+            self.theme.colors.error
+        case .idle, .applying, .applied:
+            self.theme.colors.primary
+        }
+    }
+
+    private var cardAccessibilityLabel: String {
+        let label = L10n.tr(
+            "settings.appearance.body.theme.accessibility_format",
+            self.bodyTheme.name
+        )
+        return self.isSelected ? "\(label), \(self.selectionLabel)" : label
+    }
+}
+
+private struct PhysicalBobePreview: View {
+    let bodyTheme: PhysicalBodyTheme
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12)
+                .fill(self.theme.colors.text.opacity(0.16))
+
+            if let previewImage {
+                Image(nsImage: previewImage)
+                    .resizable()
+                    .interpolation(.medium)
+                    .aspectRatio(280 / 240, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .padding(4)
+            } else {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(self.theme.colors.error)
+            }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(self.theme.colors.border, lineWidth: 1)
+        }
+    }
+
+    private var previewImage: NSImage? {
+        guard let url = Bundle.appResources.url(
+            forResource: "theme-\(self.bodyTheme.rawValue)",
+            withExtension: "png"
+        ) else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
     }
 }
 

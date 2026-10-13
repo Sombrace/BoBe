@@ -9,9 +9,6 @@ extension GoalsEditor {
                     self.detailHeader(goal)
                     self.statusActionRow(goal)
 
-                    // Title — a plain field with a label above. Wrapping
-                    // it in a CollapsibleSection was extra chrome on what
-                    // is functionally a one-line text input.
                     self.labeledField(L10n.tr("settings.goals.section.title")) {
                         BobeTextField(
                             placeholder: L10n.tr("settings.goals.new.placeholder"),
@@ -19,9 +16,6 @@ extension GoalsEditor {
                         )
                     }
 
-                    // Status + Priority share a single row — they're both
-                    // small pickers and pair naturally. Two CollapsibleSections
-                    // stacked vertically read as twice the noise they need.
                     HStack(alignment: .top, spacing: 16) {
                         self.labeledField(L10n.tr("settings.goals.section.status")) {
                             BobeMenuPicker(
@@ -45,9 +39,6 @@ extension GoalsEditor {
                         Spacer()
                     }
 
-                    // Prose fields — plain labeled blocks. The CodeEditor's
-                    // visible chrome already reads as an edit surface; the
-                    // disclosure-triangle wrapper was redundant.
                     self.labeledField(L10n.tr("settings.goals.section.summary")) {
                         self.proseEditor(text: self.$draft.summary, minHeight: 80)
                     }
@@ -58,9 +49,6 @@ extension GoalsEditor {
                         self.proseEditor(text: self.$draft.notes, minHeight: 220)
                     }
 
-                    // AI-curated sections stay collapsible — they're
-                    // long-form, hide-by-default, and benefit from the
-                    // explicit "AI" badge the CollapsibleSection provides.
                     VStack(alignment: .leading, spacing: 8) {
                         self.aiCuratedSection(
                             title: L10n.tr("settings.goals.section.how_working_on_it"),
@@ -104,9 +92,6 @@ extension GoalsEditor {
         }
     }
 
-    /// Label-above-control field used for editable goal properties.
-    /// Lighter than CollapsibleSection (no chevron, no disclosure animation)
-    /// while still keeping enough visual structure to scan.
     func labeledField(
         _ label: String,
         hint: String? = nil,
@@ -211,6 +196,7 @@ extension GoalsEditor {
             }
         }
         .bobeButton(.secondary, size: .small)
+        .disabled(self.editorState.isSaving)
     }
 
     static func priorityLabel(_ priority: Int) -> String {

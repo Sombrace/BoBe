@@ -1,28 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// Rich per-model status card used in Settings → Voice → Models. Unlike the
-/// minimal `VoiceModelRow` (used in the wizard), this surface shows name,
-/// purpose, size, location, and a detailed status badge with progress so
-/// the user has full context on what's installed where and what's wrong if
-/// anything is.
 struct VoiceModelCard: View {
     let name: String
     let purpose: String
     let sizeHint: String
     let location: String?
     let status: Status
-    /// Optional daemon-side progress (only daemon models surface this — the
-    /// client-side FluidAudio path doesn't expose byte progress today).
-    let daemonProgress: VoiceModelProgress?
-    /// Per-card install action. Nil = card has no install affordance (e.g.
-    /// during indeterminate "checking" state). Buttons render only when
-    /// status is `.missing` or `.failed` so installed models don't show a
-    /// redundant action.
     var onInstall: (() async -> Void)?
-    /// Per-card uninstall action. Renders only when `.installed`. Doing
-    /// this from the card (instead of a hidden menu) makes it discoverable
-    /// — the user asked for it explicitly.
     var onUninstall: (() async -> Void)?
 
     @State private var isWorking = false
@@ -139,9 +124,7 @@ struct VoiceModelCard: View {
                 Image(systemName: "exclamationmark.circle.fill")
                     .foregroundStyle(self.theme.colors.warning)
             case .downloading:
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .controlSize(.small)
+                BobeSpinner(size: 14)
             case .failed:
                 Image(systemName: "xmark.octagon.fill")
                     .foregroundStyle(self.theme.colors.error)
@@ -197,7 +180,6 @@ struct VoiceModelCard: View {
         }
     }
 
-    /// Tail of the path for compactness. Hover surfaces the full path.
     private func shortLocation(_ location: String) -> String {
         location
             .replacingOccurrences(of: NSHomeDirectory(), with: "~")
@@ -212,8 +194,6 @@ struct VoiceModelCard: View {
         guard let location = self.location else { return }
         let expanded = NSString(string: location).expandingTildeInPath
         let url = URL(fileURLWithPath: expanded)
-        // If the path doesn't exist (model not installed), reveal the
-        // parent directory instead so the user still gets useful context.
         if FileManager.default.fileExists(atPath: url.path) {
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } else {

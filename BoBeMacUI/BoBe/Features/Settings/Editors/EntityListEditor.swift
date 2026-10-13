@@ -1,9 +1,5 @@
 import SwiftUI
 
-/// Read-only fields shared by every entity rendered through
-/// `EntityListEditor`. Both `Soul` and `UserProfile` already expose these.
-/// `ID: Sendable` so the toggle/save/delete closures can cross the actor
-/// hop into `DaemonClient` without an isolation diagnostic.
 protocol EditableEntity: Identifiable, Sendable where ID: Sendable {
     var name: String { get }
     var content: String { get }
@@ -14,8 +10,6 @@ protocol EditableEntity: Identifiable, Sendable where ID: Sendable {
 extension Soul: EditableEntity {}
 extension UserProfile: EditableEntity {}
 
-/// CRUD + lifecycle hooks the editor calls. All async hops go through the
-/// daemon client; the request builders + validator are synchronous.
 struct EntityActions<E: EditableEntity, CR: Sendable, UR: Sendable> {
     let list: @Sendable () async throws -> [E]
     let create: @Sendable (CR) async throws -> E
@@ -28,9 +22,6 @@ struct EntityActions<E: EditableEntity, CR: Sendable, UR: Sendable> {
     let validate: (_ content: String) -> String?
 }
 
-/// All localized copy that varies between `SoulsEditor` and
-/// `UserProfilesEditor`. Keeping this in one struct keeps the editor's
-/// body free of L10n lookups.
 struct EntityEditorStrings {
     let paneTitle: String
     let newPlaceholder: String
@@ -43,11 +34,6 @@ struct EntityEditorStrings {
     let defaultContent: (_ name: String) -> String
 }
 
-/// Generic two-pane editor backing `SoulsEditor` + `UserProfilesEditor`,
-/// previously ~290-line mirror-twin files. The list renders rows with a
-/// toggle + label; the detail pane embeds a `CodeEditor` with save / discard
-/// / delete actions. Default entries can't be deleted (server enforces) so
-/// the trash button is suppressed for them.
 struct EntityListEditor<E: EditableEntity, CR: Sendable, UR: Sendable>: View {
     @State private var entities: [E] = []
     @State private var editorState = SettingsEditorState<E.ID>()
@@ -90,7 +76,6 @@ struct EntityListEditor<E: EditableEntity, CR: Sendable, UR: Sendable>: View {
         .onDisappear { self.editCoordinator.unregister() }
     }
 
-    // MARK: - Panes
 
     private var listPane: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -224,15 +209,12 @@ struct EntityListEditor<E: EditableEntity, CR: Sendable, UR: Sendable>: View {
                 Spacer()
 
                 if self.expertMode.isEnabled {
-                    Picker("", selection: self.$editorMode) {
-                        ForEach(ContextEditorMode.allCases, id: \.self) { mode in
-                            Text(mode.label).tag(mode)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .tint(self.theme.colors.primary)
-                    .frame(width: 150)
+                    BobeSegmented(
+                    selection: self.$editorMode,
+                    options: ContextEditorMode.allCases,
+                    title: \.label
+                )
+                .frame(width: 170)
                     .accessibilityLabel(L10n.tr("settings.context_editor.mode.accessibility"))
                 }
 
@@ -251,11 +233,7 @@ struct EntityListEditor<E: EditableEntity, CR: Sendable, UR: Sendable>: View {
             Group {
                 if self.expertMode.isEnabled, self.editorMode == .raw {
                     CodeEditor(text: self.$editorContent, theme: self.theme, fontSize: 13)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(self.theme.colors.surface)
-                                .stroke(self.theme.colors.border, lineWidth: 1)
-                        )
+                        .bobeRaised(cornerRadius: 16)
                 } else {
                     GuidedMarkdownEditor(
                         text: self.$editorContent,
@@ -315,7 +293,6 @@ struct EntityListEditor<E: EditableEntity, CR: Sendable, UR: Sendable>: View {
         }
     }
 
-    // MARK: - Actions
 
     private func loadEntities() async {
         self.editorState.setLoading(true)
@@ -347,21 +324,28 @@ struct EntityListEditor<E: EditableEntity, CR: Sendable, UR: Sendable>: View {
     }
 
     private func saveEntity() async -> Bool {
-        guard let id = self.editorState.selectedId else { return false }
+        guard let id = self.editorState.selectedId, !self.editorState.isSaving else { return false }
         if let message = self.actions.validate(self.editorContent) {
             self.editorState.setError(EntityValidationError(message: message))
             return false
         }
+        let submitted = self.editorContent
+        let selection = EndpointStore.shared.selection
         self.editorState.setSaving(true)
         defer { self.editorState.setSaving(false) }
         do {
-            let request = self.actions.buildUpdateRequest(self.editorContent)
+            let request = self.actions.buildUpdateRequest(submitted)
             let updated = try await self.actions.update(id, request)
+            guard EndpointStore.shared.selection == selection else { return false }
             if let idx = self.entities.firstIndex(where: { $0.id == id }) {
                 self.entities[idx] = updated
             }
-            self.editorState.setDirty(false)
-            return true
+            guard self.editorState.selectedId == id else { return false }
+            self.editorContent = reconcileSavedDraft(
+                current: self.editorContent, submitted: submitted, saved: updated.content
+            )
+            self.editorState.setDirty(self.editorContent != updated.content)
+            return !self.editorState.isDirty
         } catch {
             self.editorState.setError(error)
             return false

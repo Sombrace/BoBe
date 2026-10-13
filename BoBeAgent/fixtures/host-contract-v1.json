@@ -1,0 +1,132 @@
+{
+  "protocol_version": 1,
+  "harness": "pi",
+  "harness_version": "1.0.3",
+  "max_line_bytes": 16777216,
+  "layout": {
+    "session_pointer": "agent/session.json",
+    "transcripts": "agent/sessions",
+    "child_transcripts": "agent/sessions/children",
+    "credentials": "agent/auth",
+    "device_id": "agent/auth/device-id"
+  },
+  "profile_auth_example": {
+    "profile_id": "openai",
+    "provider_id": "bobe-profile:openai",
+    "path": "agent/auth/6aaedcf28159ced822137f592f19c1009279a6e774ca36d9f166e3bb364e872a.json"
+  },
+  "session_pointer_example": {
+    "version": 1,
+    "session_id": "019a3a19-4410-7000-8000-000000000001",
+    "file": "sessions/2026-10-05T18-00-00-000Z_019a3a19-4410-7000-8000-000000000001.jsonl"
+  },
+  "initialize_request": {
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocol_version": 1,
+      "execution": {
+        "model_concurrency": 4,
+        "foreground_reserve": 1,
+        "process_concurrency": 64,
+        "tool_concurrency": 8,
+        "live_channels": 8,
+        "idle_channel_seconds": 900,
+        "task_timeout_seconds": 1800,
+        "task_max_turns": 128
+      },
+      "workload_budgets": {
+        "chat": {"wall_clock": {"secs": 900, "nanos": 0}, "max_prompt_tokens": 32000, "max_output_tokens": 4096},
+        "goals": {"wall_clock": {"secs": 180, "nanos": 0}, "max_prompt_tokens": 16000, "max_output_tokens": 4096},
+        "small": {"wall_clock": {"secs": 180, "nanos": 0}, "max_prompt_tokens": 16000, "max_output_tokens": 4096},
+        "consolidate": {"wall_clock": {"secs": 900, "nanos": 0}, "max_prompt_tokens": 32000, "max_output_tokens": 8192}
+      },
+      "data_root": "/authority",
+      "workspace": "/authority/workspace",
+      "skill_directories": ["/authority/skills"],
+      "profiles": {
+        "openai": {
+          "kind": "open_ai",
+          "base_url": null,
+          "api_key": null,
+          "organization": null,
+          "offline": false,
+          "auth_method": "api_key"
+        }
+      },
+      "routes": {
+        "chat": {"profile": "openai", "model": null, "reasoning_effort": null},
+        "goals": {"profile": "openai", "model": null, "reasoning_effort": null},
+        "consolidate": {"profile": "openai", "model": null, "reasoning_effort": null},
+        "small": {"profile": "openai", "model": null, "reasoning_effort": null}
+      },
+      "tools": [
+        {
+          "name": "bobe_memory_read",
+          "description": "Read owner memory.",
+          "parameters": {"type": "object", "properties": {}, "additionalProperties": false}
+        }
+      ],
+      "capability_instructions": "Rust owns durable domain state.",
+      "mcp": {"servers": {}},
+      "enabled_tools": ["read", "bash", "edit", "write", "grep", "find", "ls", "subagent", "background_jobs"]
+    }
+  },
+  "initialize_response": {
+    "id": 1,
+    "result": {"protocol_version": 1, "harness": "pi", "version": "1.0.3"}
+  },
+  "chat_request": {
+    "id": 2,
+    "method": "chat",
+    "params": {"session_key": "00000000-0000-0000-0000-000000000000", "text": "Hello.", "channel": "voice", "context": ""}
+  },
+  "domain_tool_request": {
+    "id": -1,
+    "method": "domain_tool",
+    "params": {"request_id": 2, "name": "bobe_memory_read", "arguments": {}}
+  },
+  "domain_tool_response": {
+    "id": -1,
+    "result": {"success": true, "value": {"revision": 1, "content": "Owner memory."}}
+  },
+  "domain_tool_failed_response": {
+    "id": -2,
+    "result": {"success": false, "value": {"ok": false, "error": "Revision conflict"}}
+  },
+  "message_delta": {
+    "method": "event",
+    "params": {
+      "request_id": 2,
+      "delta": {"type": "message_delta", "message_id": "stable-message-id", "text": "Hello."}
+    }
+  },
+  "message_complete": {
+    "method": "event",
+    "params": {
+      "request_id": 2,
+      "delta": {"type": "message_complete", "message_id": "stable-message-id", "content": "Hello.", "output_tokens": 3}
+    }
+  },
+  "done": {
+    "method": "event",
+    "params": {"request_id": 2, "delta": {"type": "done"}}
+  },
+  "auth_awaiting_input": {
+    "method": "auth_event",
+    "params": {
+      "profile": "openai",
+      "phase": {"phase": "awaiting_input", "message": "Paste the callback URL.", "password": false}
+    }
+  },
+  "abort_request": {
+    "id": 3,
+    "method": "abort",
+    "params": {"request_id": 2}
+  },
+  "shutdown_request": {
+    "id": 4,
+    "method": "shutdown",
+    "params": {}
+  }
+}

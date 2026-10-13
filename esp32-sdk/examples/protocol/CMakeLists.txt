@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.24)
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+idf_build_set_property(MINIMAL_BUILD ON)
+set(PROJECT_VER "0.2.0")
+project(bobe_protocol_example)

@@ -1,24 +1,29 @@
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use axum::extract::ws::Message;
+use opusic_c::{Channels as OpusChannels, Decoder as OpusDecoder, SampleRate as OpusSampleRate};
+use serde::Serialize;
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::outbound::{
-    OutboundSender, send_json, send_json_confirmed, send_message, try_send_message,
+    OutboundSender, send_json, send_json_confirmed, send_message, send_message_confirmed,
+    try_send_message,
 };
 use super::protocol::{
     AUDIO_FRAME_DURATION_MS, AdapterMediaHeader, AdapterMediaKind, AdapterOutbound,
-    CAPTURE_CHANNELS, CAPTURE_CODEC, CAPTURE_SAMPLE_RATE_HZ, MAX_LEASE_LIFETIME_MS,
-    MAX_PLAYBACK_CREDIT_MS, PROTOCOL_MAJOR, PlaybackCredit, RouteDescriptor, SPEAKER_CHANNELS,
-    SPEAKER_CODEC, SPEAKER_PCM_BYTES, SPEAKER_SAMPLE_RATE_HZ,
+    BodyBatteryState, BodyHealthReport, CAPTURE_CHANNELS, CAPTURE_CODEC, CAPTURE_SAMPLE_RATE_HZ,
+    MAX_LEASE_LIFETIME_MS, MAX_PLAYBACK_CREDIT_MS, MEDIA_FLAG_DISCONTINUITY, OfferDecision,
+    PROTOCOL_MAJOR, PlaybackCredit, RouteDescriptor, SPEAKER_CHANNELS, SPEAKER_CODEC,
+    SPEAKER_PCM_BYTES, SPEAKER_SAMPLE_RATE_HZ, ThemeSet, UpdateStateReport,
 };
-use crate::config::Config;
+use super::update::{OfferManifest, UpdateOffer};
+use crate::config::{BodyTheme, Config};
 use crate::models::ids::new_turn_id;
 use crate::runtime::response_streamer::StreamDelivery;
 use crate::runtime::session::{RuntimeSession, UserMessageGuard};
@@ -38,11 +43,8 @@ const GENERATION_PROGRESS_TTL: Duration = Duration::from_mins(2);
 const PLAYBACK_PROGRESS_TTL: Duration = Duration::from_secs(30);
 const MAX_PLAYBACK_CREDIT_FRAMES: usize =
     MAX_PLAYBACK_CREDIT_MS as usize / AUDIO_FRAME_DURATION_MS as usize;
-/// Bounded transcode jitter buffer between the Mac adapter and body credit.
-/// The physical body's own accepted queue remains capped at 120 ms.
-const MAX_PENDING_PLAYBACK_FRAMES: usize = 25;
-/// Hard upper bound for generated audio waiting on real-time playback (30 s).
-const MAX_PENDING_OPUS_FRAMES: usize = 1_500;
+const MAX_PENDING_PLAYBACK_FRAMES: usize = 1_500;
+
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
 const CAPTION_MAX_BYTES: usize = 140;
 const BODY_STATUS_DISABLED: u8 = 0;
@@ -53,10 +55,10 @@ const BODY_STATUS_STOPPED: u8 = 4;
 
 #[derive(Clone)]
 pub(crate) struct BodyRuntime {
+    pub(crate) requests: Arc<crate::runtime::message_requests::MessageRequests>,
     pub(crate) config: Arc<ArcSwap<Config>>,
     pub(crate) runtime_session: Arc<RuntimeSession>,
     pub(crate) voice_engines: Arc<ArcSwap<VoiceEnginesSnapshot>>,
-    pub(crate) voice_turn_active: Arc<AtomicBool>,
     pub(crate) voice_sink: Arc<VoiceSink>,
 }
 
@@ -64,6 +66,7 @@ pub(crate) struct BodyRuntime {
 pub(crate) struct BodyRegistration {
     pub(crate) generation: u64,
     pub(crate) session_id: Uuid,
+    pub(crate) superseded_route: Option<RouteDescriptor>,
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +122,31 @@ struct BodyConnection {
     send_gate: Arc<AsyncMutex<()>>,
     disconnect: CancellationToken,
     last_seen: Instant,
+    offered_build: Option<u32>,
+    capabilities: super::capabilities::BodyCapabilities,
+    limits: super::capabilities::BodyLimits,
+    interactions: Arc<Mutex<super::interactions::InteractionState>>,
+    sensors: Arc<Mutex<super::interactions::SensorState>>,
+}
+
+fn offer_decision(
+    offer_build: u32,
+    running_build: u32,
+    already_offered: Option<u32>,
+) -> OfferDecision {
+    if running_build == 0 {
+        OfferDecision::NoHealthYet
+    } else if running_build >= offer_build {
+        OfferDecision::NotNewer
+    } else if already_offered == Some(offer_build) {
+        OfferDecision::AlreadyOffered
+    } else {
+        OfferDecision::Send
+    }
+}
+
+fn should_replace_body(existing: Option<&BodyConnection>) -> bool {
+    existing.is_some()
 }
 
 #[derive(Clone)]
@@ -132,32 +160,73 @@ struct AdapterConnection {
 struct PlaybackState {
     stream_id: u32,
     next_body_sequence: u32,
-    next_opus_sequence: u32,
-    next_pcm_sequence: u32,
-    opus_frames_sent: u64,
-    pcm_frames_received: u64,
-    decode_in_flight: usize,
     ready_received: bool,
     credit_frames: usize,
     frames_sent: u64,
     played_samples: u64,
-    pending_opus: VecDeque<Vec<u8>>,
     pending: VecDeque<Vec<u8>>,
     closing: bool,
     close_sent: bool,
     drained: bool,
 }
 
+fn new_playback_state() -> PlaybackState {
+    PlaybackState {
+        stream_id: rand::random::<u32>().max(1),
+        next_body_sequence: 0,
+        ready_received: false,
+        credit_frames: 0,
+        frames_sent: 0,
+        played_samples: 0,
+        pending: VecDeque::new(),
+        closing: false,
+        close_sent: false,
+        drained: false,
+    }
+}
+
+fn accept_capture_sequence(expected: &mut Option<u32>, sequence: u32, flags: u16) -> bool {
+    if expected.is_some_and(|expected| expected != sequence)
+        && flags & MEDIA_FLAG_DISCONTINUITY == 0
+    {
+        return false;
+    }
+    *expected = Some(sequence.wrapping_add(1));
+    true
+}
+
+fn decode_opus_body_pcm(decoder: &mut OpusDecoder, packet: &[u8]) -> Result<Vec<u8>, String> {
+    let mut samples = vec![0_u16; 480];
+    let decoded = decoder
+        .decode_to_slice(packet, &mut samples, false)
+        .map_err(|error| format!("decode body Opus packet: {error:?}"))?;
+    if decoded != 480 {
+        return Err(format!(
+            "body Opus packet decoded to {decoded} samples; expected 480"
+        ));
+    }
+    Ok(samples
+        .into_iter()
+        .flat_map(|sample| (sample as i16).to_le_bytes())
+        .collect())
+}
+
 struct VoiceLease {
     route: RouteDescriptor,
     request_id: String,
+    trigger: String,
     phase: LeasePhase,
     deadline: Instant,
     hard_deadline: Instant,
     admission: Option<UserMessageGuard>,
     expiry_abort: Option<tokio::task::AbortHandle>,
     turn_abort: Option<tokio::task::AbortHandle>,
+    turn_finished: Option<tokio::sync::watch::Receiver<bool>>,
     generation_complete: bool,
+    stt_stream: Option<Box<dyn crate::speech::SttStream>>,
+    next_capture_sequence: Option<u32>,
+    opus_decoder: Option<OpusDecoder>,
+    filler_opus_decoder: Option<OpusDecoder>,
     playback: Option<PlaybackState>,
 }
 
@@ -175,6 +244,7 @@ impl VoiceLease {
 struct LeaseReleaseContext {
     expiry_abort: Option<tokio::task::AbortHandle>,
     turn_abort: Option<tokio::task::AbortHandle>,
+    turn_finished: Option<tokio::sync::watch::Receiver<bool>>,
     adapter: Option<AdapterConnection>,
 }
 
@@ -218,6 +288,7 @@ impl GatewayState {
         Some(LeaseReleaseContext {
             expiry_abort: lease.expiry_abort.take(),
             turn_abort: lease.turn_abort.take(),
+            turn_finished: lease.turn_finished.take(),
             adapter: self.adapter.clone(),
         })
     }
@@ -244,14 +315,36 @@ impl GatewayState {
     }
 }
 
+type SensorStates = HashMap<String, Arc<Mutex<super::interactions::SensorState>>>;
+
 pub(crate) struct BodyGateway {
     state: Mutex<GatewayState>,
-    runtime: BodyRuntime,
-    enrolled_device_id: String,
+    pub(super) runtime: BodyRuntime,
     controller_epoch: u64,
     face_version: AtomicU64,
+    theme_version: AtomicU64,
     status: AtomicU8,
+    wake_arbitrator: crate::body::wake_arbitrator::WakeArbitrator,
     clock_origin: Instant,
+    update_offer: Option<Arc<UpdateOffer>>,
+    update_statuses: Mutex<HashMap<String, BodyUpdateStatus>>,
+    pub(super) sensor_states: Mutex<SensorStates>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub(crate) struct BodyUpdateStatus {
+    #[serde(skip)]
+    generation: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) health: Option<BodyHealthReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) battery: Option<BodyBatteryState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) offered_manifest: Option<OfferManifest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) offered_at_generation: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) update_state: Option<UpdateStateReport>,
 }
 
 struct LeaseReleaseGuard {
@@ -286,23 +379,207 @@ impl Drop for LeaseReleaseGuard {
 impl BodyGateway {
     pub(crate) fn new(
         controller_epoch: u64,
-        enrolled_device_id: String,
         enabled: bool,
         runtime: BodyRuntime,
+        update_offer: Option<Arc<UpdateOffer>>,
     ) -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(GatewayState::new()),
             runtime,
-            enrolled_device_id,
             controller_epoch,
             face_version: AtomicU64::new(1),
+            theme_version: AtomicU64::new(1),
             status: AtomicU8::new(if enabled {
                 BODY_STATUS_STARTING
             } else {
                 BODY_STATUS_DISABLED
             }),
+            wake_arbitrator: crate::body::wake_arbitrator::WakeArbitrator::default(),
             clock_origin: Instant::now(),
+            update_offer,
+            update_statuses: Mutex::new(HashMap::new()),
+            sensor_states: Mutex::new(HashMap::new()),
         })
+    }
+
+    fn lock_update_statuses(&self) -> std::sync::MutexGuard<'_, HashMap<String, BodyUpdateStatus>> {
+        self.update_statuses
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub(crate) fn update_statuses(&self) -> HashMap<String, BodyUpdateStatus> {
+        self.lock_update_statuses().clone()
+    }
+
+    pub(crate) fn configured_offer_build(&self) -> Option<u32> {
+        self.update_offer.as_ref().map(|offer| offer.build_number())
+    }
+
+    fn is_current_body(&self, device_id: &str, generation: u64) -> bool {
+        self.lock_state()
+            .bodies
+            .get(device_id)
+            .is_some_and(|body| body.generation == generation)
+    }
+
+    fn with_current_update_status(
+        &self,
+        device_id: &str,
+        generation: u64,
+        update: impl FnOnce(&mut BodyUpdateStatus),
+    ) -> bool {
+        if !self.is_current_body(device_id, generation) {
+            return false;
+        }
+        let mut statuses = self.lock_update_statuses();
+        let Some(status) = statuses.get_mut(device_id) else {
+            return false;
+        };
+        if status.generation != generation {
+            return false;
+        }
+        update(status);
+        true
+    }
+
+    fn remove_update_status(&self, device_id: &str, generation: u64) {
+        let mut statuses = self.lock_update_statuses();
+        if statuses
+            .get(device_id)
+            .is_some_and(|status| status.generation == generation)
+        {
+            statuses.remove(device_id);
+        }
+    }
+
+    pub(crate) fn record_battery_state(
+        &self,
+        device_id: &str,
+        generation: u64,
+        battery: BodyBatteryState,
+    ) -> bool {
+        self.with_current_update_status(device_id, generation, |status| {
+            status.battery = Some(battery);
+        })
+    }
+
+    pub(crate) fn record_health_report(
+        &self,
+        device_id: &str,
+        generation: u64,
+        health: BodyHealthReport,
+    ) -> OfferDecision {
+        let build_number = health.build_number;
+        if !self.with_current_update_status(device_id, generation, |status| {
+            status.health = Some(health);
+        }) {
+            return OfferDecision::StaleConnection;
+        }
+        self.classify_offer(device_id, generation, build_number)
+    }
+
+    fn classify_offer(&self, device_id: &str, generation: u64, build_number: u32) -> OfferDecision {
+        let Some(offer) = self.update_offer.as_ref() else {
+            return OfferDecision::NotConfigured;
+        };
+        let offer_build = offer.build_number();
+        let mut state = self.lock_state();
+        let Some(body) = state
+            .bodies
+            .get_mut(device_id)
+            .filter(|body| body.generation == generation)
+        else {
+            return OfferDecision::StaleConnection;
+        };
+        let decision = offer_decision(offer_build, build_number, body.offered_build);
+        if decision == OfferDecision::Send {
+            body.offered_build = Some(offer_build);
+        }
+        decision
+    }
+
+    pub(crate) async fn send_update_offer(&self, device_id: &str, generation: u64) -> bool {
+        let Some(offer) = self.update_offer.as_ref() else {
+            return true;
+        };
+        let connection = {
+            let state = self.lock_state();
+            state
+                .bodies
+                .get(device_id)
+                .filter(|body| body.generation == generation)
+                .map(|body| (body.sender.clone(), Arc::clone(&body.send_gate)))
+        };
+        let Some((sender, send_gate)) = connection else {
+            return false;
+        };
+        let _send_guard = send_gate.lock().await;
+        if !self.is_current_body(device_id, generation) {
+            return false;
+        }
+        let delivered =
+            send_message_confirmed(&sender, Message::Text(offer.envelope().to_owned().into()))
+                .await;
+        if delivered {
+            self.with_current_update_status(device_id, generation, |status| {
+                status.offered_manifest = Some(offer.manifest().clone());
+                status.offered_at_generation = Some(generation);
+                status.update_state = None;
+            });
+            tracing::info!(
+                device_id,
+                connection_generation = generation,
+                offer_build = offer.build_number(),
+                offer_version = %offer.manifest().version,
+                key_id = %offer.manifest().key_id,
+                "body.update_offer_sent"
+            );
+        } else {
+            let mut state = self.lock_state();
+            if let Some(body) = state
+                .bodies
+                .get_mut(device_id)
+                .filter(|body| body.generation == generation)
+            {
+                body.offered_build = None;
+            }
+            tracing::warn!(
+                device_id,
+                connection_generation = generation,
+                "body.update_offer_send_failed"
+            );
+        }
+        delivered
+    }
+
+    pub(crate) fn record_update_state(
+        &self,
+        device_id: &str,
+        generation: u64,
+        report: UpdateStateReport,
+    ) {
+        let phase = report.phase.clone();
+        let progress_percent = report.progress_percent;
+        let reason = report.reason.clone();
+        if self.with_current_update_status(device_id, generation, |status| {
+            status.update_state = Some(report);
+        }) {
+            tracing::info!(
+                device_id,
+                connection_generation = generation,
+                phase,
+                progress_percent,
+                reason = reason.as_deref().unwrap_or(""),
+                "body.update_state"
+            );
+        } else {
+            tracing::debug!(
+                device_id,
+                connection_generation = generation,
+                "body.update_state_stale"
+            );
+        }
     }
 
     pub(crate) async fn cancel_capture_request(
@@ -372,23 +649,105 @@ impl BodyGateway {
         )
     }
 
+    pub(crate) fn has_connected_body(&self) -> bool {
+        !self.lock_state().bodies.is_empty()
+    }
+
+    pub(crate) async fn send_current_theme_to_body(
+        &self,
+        device_id: &str,
+        generation: u64,
+    ) -> bool {
+        self.send_theme_to_body(device_id, generation).await
+    }
+
+    pub(crate) async fn apply_theme(&self, _theme: BodyTheme) -> bool {
+        let bodies = {
+            let state = self.lock_state();
+            state
+                .bodies
+                .iter()
+                .map(|(device_id, body)| (device_id.clone(), body.generation))
+                .collect::<Vec<_>>()
+        };
+        let mut delivered = false;
+        for (device_id, generation) in bodies {
+            delivered |= self.send_theme_to_body(&device_id, generation).await;
+        }
+        delivered
+    }
+
+    async fn send_theme_to_body(&self, device_id: &str, generation: u64) -> bool {
+        let connection = {
+            let state = self.lock_state();
+            state
+                .bodies
+                .get(device_id)
+                .filter(|body| body.generation == generation)
+                .map(|body| (body.sender.clone(), Arc::clone(&body.send_gate)))
+        };
+        let Some((sender, send_gate)) = connection else {
+            return false;
+        };
+        let _send_guard = send_gate.lock().await;
+        let current = self
+            .lock_state()
+            .bodies
+            .get(device_id)
+            .is_some_and(|body| body.generation == generation);
+        if !current {
+            return false;
+        }
+        let theme = self.runtime.config.load().body.theme;
+        let state_version = self.theme_version.fetch_add(1, Ordering::AcqRel);
+        send_json_confirmed(
+            &sender,
+            &ThemeSet {
+                r#type: "theme.set",
+                protocol_major: PROTOCOL_MAJOR,
+                state_version,
+                theme_id: theme,
+            },
+        )
+        .await
+    }
+
     pub(crate) fn register_body(
         &self,
         device_id: String,
+        _boot_id: String,
         sender: OutboundSender,
         disconnect: CancellationToken,
+        capabilities: super::capabilities::BodyCapabilities,
+        limits: super::capabilities::BodyLimits,
     ) -> Result<BodyRegistration, &'static str> {
-        if device_id != self.enrolled_device_id {
-            return Err("device_not_enrolled");
-        }
         let mut state = self.lock_state();
-        if state.bodies.contains_key(&device_id) {
-            return Err("device_already_connected");
-        }
+        let replace = should_replace_body(state.bodies.get(&device_id));
+        let previous = replace.then(|| state.bodies.remove(&device_id)).flatten();
+        let superseded_route = previous
+            .as_ref()
+            .and_then(|body| {
+                state.lease.as_ref().filter(|lease| {
+                    lease.route.device_id == device_id
+                        && lease.route.connection_generation == body.generation
+                })
+            })
+            .map(|lease| lease.route.clone());
         let generation = state.take_generation();
         let session_id = Uuid::new_v4();
+        let sensors = Arc::clone(
+            self.sensor_states
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(device_id.clone())
+                .or_default(),
+        );
+        sensors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .generation = generation;
         state.bodies.insert(
-            device_id,
+            device_id.clone(),
             BodyConnection {
                 generation,
                 session_id,
@@ -396,12 +755,80 @@ impl BodyGateway {
                 send_gate: Arc::new(AsyncMutex::new(())),
                 disconnect,
                 last_seen: Instant::now(),
+                offered_build: None,
+                capabilities,
+                limits,
+                interactions: Arc::new(
+                    Mutex::new(super::interactions::InteractionState::default()),
+                ),
+                sensors,
             },
         );
+        self.lock_update_statuses().insert(
+            device_id.clone(),
+            BodyUpdateStatus {
+                generation,
+                ..BodyUpdateStatus::default()
+            },
+        );
+        drop(state);
+        if let Some(previous) = previous {
+            previous.disconnect.cancel();
+        }
         Ok(BodyRegistration {
             generation,
             session_id,
+            superseded_route,
         })
+    }
+
+    pub(super) fn interaction_connection(
+        &self,
+        device_id: &str,
+        generation: Option<u64>,
+    ) -> Option<super::interactions::Connection> {
+        let state = self.lock_state();
+        let body = state.bodies.get(device_id)?;
+        if generation.is_some_and(|value| value != body.generation)
+            || body.disconnect.is_cancelled()
+        {
+            return None;
+        }
+        Some(super::interactions::Connection {
+            generation: body.generation,
+            sender: body.sender.clone(),
+            disconnect: body.disconnect.clone(),
+            capabilities: body.capabilities.clone(),
+            limits: body.limits.clone(),
+            state: Arc::clone(&body.interactions),
+            sensors: Arc::clone(&body.sensors),
+        })
+    }
+
+    pub(crate) async fn revoke_endpoint(self: &Arc<Self>, endpoint_id: &str) {
+        self.sensor_states
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(endpoint_id);
+        let (route, connection) = {
+            let mut state = self.lock_state();
+            let connection = state.bodies.remove(endpoint_id);
+            if let Some(body) = connection.as_ref() {
+                self.remove_update_status(endpoint_id, body.generation);
+            }
+            let route = state
+                .lease
+                .as_ref()
+                .filter(|lease| lease.route.device_id == endpoint_id)
+                .map(|lease| lease.route.clone());
+            (route, connection)
+        };
+        if let Some(connection) = connection {
+            connection.disconnect.cancel();
+        }
+        if let Some(route) = route {
+            self.release_route(&route, "endpoint_revoked", true).await;
+        }
     }
 
     pub(crate) async fn unregister_body(self: &Arc<Self>, device_id: &str, generation: u64) {
@@ -415,6 +842,7 @@ impl BodyGateway {
                 return;
             }
             state.bodies.remove(device_id);
+            self.remove_update_status(device_id, generation);
             state
                 .lease
                 .as_ref()
@@ -473,7 +901,11 @@ impl BodyGateway {
             }
             let disconnect = state.remove_adapter(generation);
             (
-                state.lease.as_ref().map(|lease| lease.route.clone()),
+                state
+                    .lease
+                    .as_ref()
+                    .filter(|lease| lease.stt_stream.is_none())
+                    .map(|lease| lease.route.clone()),
                 disconnect,
             )
         };
@@ -486,22 +918,72 @@ impl BodyGateway {
         }
     }
 
+    pub(crate) async fn arbitrate_wake(
+        &self,
+        endpoint_id: &str,
+        request_id: &str,
+        metadata: Option<&crate::body::protocol::WakeCandidateMetadata>,
+    ) -> crate::body::wake_arbitrator::WakeDecision {
+        if let Some(metadata) = metadata {
+            tracing::trace!(
+                endpoint_id,
+                model_id = metadata.model_id,
+                detected_monotonic_us = metadata.detected_monotonic_us,
+                "body.wake_candidate"
+            );
+        }
+        let candidate = crate::body::wake_arbitrator::WakeCandidate {
+            endpoint_id: endpoint_id.to_owned(),
+            request_id: request_id.to_owned(),
+            confidence: metadata.map_or(0.5, |metadata| metadata.confidence),
+            snr_db: metadata.map_or(0.0, |metadata| metadata.snr_db),
+            energy_dbfs: metadata.map_or(-60.0, |metadata| metadata.energy_dbfs),
+        };
+        self.wake_arbitrator.submit(candidate).await
+    }
+
+    pub(crate) async fn preempt_pending_wake(&self) {
+        self.wake_arbitrator.preempt_pending().await;
+    }
+
     pub(crate) fn acquire_lease(
         &self,
         device_id: &str,
         generation: u64,
         request_id: &str,
+        trigger: &str,
         stream_id: u32,
     ) -> Result<LeaseGrant, &'static str> {
         if request_id.is_empty() || request_id.len() > 64 || stream_id == 0 {
             return Err("invalid_capture_request");
         }
         let mut state = self.lock_state();
-        if state.adapter.is_none() {
-            return Err("speech_adapter_unavailable");
+        let daemon_stt = self
+            .runtime
+            .voice_engines
+            .load()
+            .stt
+            .as_ref()
+            .filter(|engine| engine.health().is_viable())
+            .map(Arc::clone);
+        if state.adapter.is_none() && daemon_stt.is_none() {
+            return Err("speech_engine_unavailable");
         }
-        if state.lease.is_some() {
-            return Err("another_endpoint_owns_voice_lease");
+        if let Some(existing) = state.lease.as_ref() {
+            let can_preempt = trigger == "action_button"
+                && existing.trigger == "wake_word"
+                && existing.phase == LeasePhase::Granted;
+            if !can_preempt {
+                return Err("another_endpoint_owns_voice_lease");
+            }
+            if let Some(mut preempted) = state.lease.take() {
+                if let Some(abort) = preempted.expiry_abort.take() {
+                    abort.abort();
+                }
+                if let Some(abort) = preempted.turn_abort.take() {
+                    abort.abort();
+                }
+            }
         }
         let Some(body) = state.bodies.get(device_id) else {
             return Err("body_not_connected");
@@ -512,27 +994,39 @@ impl BodyGateway {
         let admission = self
             .runtime
             .runtime_session
-            .try_begin_user_message()
+            .try_begin_user_message(crate::models::ids::ConversationChannelId::for_endpoint(
+                device_id,
+            ))
             .map_err(|_| "agent_turn_unavailable")?;
         let route = RouteDescriptor {
             device_id: device_id.to_owned(),
             connection_generation: generation,
             body_session_id: body.session_id,
             lease_id: Uuid::new_v4(),
-            turn_id: new_turn_id(false),
+            turn_id: new_turn_id(),
             capture_stream_id: stream_id,
         };
         let now = Instant::now();
+        let stt_stream = daemon_stt
+            .map(|engine| engine.create_stream(false))
+            .transpose()
+            .map_err(|_| "speech_engine_unavailable")?;
         state.lease = Some(VoiceLease {
             route: route.clone(),
             request_id: request_id.to_owned(),
+            trigger: trigger.to_owned(),
             phase: LeasePhase::Granted,
             deadline: now + LEASE_TTL,
             hard_deadline: now + LEASE_HARD_TTL,
             admission: Some(admission),
             expiry_abort: None,
             turn_abort: None,
+            turn_finished: None,
             generation_complete: false,
+            stt_stream,
+            next_capture_sequence: None,
+            opus_decoder: OpusDecoder::new(OpusChannels::Mono, OpusSampleRate::Hz24000).ok(),
+            filler_opus_decoder: None,
             playback: None,
         });
         Ok(LeaseGrant {
@@ -573,6 +1067,9 @@ impl BodyGateway {
                 return Err("invalid_capture_state");
             }
             lease.advance(LeasePhase::Capturing, CAPTURE_IDLE_TTL);
+            if lease.stt_stream.is_some() {
+                return Ok(());
+            }
             state.adapter.clone().ok_or("speech_adapter_unavailable")?
         };
         let message = AdapterOutbound::CaptureOpen {
@@ -600,7 +1097,7 @@ impl BodyGateway {
         self: &Arc<Self>,
         route: &RouteDescriptor,
     ) -> Result<(), &'static str> {
-        let adapter = {
+        let direct_events = {
             let mut state = self.lock_state();
             let Some(lease) = state.lease.as_mut() else {
                 return Err("voice_lease_missing");
@@ -612,8 +1109,33 @@ impl BodyGateway {
                 return Err("invalid_capture_state");
             }
             lease.advance(LeasePhase::Transcribing, TRANSCRIPTION_TTL);
-            state.adapter.clone().ok_or("speech_adapter_unavailable")?
+            lease
+                .stt_stream
+                .as_mut()
+                .map(|stream| stream.finish())
+                .transpose()
+                .map_err(|_| "speech_recognition_failed")?
         };
+        if let Some(events) = direct_events {
+            if events
+                .iter()
+                .any(|event| matches!(event, crate::speech::SttEvent::Final(_)))
+            {
+                return self.handle_daemon_stt_events(route, events).await;
+            }
+            return match self
+                .transcript_empty(route.connection_generation, route.lease_id)
+                .await
+            {
+                AdapterInputDisposition::Accepted => Ok(()),
+                _ => Err("speech_recognition_failed"),
+            };
+        }
+        let adapter = self
+            .lock_state()
+            .adapter
+            .clone()
+            .ok_or("speech_adapter_unavailable")?;
         match self
             .send_active_adapter_json(
                 route,
@@ -638,23 +1160,45 @@ impl BodyGateway {
         self: &Arc<Self>,
         route: &RouteDescriptor,
         sequence: u32,
+        flags: u16,
         frame: &[u8],
     ) -> bool {
-        let adapter = {
+        let direct_events = {
             let mut state = self.lock_state();
             let Some(lease) = state.lease.as_mut() else {
                 return false;
             };
             let active = GatewayState::lease_is_routable(lease, route)
                 && lease.phase == LeasePhase::Capturing;
-            if active {
-                lease.touch(CAPTURE_IDLE_TTL);
-            }
-            if !active {
+            if !active
+                || !accept_capture_sequence(&mut lease.next_capture_sequence, sequence, flags)
+            {
                 return false;
             }
-            state.adapter.clone()
+            lease.touch(CAPTURE_IDLE_TTL);
+            lease
+                .stt_stream
+                .as_mut()
+                .map(|stream| {
+                    let payload = frame
+                        .get(super::protocol::MEDIA_HEADER_LEN..)
+                        .ok_or_else(|| "microphone frame is missing its PCM payload".to_owned())?;
+                    stream.accept_pcm_s16le(payload)
+                })
+                .transpose()
         };
+        match direct_events {
+            Ok(Some(events)) => {
+                return self.handle_daemon_stt_events(route, events).await.is_ok();
+            }
+            Err(_) => {
+                self.release_route(route, "speech_recognition_failed", false)
+                    .await;
+                return false;
+            }
+            Ok(None) => {}
+        }
+        let adapter = self.lock_state().adapter.clone();
         let Some(adapter) = adapter else {
             self.release_route(route, "speech_adapter_unavailable", false)
                 .await;
@@ -680,6 +1224,36 @@ impl BodyGateway {
                 false
             }
         }
+    }
+
+    async fn handle_daemon_stt_events(
+        self: &Arc<Self>,
+        route: &RouteDescriptor,
+        events: Vec<crate::speech::SttEvent>,
+    ) -> Result<(), &'static str> {
+        for event in events {
+            match event {
+                crate::speech::SttEvent::Partial(text) => {
+                    if self
+                        .transcript_partial(route.connection_generation, route.lease_id, &text)
+                        .await
+                        != AdapterInputDisposition::Accepted
+                    {
+                        return Err("stale_voice_route");
+                    }
+                }
+                crate::speech::SttEvent::Final(text) => {
+                    if self
+                        .transcript_final(route.connection_generation, route.lease_id, text)
+                        .await
+                        != AdapterInputDisposition::Accepted
+                    {
+                        return Err("speech_recognition_failed");
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(crate) async fn transcript_partial(
@@ -784,30 +1358,33 @@ impl BodyGateway {
                 .await;
             return false;
         }
-        let voice_cfg = SessionVoiceConfig::new(None, None, Some("server_kokoro"), &defaults);
+        let speech_plan = crate::speech::SpeechPlan::body_v1(&defaults);
+        let voice_cfg = SessionVoiceConfig::new(None, speech_plan, &defaults);
         let (output, mut output_rx) = VoiceOutput::channel(OUTPUT_CHANNEL_CAPACITY);
         let (completion_tx, _completion_rx) = mpsc::channel(1);
         let context = VoiceContext {
+            conversation_channel: crate::models::ids::ConversationChannelId::for_endpoint(
+                &route.device_id,
+            ),
+            networked_runtime: false,
             output: output.clone(),
             runtime_session: Arc::clone(&self.runtime.runtime_session),
             engines,
             voice_defaults: defaults,
-            voice_turn_active: Arc::clone(&self.runtime.voice_turn_active),
             voice_sink: Arc::clone(&self.runtime.voice_sink),
             delivery: StreamDelivery::EndpointOnly,
-            send_server_tts_text: true,
             turn_completion_tx: completion_tx,
         };
 
         let gateway_for_output = Arc::clone(self);
         let route_for_output = route.clone();
-        let output_task = tokio::spawn(async move {
+        let output_task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
             while let Some(frame) = output_rx.recv().await {
                 gateway_for_output
                     .handle_voice_output(&route_for_output, frame)
                     .await;
             }
-        });
+        }));
         let turn_id = route.turn_id.clone();
         let turn_task = tokio::spawn(async move {
             run_text_turn(
@@ -816,6 +1393,7 @@ impl BodyGateway {
                 &context,
                 voice_cfg,
                 None,
+                Arc::default(),
                 VoiceTurnAdmission::AlreadyHeld,
             )
             .await;
@@ -826,6 +1404,7 @@ impl BodyGateway {
             }
         });
         let abort = turn_task.abort_handle();
+        let (finished, completion) = tokio::sync::watch::channel(false);
         {
             let mut state = self.lock_state();
             let Some(lease) = state.lease.as_mut() else {
@@ -837,6 +1416,7 @@ impl BodyGateway {
                 return false;
             }
             lease.turn_abort = Some(abort);
+            lease.turn_finished = Some(completion);
         }
 
         let gateway = Arc::clone(self);
@@ -848,6 +1428,15 @@ impl BodyGateway {
                 }
                 Err(error) => tracing::error!(%error, "body.turn_task_failed"),
             }
+            if let Ok(turn) = crate::models::ids::conversation_turn_id_from_wire_id(&route.turn_id)
+            {
+                gateway
+                    .runtime
+                    .runtime_session
+                    .settle_interrupted_turn(turn)
+                    .await;
+            }
+            finished.send_replace(true);
             gateway.turn_task_finished(&route).await;
         });
         true
@@ -912,18 +1501,68 @@ impl BodyGateway {
                 self.release_route(route, "voice_turn_truncated", true)
                     .await;
             }
-            ServerMessage::HelloAck { .. } => {}
+            ServerMessage::SpeechPlan { .. }
+            | ServerMessage::CaptureCredit { .. }
+            | ServerMessage::SttPartial { .. }
+            | ServerMessage::SttFinal { .. } => {}
         }
     }
 
     async fn forward_tts_opus(self: &Arc<Self>, route: &RouteDescriptor, bytes: &[u8]) {
-        let adapter_available = self.lock_state().adapter.is_some();
-        if !adapter_available {
-            self.release_route(route, "speech_adapter_unavailable", false)
+        let pcm = {
+            let mut state = self.lock_state();
+            let Some(lease) = state.lease.as_mut() else {
+                return;
+            };
+            if !GatewayState::lease_is_routable(lease, route) {
+                return;
+            }
+            if let Some(frame) = crate::speech::protocol::decode_tts_frame(bytes) {
+                let filler = frame.flags & crate::speech::protocol::FLAG_FILLER != 0;
+                let decoder = if filler {
+                    &mut lease.filler_opus_decoder
+                } else {
+                    &mut lease.opus_decoder
+                };
+                if (filler && frame.chunk_id == 0)
+                    || frame.flags & crate::speech::protocol::FLAG_FIRST_OF_TURN != 0
+                {
+                    *decoder = OpusDecoder::new(OpusChannels::Mono, OpusSampleRate::Hz24000).ok();
+                }
+                tracing::trace!(
+                    chunk_id = frame.chunk_id,
+                    flags = frame.flags,
+                    "body.tts_frame"
+                );
+                decoder
+                    .as_mut()
+                    .ok_or_else(|| "body Opus decoder is unavailable".to_owned())
+                    .and_then(|decoder| decode_opus_body_pcm(decoder, frame.payload))
+            } else {
+                Err("invalid body TTS frame".to_owned())
+            }
+        };
+        match pcm {
+            Ok(pcm) => self.queue_body_pcm(route, pcm).await,
+            Err(error) => {
+                self.fail_route(
+                    route,
+                    "body_audio_decode_failed",
+                    &error,
+                    "body_audio_decode_failed",
+                )
+                .await;
+            }
+        }
+    }
+
+    async fn queue_body_pcm(self: &Arc<Self>, route: &RouteDescriptor, pcm: Vec<u8>) {
+        if pcm.len() != SPEAKER_PCM_BYTES {
+            self.release_route(route, "body_audio_frame_invalid", false)
                 .await;
             return;
         }
-        let (playback_stream_id, open_body, queued) = {
+        let (stream_id, open_body, queued) = {
             let mut state = self.lock_state();
             let Some(lease) = state.lease.as_mut() else {
                 return;
@@ -936,33 +1575,15 @@ impl BodyGateway {
             lease.touch(PLAYBACK_PROGRESS_TTL);
             let open_body = lease.playback.is_none();
             if open_body {
-                let stream_id = rand::random::<u32>().max(1);
-                lease.playback = Some(PlaybackState {
-                    stream_id,
-                    next_body_sequence: 0,
-                    next_opus_sequence: 0,
-                    next_pcm_sequence: 0,
-                    opus_frames_sent: 0,
-                    pcm_frames_received: 0,
-                    decode_in_flight: 0,
-                    ready_received: false,
-                    credit_frames: 0,
-                    frames_sent: 0,
-                    played_samples: 0,
-                    pending_opus: VecDeque::new(),
-                    pending: VecDeque::new(),
-                    closing: false,
-                    close_sent: false,
-                    drained: false,
-                });
+                lease.playback = Some(new_playback_state());
                 lease.advance(LeasePhase::Playing, PLAYBACK_PROGRESS_TTL);
             }
             let Some(playback) = lease.playback.as_mut() else {
                 return;
             };
-            let queued = playback.pending_opus.len() < MAX_PENDING_OPUS_FRAMES;
+            let queued = playback.pending.len() < MAX_PENDING_PLAYBACK_FRAMES;
             if queued {
-                playback.pending_opus.push_back(bytes.to_vec());
+                playback.pending.push_back(pcm);
             }
             (playback.stream_id, open_body, queued)
         };
@@ -976,147 +1597,30 @@ impl BodyGateway {
             .await;
             return;
         }
-        if open_body
-            && !self
-                .send_active_body_json(
-                    route,
-                    serde_json::json!({
-                        "type": "audio.playback.open",
-                        "protocol_major": PROTOCOL_MAJOR,
-                        "lease_id": route.lease_id,
-                        "turn_id": route.turn_id,
-                        "stream_id": playback_stream_id,
-                        "codec": SPEAKER_CODEC,
-                        "sample_rate_hz": SPEAKER_SAMPLE_RATE_HZ,
-                        "channels": SPEAKER_CHANNELS,
-                        "frame_duration_ms": AUDIO_FRAME_DURATION_MS,
-                    }),
-                )
-                .await
-        {
+        if open_body && !self.open_body_playback(route, stream_id).await {
             self.release_route(route, "body_control_queue_full", true)
                 .await;
             return;
         }
-        self.pump_adapter_decode(route).await;
+        self.flush_playback(route).await;
     }
 
-    async fn pump_adapter_decode(self: &Arc<Self>, route: &RouteDescriptor) {
-        let adapter = { self.lock_state().adapter.clone() };
-        let Some(adapter) = adapter else {
-            self.release_route(route, "speech_adapter_unavailable", false)
-                .await;
-            return;
-        };
-
-        // Reserve and send one complete batch under the adapter gate. Reserving
-        // before taking this gate let concurrent pumps send sequence N+1 before N.
-        let send_guard = adapter.send_gate.lock().await;
-        let Some((stream_id, packets)) = ({
-            let mut state = self.lock_state();
-            let adapter_is_current = state
-                .adapter
-                .as_ref()
-                .is_some_and(|current| current.generation == adapter.generation);
-            if adapter_is_current
-                && let Some(lease) = state.lease.as_mut()
-                && GatewayState::lease_is_routable(lease, route)
-                && let Some(playback) = lease.playback.as_mut()
-            {
-                let buffered = playback
-                    .pending
-                    .len()
-                    .saturating_add(playback.decode_in_flight);
-                let capacity = MAX_PENDING_PLAYBACK_FRAMES.saturating_sub(buffered);
-                let mut packets = Vec::new();
-                for _ in 0..capacity {
-                    let Some(opus) = playback.pending_opus.pop_front() else {
-                        break;
-                    };
-                    let sequence = playback.next_opus_sequence;
-                    playback.next_opus_sequence = playback.next_opus_sequence.saturating_add(1);
-                    playback.opus_frames_sent = playback.opus_frames_sent.saturating_add(1);
-                    playback.decode_in_flight = playback.decode_in_flight.saturating_add(1);
-                    packets.push((sequence, opus));
-                }
-                Some((playback.stream_id, packets))
-            } else {
-                None
-            }
-        }) else {
-            return;
-        };
-
-        let mut send_failed = false;
-        for (sequence, opus) in packets {
-            let encoded = AdapterMediaHeader {
-                kind: AdapterMediaKind::TtsOpus,
-                connection_generation: route.connection_generation,
-                lease_id: route.lease_id,
-                stream_id,
-                sequence,
-            }
-            .encode(&opus);
-            if !send_message(&adapter.sender, Message::Binary(encoded.into())).await {
-                send_failed = true;
-                break;
-            }
-        }
-        drop(send_guard);
-        if send_failed {
-            self.release_route(route, "speech_adapter_send_failed", false)
-                .await;
-        }
-    }
-
-    pub(crate) async fn receive_speaker_pcm(
-        self: &Arc<Self>,
-        header: AdapterMediaHeader,
-        pcm: &[u8],
-    ) -> AdapterInputDisposition {
-        if header.kind != AdapterMediaKind::SpeakerPcm || pcm.len() != SPEAKER_PCM_BYTES {
-            return AdapterInputDisposition::Invalid;
-        }
-        let route = {
-            let mut state = self.lock_state();
-            let Some(lease) = state.lease.as_mut() else {
-                return AdapterInputDisposition::Stale;
-            };
-            if lease.phase == LeasePhase::Releasing
-                && lease.route.connection_generation == header.connection_generation
-                && lease.route.lease_id == header.lease_id
-            {
-                return AdapterInputDisposition::Stale;
-            }
-            let disposition = classify_adapter_route(
-                &lease.route,
-                header.connection_generation,
-                header.lease_id,
-                lease.phase != LeasePhase::Releasing && lease.playback.is_some(),
-            );
-            if disposition != AdapterInputDisposition::Accepted {
-                return disposition;
-            }
-            let Some(playback) = lease.playback.as_mut() else {
-                return AdapterInputDisposition::Invalid;
-            };
-            if playback.stream_id != header.stream_id
-                || playback.next_pcm_sequence != header.sequence
-                || playback.decode_in_flight == 0
-                || playback.pending.len() >= MAX_PENDING_PLAYBACK_FRAMES
-            {
-                return AdapterInputDisposition::Invalid;
-            }
-            playback.decode_in_flight -= 1;
-            playback.next_pcm_sequence = playback.next_pcm_sequence.wrapping_add(1);
-            playback.pcm_frames_received = playback.pcm_frames_received.saturating_add(1);
-            playback.pending.push_back(pcm.to_vec());
-            lease.touch(PLAYBACK_PROGRESS_TTL);
-            lease.route.clone()
-        };
-        self.flush_playback(&route).await;
-        self.pump_adapter_decode(&route).await;
-        AdapterInputDisposition::Accepted
+    async fn open_body_playback(&self, route: &RouteDescriptor, stream_id: u32) -> bool {
+        self.send_active_body_json(
+            route,
+            serde_json::json!({
+                "type": "audio.playback.open",
+                "protocol_major": PROTOCOL_MAJOR,
+                "lease_id": route.lease_id,
+                "turn_id": route.turn_id,
+                "stream_id": stream_id,
+                "codec": SPEAKER_CODEC,
+                "sample_rate_hz": SPEAKER_SAMPLE_RATE_HZ,
+                "channels": SPEAKER_CHANNELS,
+                "frame_duration_ms": AUDIO_FRAME_DURATION_MS,
+            }),
+        )
+        .await
     }
 
     pub(crate) async fn apply_playback_credit(
@@ -1166,7 +1670,6 @@ impl BodyGateway {
         };
         if valid {
             self.flush_playback(route).await;
-            self.pump_adapter_decode(route).await;
             self.release_if_drained(route).await;
         }
         valid
@@ -1268,12 +1771,7 @@ impl BodyGateway {
                     playback.frames_sent = playback.frames_sent.saturating_add(1);
                     frames.push((sequence, pcm));
                 }
-                let close = playback.closing
-                    && playback.pending_opus.is_empty()
-                    && playback.decode_in_flight == 0
-                    && playback.pcm_frames_received >= playback.opus_frames_sent
-                    && playback.pending.is_empty()
-                    && !playback.close_sent;
+                let close = playback.closing && playback.pending.is_empty() && !playback.close_sent;
                 if close {
                     playback.close_sent = true;
                     lease.advance(LeasePhase::Draining, PLAYBACK_PROGRESS_TTL);
@@ -1375,6 +1873,18 @@ impl BodyGateway {
             })
         };
         if drained {
+            if let Ok(turn) = crate::models::ids::conversation_turn_id_from_wire_id(&route.turn_id)
+                && let Err(error) = self
+                    .runtime
+                    .runtime_session
+                    .acknowledge_presentation(
+                        turn,
+                        crate::models::ids::ConversationChannelId::for_endpoint(&route.device_id),
+                    )
+                    .await
+            {
+                tracing::warn!(%error,turn_id=%route.turn_id,"body.presentation_receipt_failed");
+            }
             self.release_route(route, "playback_drained", false).await;
         }
     }
@@ -1424,12 +1934,38 @@ impl BodyGateway {
         }) else {
             return;
         };
-        let completion = LeaseReleaseGuard::new(Arc::clone(self), route.clone());
+        let gateway = Arc::clone(self);
+        let route = route.clone();
+        let task = tokio::spawn(async move {
+            gateway
+                .finish_release(route, release, reason, notify_adapter)
+                .await;
+        });
+        if let Err(error) = task.await {
+            tracing::error!(%error,"body.release_failed");
+        }
+    }
+
+    async fn finish_release(
+        self: Arc<Self>,
+        route: RouteDescriptor,
+        release: LeaseReleaseContext,
+        reason: &'static str,
+        notify_adapter: bool,
+    ) {
+        let completion = LeaseReleaseGuard::new(Arc::clone(&self), route.clone());
         if let Some(abort) = release.expiry_abort {
             abort.abort();
         }
         if let Some(abort) = release.turn_abort {
             abort.abort();
+        }
+        if let Some(mut finished) = release.turn_finished {
+            while !*finished.borrow_and_update() {
+                if finished.changed().await.is_err() {
+                    break;
+                }
+            }
         }
         if let Some(adapter) = release.adapter {
             let terminal = if notify_adapter {
@@ -1448,7 +1984,7 @@ impl BodyGateway {
                 self.invalidate_adapter(adapter.generation);
             }
         }
-        if !self.send_terminal_idle(route).await {
+        if !self.send_terminal_idle(&route).await {
             self.invalidate_body(&route.device_id, route.connection_generation);
         }
         completion.finish();
@@ -1723,6 +2259,50 @@ mod tests {
     }
 
     #[test]
+    fn latest_authenticated_connection_supersedes_the_stale_socket() {
+        let (sender, _receiver) = mpsc::channel(1);
+        let connection = BodyConnection {
+            sensors: Arc::new(Mutex::new(
+                super::super::interactions::SensorState::default(),
+            )),
+            capabilities: super::super::capabilities::BodyCapabilities {
+                microphone: true,
+                speaker: true,
+                ..Default::default()
+            },
+            limits: super::super::capabilities::BodyLimits {
+                max_control_bytes: super::super::protocol::MAX_CONTROL_BYTES as u32,
+                max_playback_credit_ms: super::super::protocol::MAX_PLAYBACK_CREDIT_MS,
+            },
+            interactions: Arc::new(Mutex::new(
+                super::super::interactions::InteractionState::default(),
+            )),
+            generation: 1,
+            session_id: Uuid::new_v4(),
+            sender,
+            send_gate: Arc::new(AsyncMutex::new(())),
+            disconnect: CancellationToken::new(),
+            last_seen: Instant::now(),
+            offered_build: None,
+        };
+
+        assert!(should_replace_body(Some(&connection)));
+        assert!(!should_replace_body(None));
+    }
+
+    #[test]
+    fn direct_opus_decode_produces_exact_body_frame() {
+        let mut encoder = crate::voice::opus::make_opus_encoder(24_000).expect("encoder");
+        let packets = crate::voice::opus::encode_pcm_with(&mut encoder, &vec![0.0; 480], 24_000);
+        let mut decoder =
+            OpusDecoder::new(OpusChannels::Mono, OpusSampleRate::Hz24000).expect("decoder");
+        let framed = crate::speech::protocol::encode_tts_frame(0, 0, &packets[0]);
+        let decoded = crate::speech::protocol::decode_tts_frame(&framed).expect("frame");
+        let pcm = decode_opus_body_pcm(&mut decoder, decoded.payload).expect("decode");
+        assert_eq!(pcm.len(), SPEAKER_PCM_BYTES);
+    }
+
+    #[test]
     fn adapter_route_classification_separates_stale_from_invalid() {
         let route = RouteDescriptor {
             device_id: "body-1".to_owned(),
@@ -1752,6 +2332,30 @@ mod tests {
     }
 
     #[test]
+    fn capture_sequence_requires_continuity_or_discontinuity() {
+        let mut expected = None;
+        assert!(accept_capture_sequence(&mut expected, 7, 0));
+        assert_eq!(expected, Some(8));
+        assert!(accept_capture_sequence(&mut expected, 8, 0));
+        assert!(!accept_capture_sequence(&mut expected, 10, 0));
+        assert_eq!(expected, Some(9));
+        assert!(accept_capture_sequence(
+            &mut expected,
+            10,
+            MEDIA_FLAG_DISCONTINUITY,
+        ));
+        assert_eq!(expected, Some(11));
+        assert!(!accept_capture_sequence(&mut expected, 10, 0));
+        assert!(accept_capture_sequence(
+            &mut expected,
+            u32::MAX,
+            MEDIA_FLAG_DISCONTINUITY,
+        ));
+        assert_eq!(expected, Some(0));
+        assert!(accept_capture_sequence(&mut expected, 0, 0));
+    }
+
+    #[test]
     fn lease_remains_owned_until_terminal_delivery_finishes() {
         let route = RouteDescriptor {
             device_id: "body-1".to_owned(),
@@ -1761,7 +2365,7 @@ mod tests {
             turn_id: "turn-1".to_owned(),
             capture_stream_id: 11,
         };
-        let admission_flag = Arc::new(AtomicBool::new(true));
+        let admission = crate::runtime::turn_admission::TurnAdmission::new();
         let (adapter, _receiver) = mpsc::channel(1);
         let mut state = GatewayState::new();
         state.adapter = Some(AdapterConnection {
@@ -1773,15 +2377,23 @@ mod tests {
         state.lease = Some(VoiceLease {
             route: route.clone(),
             request_id: "request-1".to_owned(),
+            trigger: "action_button".to_owned(),
             phase: LeasePhase::Generating,
             deadline: Instant::now() + Duration::from_secs(1),
             hard_deadline: Instant::now() + Duration::from_secs(10),
-            admission: Some(crate::util::atomic_flag_guard::AtomicFlagGuard::new(
-                Arc::clone(&admission_flag),
-            )),
+            admission: Some(
+                admission
+                    .try_admit(crate::runtime::turn_admission::TurnSource::User)
+                    .unwrap(),
+            ),
             expiry_abort: None,
             turn_abort: None,
+            turn_finished: None,
             generation_complete: false,
+            stt_stream: None,
+            next_capture_sequence: None,
+            opus_decoder: None,
+            filler_opus_decoder: None,
             playback: None,
         });
 
@@ -1794,9 +2406,9 @@ mod tests {
                 .is_some_and(|lease| { GatewayState::lease_is_routable(lease, &route) })
         );
         assert!(state.begin_lease_release(&route).is_none());
-        assert!(admission_flag.load(Ordering::Acquire));
+        assert!(!admission.is_idle());
         assert!(state.finish_lease_release(&route));
         assert!(state.lease.is_none());
-        assert!(!admission_flag.load(Ordering::Acquire));
+        assert!(admission.is_idle());
     }
 }

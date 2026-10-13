@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 
 final class BoBeUITests: XCTestCase {
@@ -43,7 +44,15 @@ final class BoBeUITests: XCTestCase {
     @MainActor
     private func makeApp() -> XCUIApplication {
         let app = XCUIApplication()
+        let dataDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bobe-ui-tests-\(UUID().uuidString)", isDirectory: true)
+        self.addTeardownBlock {
+            try? FileManager.default.removeItem(at: dataDirectory)
+        }
+        let port = 20_000 + Int(ProcessInfo.processInfo.processIdentifier % 20_000)
         app.launchEnvironment["BOBE_DEV"] = "1"
+        app.launchEnvironment["BOBE_MANAGED_DATA_DIR"] = dataDirectory.path
+        app.launchEnvironment["BOBE_MANAGED_PORT"] = String(port)
         app.launchArguments += ["-bobe.onboarding_completed", "NO"]
         return app
     }

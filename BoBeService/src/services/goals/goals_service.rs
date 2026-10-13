@@ -32,7 +32,6 @@ impl GoalsService {
         Self { store }
     }
 
-    /// Priority desc, then updated_at desc.
     pub(crate) async fn list_all(&self) -> Result<Vec<GoalDoc>, AppError> {
         let mut goals = self.store.list().await?;
         sort_goals(&mut goals);
@@ -50,7 +49,6 @@ impl GoalsService {
         self.store.get(id).await
     }
 
-    /// Always assigns fresh id to avoid clashes with agent-written files.
     pub(crate) async fn create(&self, mut doc: GoalDoc) -> Result<GoalDoc, AppError> {
         doc.title = normalize_title(&doc.title)?;
         validate_priority(doc.priority)?;
@@ -68,7 +66,6 @@ impl GoalsService {
         Ok(doc)
     }
 
-    /// `Some` overwrites, `None` leaves as-is; bumps `updated_at` on any change.
     pub(crate) async fn update(
         &self,
         id: GoalId,

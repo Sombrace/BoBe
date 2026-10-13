@@ -1,5 +1,3 @@
-//! Managed Ollama binary lifecycle.
-
 use super::binary_download as download;
 use super::binary_extract as extract;
 
@@ -14,7 +12,6 @@ use tracing::info;
 
 use crate::error::AppError;
 
-/// `percent` is best-effort: 0..90 download, 92 post-download, 100 ready.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DownloadProgress {
     pub(crate) current_bytes: u64,
@@ -44,7 +41,6 @@ impl BinaryManager {
         None
     }
 
-    /// Idempotent: downloads + extracts only if absent.
     pub(crate) async fn ensure_managed_ollama(
         &self,
         progress_tx: &watch::Sender<DownloadProgress>,
@@ -131,7 +127,6 @@ impl BinaryManager {
         Ok(target_path)
     }
 
-    /// `--version` catches half-extracted / corrupt downloads.
     pub(crate) async fn validate_ollama_binary(&self, path: &Path) -> Result<(), AppError> {
         let metadata = tokio::fs::metadata(path)
             .await

@@ -1,34 +1,29 @@
-//! Layered: defaults → config.toml → BOBE_* env vars.
-//!
-//! Domain configs are split per file (server.rs, runtime.rs, engine.rs,
-//! voice.rs, mcp.rs); this module assembles them into the top-level
-//! `Config` and owns the figment loader. Re-exports the per-domain
-//! types so consumers continue to import `crate::config::Foo` unchanged.
-
 mod body;
-mod engine;
 pub(crate) mod manager;
-mod manager_fields;
-mod manager_persistence;
+pub(crate) mod manager_fields;
+pub(crate) mod manager_persistence;
 mod mcp;
+pub(crate) mod provider_persistence;
+mod providers;
 mod runtime;
 mod server;
 mod voice;
 
 use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Toml};
+use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 
-pub(crate) use body::BodyConfig;
-pub(crate) use engine::EngineConfig;
+pub(crate) use agent::{AgentConfig, AgentTool, ExecutionLimits};
+pub(crate) use body::{BodyConfig, BodyTheme};
 pub(crate) use mcp::McpConfig;
 pub(crate) use runtime::{
-    CaptureConfig, CheckinConfig, ConversationConfig, DecisionConfig, GoalsConfig,
+    CaptureConfig, CheckinConfig, ConversationConfig, DecisionConfig, GoalsConfig, MemoryConfig,
 };
 pub(crate) use server::{DatabaseConfig, LoggingConfig, ServerConfig};
 pub(crate) use voice::{PauseSensitivity, VoiceConfig};
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct Config {
     pub(crate) data_dir: String,
@@ -43,21 +38,125 @@ pub(crate) struct Config {
     pub(crate) decision: DecisionConfig,
     pub(crate) mcp: McpConfig,
     pub(crate) goals: GoalsConfig,
-    pub(crate) engine: EngineConfig,
+    pub(crate) memory: MemoryConfig,
+    pub(crate) providers: crate::provider::ProvidersConfig,
+    pub(crate) routes: crate::provider::ProviderRoutes,
     pub(crate) voice: VoiceConfig,
+    pub(crate) agent: AgentConfig,
 
     pub(crate) seed_default_documents: bool,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        let (providers, routes) = providers::default_profiles_and_routes();
+        Self {
+            data_dir: String::new(),
+            server: ServerConfig::default(),
+            body: BodyConfig::default(),
+            database: DatabaseConfig::default(),
+            capture: CaptureConfig::default(),
+            checkin: CheckinConfig::default(),
+            conversation: ConversationConfig::default(),
+            logging: LoggingConfig::default(),
+            decision: DecisionConfig::default(),
+            mcp: McpConfig::default(),
+            goals: GoalsConfig::default(),
+            memory: MemoryConfig::default(),
+            providers,
+            routes,
+            voice: VoiceConfig::default(),
+            agent: AgentConfig::default(),
+            seed_default_documents: true,
+        }
+    }
+}
+
+pub(crate) struct LoadedConfig {
+    pub(crate) config: Config,
+    pub(crate) paths: crate::util::paths::DataPaths,
+    pub(crate) config_file: std::path::PathBuf,
+}
+
+fn normalize_optional_path(value: &mut Option<String>, config_root: &std::path::Path) {
+    let Some(path) = value.as_deref() else {
+        return;
+    };
+    if path.trim().is_empty() {
+        *value = None;
+        return;
+    }
+    let expanded = crate::util::paths::expand_tilde(path);
+    let normalized = if expanded.is_absolute() {
+        expanded
+    } else {
+        config_root.join(expanded)
+    };
+    *value = Some(normalized.to_string_lossy().into_owned());
+}
+
+fn validate_persisted_config(source: &str) -> Result<(), crate::error::AppError> {
+    if source.is_empty() {
+        return Ok(());
+    }
+    let deserializer = toml_edit::de::Deserializer::parse(source.to_owned())
+        .map_err(|error| crate::error::AppError::Config(error.to_string()))?;
+    let mut unknown = Vec::new();
+    drop(
+        serde_ignored::deserialize::<_, _, Config>(deserializer, |path| {
+            unknown.push(path.to_string());
+        })
+        .map_err(|error| crate::error::AppError::Config(error.to_string()))?,
+    );
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    unknown.sort();
+    unknown.dedup();
+    Err(crate::error::AppError::Config(format!(
+        "unknown config.toml field{}: {}",
+        if unknown.len() == 1 { "" } else { "s" },
+        unknown.join(", ")
+    )))
+}
+
 impl Config {
-    pub(crate) fn load() -> Result<Self, crate::error::AppError> {
-        let bootstrap_data_dir = crate::util::paths::bobe_data_dir();
+    pub(crate) fn load_with_paths() -> Result<LoadedConfig, crate::error::AppError> {
+        let bootstrap_data_dir = crate::util::paths::bobe_data_dir()?;
         let config_path = bootstrap_data_dir.join("config.toml");
+        Self::load_from(&config_path, &bootstrap_data_dir)
+    }
+
+    pub(crate) fn load_operational() -> Result<LoadedConfig, crate::error::AppError> {
+        let mut loaded = Self::load_with_paths()?;
+        if loaded.config.server.api_token.expose_secret().is_empty()
+            && let Some(token) = crate::owner_token::read(&loaded.paths)?
+        {
+            loaded.config.server.api_token = secrecy::SecretString::from(token);
+        }
+        Ok(loaded)
+    }
+
+    pub(crate) fn load_from(
+        config_path: &std::path::Path,
+        bootstrap_data_dir: &std::path::Path,
+    ) -> Result<LoadedConfig, crate::error::AppError> {
+        let source = match std::fs::read_to_string(config_path) {
+            Ok(source) => source,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(error.into()),
+        };
+        Self::load_source(config_path, bootstrap_data_dir, source)
+    }
+
+    fn load_source(
+        config_path: &std::path::Path,
+        bootstrap_data_dir: &std::path::Path,
+        source: String,
+    ) -> Result<LoadedConfig, crate::error::AppError> {
+        validate_persisted_config(&source)?;
         let data_dir_str = bootstrap_data_dir.to_string_lossy().into_owned();
 
-        // `BOBE_DATA_DIR` chooses both the config file and canonical data root.
-        // A TOML `data_dir` may relocate stores after bootstrap. The nested
-        // `BOBE_DATABASE__URL` remains the explicit database override.
         let defaults = Self {
             data_dir: data_dir_str,
             database: DatabaseConfig { url: String::new() },
@@ -66,7 +165,7 @@ impl Config {
 
         let mut config: Config = Figment::new()
             .merge(Serialized::defaults(&defaults))
-            .merge(Toml::file(&config_path))
+            .merge(Toml::string(&source))
             .merge(Env::prefixed("BOBE_").split("__"))
             .extract()
             .map_err(|e| crate::error::AppError::Config(e.to_string()))?;
@@ -74,6 +173,11 @@ impl Config {
         config.data_dir = crate::util::paths::expand_tilde(&config.data_dir)
             .to_string_lossy()
             .into_owned();
+        let config_root = config_path.parent().ok_or_else(|| {
+            crate::error::AppError::Config("config file has no parent directory".into())
+        })?;
+        normalize_optional_path(&mut config.server.tls_cert_path, config_root);
+        normalize_optional_path(&mut config.server.tls_key_path, config_root);
         if config.database.url.trim().is_empty() {
             config.database.url = format!("sqlite:{}/data/bobrust.db", config.data_dir);
         } else if config.database.url.contains('~') {
@@ -82,7 +186,15 @@ impl Config {
                 .into_owned();
         }
 
-        Ok(config)
+        config.providers.remember_routes(&config.routes)?;
+        config.agent.execution.validate()?;
+
+        let paths = crate::util::paths::DataPaths::resolve(&config.data_dir, &config.database.url)?;
+        Ok(LoadedConfig {
+            config,
+            paths,
+            config_file: config_path.to_path_buf(),
+        })
     }
 
     pub(crate) fn checkin_times_vec(&self) -> &[String] {
@@ -101,3 +213,132 @@ impl Config {
         &self.server.cors_origins
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn existing_active_routes_are_remembered_before_the_first_provider_switch() {
+        let root =
+            std::env::temp_dir().join(format!("bobe-model-defaults-{}", uuid::Uuid::new_v4()));
+        let mut loaded = Config::load_source(
+            &root.join("config.toml"),
+            &root,
+            concat!(
+                "[routes.chat]\nprofile='local'\nmodel='previous-local-model'\n",
+                "[routes.goals]\nprofile='local'\nmodel='previous-work-model'\n",
+                "[routes.consolidate]\nprofile='local'\nmodel='previous-memory-model'\n",
+            )
+            .into(),
+        )
+        .unwrap();
+        let local = crate::provider::ProfileId::from_static("local");
+        assert_eq!(
+            loaded.config.providers.profiles[&local]
+                .models
+                .chat
+                .as_deref(),
+            Some("previous-local-model")
+        );
+        let mut routes = loaded.config.routes;
+        routes.chat = crate::provider::WorkloadRoute {
+            profile: crate::provider::ProfileId::from_static("copilot"),
+            model: Some("next-model".into()),
+            reasoning_effort: None,
+        };
+        loaded.config.providers.remember_routes(&routes).unwrap();
+        assert_eq!(
+            loaded.config.providers.profiles[&local]
+                .models
+                .chat
+                .as_deref(),
+            Some("previous-local-model")
+        );
+    }
+
+    #[test]
+    fn unknown_config_is_rejected_without_rewriting_data() {
+        let root =
+            std::env::temp_dir().join(format!("bobe-config-readonly-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_file = root.join("config.toml");
+        let source = "[engine]\nengine = 'local'\nprovider_chat_model = 'test'\n";
+        std::fs::write(&config_file, source).unwrap();
+        assert!(Config::load_from(&config_file, &root).is_err());
+        assert_eq!(std::fs::read_to_string(&config_file).unwrap(), source);
+        drop(std::fs::remove_dir_all(root));
+    }
+
+    #[test]
+    fn loading_preserves_valid_settings() {
+        let root = std::env::temp_dir().join(format!(
+            "bobe-config-authoritative-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_file = root.join("config.toml");
+        let source = "# keep\n[voice]\nenabled = true\n";
+        std::fs::write(&config_file, source).unwrap();
+
+        let loaded = Config::load_from(&config_file, &root).unwrap();
+
+        assert!(loaded.config.voice.enabled);
+        assert_eq!(std::fs::read_to_string(&config_file).unwrap(), source);
+        drop(std::fs::remove_dir_all(root));
+    }
+
+    #[test]
+    fn invalid_settings_are_not_rewritten() {
+        let root = std::env::temp_dir().join(format!(
+            "bobe-config-invalid-authoritative-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_file = root.join("config.toml");
+        let source = "[server]\nport = 'invalid'\n";
+        std::fs::write(&config_file, source).unwrap();
+
+        assert!(Config::load_from(&config_file, &root).is_err());
+        assert_eq!(std::fs::read_to_string(&config_file).unwrap(), source);
+        drop(std::fs::remove_dir_all(root));
+    }
+
+    #[test]
+    fn persisted_config_rejects_unknown_fields() {
+        let root =
+            std::env::temp_dir().join(format!("bobe-config-validation-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_file = root.join("config.toml");
+        std::fs::write(
+            &config_file,
+            "[server]\nprot = 9443\n[capture]\nenabld = true\n",
+        )
+        .unwrap();
+        let Err(error) = Config::load_from(&config_file, &root) else {
+            panic!("unknown fields must fail");
+        };
+        let message = error.to_string();
+        assert!(message.contains("server.prot"));
+        assert!(message.contains("capture.enabld"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn empty_optional_tls_paths_load_as_unset() {
+        let root =
+            std::env::temp_dir().join(format!("bobe-config-empty-tls-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let config_file = root.join("config.toml");
+        std::fs::write(
+            &config_file,
+            "[server]\ntls_cert_path = ''\ntls_key_path = ''\n",
+        )
+        .unwrap();
+        let loaded = Config::load_from(&config_file, &root).unwrap();
+        assert!(loaded.config.server.tls_cert_path.is_none());
+        assert!(loaded.config.server.tls_key_path.is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+mod agent;

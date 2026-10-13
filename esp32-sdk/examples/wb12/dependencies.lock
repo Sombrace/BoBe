@@ -1,0 +1,175 @@
+dependencies:
+  bobe_client:
+    dependencies:
+    - name: idf
+      version: '>=6.0.2,<6.2'
+    - name: bobe_protocol
+      path: ../bobe_protocol
+      require: public
+    - name: bobe_transport
+      path: ../bobe_transport
+    source:
+      path: ../../components/bobe_client
+      type: local
+    version: 0.2.0
+  bobe_core:
+    dependencies: []
+    source:
+      path: ../../components/bobe_core
+      type: local
+    version: '*'
+  bobe_platform:
+    dependencies: []
+    source:
+      path: ../../components/bobe_platform
+      type: local
+    version: 0.2.0
+  bobe_protocol:
+    dependencies: []
+    source:
+      path: ../../components/bobe_protocol
+      type: local
+    version: 0.2.0
+  bobe_transport:
+    dependencies: []
+    source:
+      path: ../../components/bobe_transport
+      type: local
+    version: 0.2.0
+  bobe_usb_onboarding:
+    dependencies: []
+    source:
+      path: ../../components/bobe_usb_onboarding
+      type: local
+    version: '*'
+  espressif/cjson:
+    component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.19~2
+  espressif/dl_fft:
+    component_hash: 965be7152132b365061abf5fc5fc7b85e525f73b94a204cdda61cfe9572c0d77
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 0.8.0
+  espressif/esp-dsp:
+    component_hash: 12e44db246517a627bc0fe2b255b8335410c0215c98bfba2df5a8e3edea839ef
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.2'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.8.0
+  espressif/esp-sr:
+    component_hash: aa58d6a13a49600314a50a27240ccbd17e407f608216a3086d4868e0da2e8053
+    dependencies:
+    - name: espressif/cjson
+      registry_url: https://components.espressif.com
+      require: private
+      version: ^1.7.19
+    - name: espressif/dl_fft
+      registry_url: https://components.espressif.com
+      require: private
+      version: '>=0.2.0'
+    - name: espressif/esp-dsp
+      registry_url: https://components.espressif.com
+      require: private
+      version: 1.8.0
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.4.6
+  espressif/esp_lvgl_port:
+    component_hash: fb6c1fdfe70d4ca39a035d63ca394a35f17ec84ce16ff98ecb13a54155d75da4
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.2'
+    - name: lvgl/lvgl
+      registry_url: https://components.espressif.com
+      require: public
+      version: '>=8,<10'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.8.0~1
+  espressif/esp_websocket_client:
+    component_hash: 3fb288702517ef4d75bf933a115f1056ee0c2540d964f9e1d856e0bb67e1dfeb
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.7.0
+  espressif/mdns:
+    component_hash: e81ca7a7f53ea34e78274df054da692c272e1315572876b237b1748e267c013b
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.11.3
+  espressif/network_provisioning:
+    component_hash: 72d27784e3daf807418a34fb00be136ec50c6db49d989ce981d22e031fc0e7f8
+    dependencies:
+    - name: espressif/cjson
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: idf_version >= 6.0
+      version: ^1.7.19
+    - name: idf
+      require: private
+      version: '>=5.1'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.2.4
+  idf:
+    source:
+      type: idf
+    version: 6.1.0
+  lvgl/lvgl:
+    component_hash: 184e532558c1c45fefed631f3e235423d22582aafb4630f3e8885c35281a49ae
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 9.5.0
+direct_dependencies:
+- bobe_client
+- bobe_core
+- bobe_platform
+- bobe_protocol
+- bobe_transport
+- bobe_usb_onboarding
+- espressif/cjson
+- espressif/esp-sr
+- espressif/esp_lvgl_port
+- espressif/esp_websocket_client
+- espressif/mdns
+- espressif/network_provisioning
+- idf
+- lvgl/lvgl
+manifest_hash: 4fc00adc714b70a56eec133380c66077332dba01b85f447c75965ec70093ef14
+target: esp32s3
+version: 3.0.0

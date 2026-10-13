@@ -7,42 +7,35 @@ enum BobeControlSize {
 
     var fontSize: CGFloat {
         switch self {
-        case .mini: 10
-        case .small: 11
+        case .mini: 11
+        case .small: 12
         case .regular: 13
         }
     }
 
     var horizontalPadding: CGFloat {
         switch self {
-        case .mini: 7
-        case .small: 9
-        case .regular: 12
+        case .mini: 9
+        case .small: 12
+        case .regular: 16
         }
     }
 
-    var verticalPadding: CGFloat {
+    var height: CGFloat {
         switch self {
-        case .mini: 4
-        case .small: 5
-        case .regular: 7
-        }
-    }
-
-    var controlSize: ControlSize {
-        switch self {
-        case .mini: .mini
-        case .small: .small
-        case .regular: .regular
+        case .mini: 22
+        case .small: 27
+        case .regular: 34
         }
     }
 }
 
 enum BobeMetrics {
-    static let paneHorizontalPadding: CGFloat = 12
-    static let paneTopPadding: CGFloat = 12
-    static let listRowMinHeight: CGFloat = 54
-    static let listRowCornerRadius: CGFloat = 10
+    static let paneHorizontalPadding: CGFloat = 16
+    static let paneTopPadding: CGFloat = 16
+    static let listRowMinHeight: CGFloat = 50
+    static let listRowCornerRadius: CGFloat = 14
+    static let pageMaxWidth: CGFloat = 760
 }
 
 extension View {
@@ -76,7 +69,7 @@ struct BobeSpinner: View {
                     style: StrokeStyle(lineWidth: self.lineWidth, lineCap: .round)
                 )
                 .rotationEffect(.degrees(self.spinning ? 360 : 0))
-                .animation(OverlayMotionRuntime.reduceMotion ? nil : .linear(duration: 0.85).repeatForever(autoreverses: false), value: self.spinning)
+                .animation(BobeMotion.isReduced ? nil : .linear(duration: 0.85).repeatForever(autoreverses: false), value: self.spinning)
         }
         .frame(width: self.size, height: self.size)
         .onAppear { self.spinning = true }
@@ -87,9 +80,6 @@ struct BobeSpinner: View {
 struct BobeLinearProgressBar: View {
     let progress: Double
     var height: CGFloat = 7
-    /// Optional solid fill. When provided, replaces the default left-to-right
-    /// gradient — use this for value-coded gauges (e.g. memory usage) where a
-    /// positional gradient would imply meaning the chart doesn't have.
     var tint: Color?
 
     @Environment(\.theme) private var theme
@@ -100,19 +90,13 @@ struct BobeLinearProgressBar: View {
 
     var body: some View {
         GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(self.theme.colors.textMuted.opacity(0.18))
-                Capsule()
-                    .fill(self.fillStyle)
-                    .frame(width: max(4, geo.size.width * self.clampedProgress))
-            }
+            Capsule(style: .circular)
+                .fill(self.fillStyle)
+                .frame(width: max(self.height, geo.size.width * self.clampedProgress))
         }
         .frame(height: self.height)
-        .animation(
-            OverlayMotionRuntime.reduceMotion ? nil : .easeInOut(duration: 0.25),
-            value: self.clampedProgress
-        )
+        .bobeWell(in: .bobePill)
+        .animation(BobeMotion.soft, value: self.clampedProgress)
     }
 
     private var fillStyle: AnyShapeStyle {
@@ -121,7 +105,7 @@ struct BobeLinearProgressBar: View {
         } else {
             AnyShapeStyle(
                 LinearGradient(
-                    colors: [self.theme.colors.primary, self.theme.colors.secondary],
+                    colors: [self.theme.glow[0], self.theme.colors.primary],
                     startPoint: .leading,
                     endPoint: .trailing
                 )
@@ -151,43 +135,24 @@ struct BobeSelectableRow<Content: View>: View {
         }
         .foregroundStyle(self.theme.colors.text)
         .frame(maxWidth: .infinity, minHeight: BobeMetrics.listRowMinHeight, alignment: .leading)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: BobeMetrics.listRowCornerRadius)
-                .fill(self.backgroundColor)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: BobeMetrics.listRowCornerRadius)
-                .stroke(self.borderColor, lineWidth: self.borderLineWidth)
-        )
+        .background {
+            let shape = RoundedRectangle(cornerRadius: BobeMetrics.listRowCornerRadius, style: .continuous)
+            if self.isSelected {
+                shape
+                    .fill(self.theme.colors.surface)
+                    .shadow(color: self.theme.shadowTint.opacity(self.theme.isDark ? 0.3 : 0.1), radius: 4, x: 1, y: 2)
+                    .overlay { shape.strokeBorder(self.theme.hairline, style: BobeStroke.hairline) }
+            } else if self.isHovered {
+                shape.fill(self.theme.well.opacity(0.7))
+            }
+        }
         .contentShape(Rectangle())
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(self.isSelected ? .isSelected : [])
+        .animation(BobeMotion.fade, value: self.isHovered)
+        .animation(BobeMotion.standard, value: self.isSelected)
         .onHover { self.isHovered = $0 }
-    }
-
-    private var backgroundColor: Color {
-        if self.isSelected {
-            return self.theme.colors.primary.opacity(self.theme.isDark ? 0.26 : 0.15)
-        }
-        if self.isHovered {
-            return self.theme.colors.surface
-        }
-        return .clear
-    }
-
-    private var borderColor: Color {
-        if self.isSelected {
-            return self.theme.colors.primary.opacity(0.55)
-        }
-        if self.isHovered {
-            return self.theme.colors.border
-        }
-        return .clear
-    }
-
-    private var borderLineWidth: CGFloat {
-        self.isSelected || self.isHovered ? 1 : 0
     }
 }

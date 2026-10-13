@@ -11,8 +11,17 @@ pub(crate) enum AppError {
     #[error("Conflict: {0}")]
     Conflict(String),
 
+    #[error("Protocol incompatible: {0}")]
+    ProtocolIncompatible(String),
+
     #[error("{0}")]
     RequestReplayUnsafe(String),
+
+    #[error("{0}")]
+    NotNetworked(String),
+
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
 
     #[error("Not found: {0}")]
     NotFound(String),
@@ -26,7 +35,6 @@ pub(crate) enum AppError {
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
 
-    /// Distinct variant so install-status doesn't string-match against Conflict.
     #[error("Canceled: {0}")]
     Canceled(String),
 
@@ -50,13 +58,13 @@ impl axum::response::IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
         use axum::http::StatusCode;
 
-        // Explicit OR-pattern so adding a new AppError variant fails the
-        // compile until its HTTP status is assigned — `_ => 500` would
-        // silently route the new variant to Internal Server Error.
         let (status, code) = match &self {
             AppError::Validation(_) => (StatusCode::BAD_REQUEST, "VALIDATION_ERROR"),
             AppError::Conflict(_) => (StatusCode::CONFLICT, "CONFLICT"),
+            AppError::ProtocolIncompatible(_) => (StatusCode::CONFLICT, "PROTOCOL_INCOMPATIBLE"),
             AppError::RequestReplayUnsafe(_) => (StatusCode::CONFLICT, "REQUEST_REPLAY_UNSAFE"),
+            AppError::NotNetworked(_) => (StatusCode::CONFLICT, "NOT_NETWORKED"),
+            AppError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED"),
             AppError::NotFound(_) => (StatusCode::NOT_FOUND, "NOT_FOUND"),
             AppError::Database(_) => (StatusCode::SERVICE_UNAVAILABLE, "DATABASE_ERROR"),
             AppError::ServiceUnavailable(_) => {

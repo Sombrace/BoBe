@@ -1,29 +1,13 @@
 import Foundation
 
-/// Priority: loading > speaking > thinking > wants_to_speak > capturing > idle
 enum BobeStateType: String, Sendable, Equatable {
     case loading
     case error
     case idle
-    case capturing
     case thinking
     case speaking
     case wantsToSpeak = "wants_to_speak"
     case shuttingDown = "shutting_down"
-}
-
-/// Tool dispatch surfaces only as `tool_call_*` SSE events, not as an indicator.
-enum IndicatorType: String, Codable, Sendable, Equatable {
-    case idle = "IDLE"
-    case screenCapture = "SCREEN_CAPTURE"
-    case thinking = "THINKING"
-    case streaming = "STREAMING"
-    case unknown
-
-    init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        self = IndicatorType(rawValue: raw) ?? .unknown
-    }
 }
 
 enum MessageSender: String, Sendable {
@@ -37,6 +21,7 @@ enum AssistantResponseOrigin: Sendable, Equatable {
 }
 
 struct FailedSendRecovery: Identifiable, Sendable {
+    let selection: EndpointSelection
     let id: String
     let content: String
     let requestId: UUID
@@ -100,36 +85,23 @@ enum MessageComposerBlockReason: Sendable, Equatable {
     case starting
     case reconnecting
     case thinking
-    case speaking
-    case capturing
-    case usingTool(String)
 }
 
 struct BobeContext: Sendable {
     var daemonConnected = false
     var daemonError = false
     var capturing = false
-    var captureInProgress = false
     var thinking = false
     var speaking = false
     var shuttingDown = false
     var lastMessage: String?
     var errorMessage: String?
-    /// Recoverable trigger errors (vision breaker, capture timeout) — tertiary tint.
     var softWarning: String?
-    /// Defaults to `true` so the composer is enabled until daemon says otherwise.
     var acceptingUserMessages = true
-    /// `true` during the 3s pre-clear window after `conversation_closed`.
     var conversationEnding = false
     var currentMessage = ""
     var messages: [ChatMessage] = []
-    /// Derived: `true` iff the trace contains visible or in-flight BoBe content.
-    /// Maintained inside `BobeStore.updateState` so callers (e.g. the
-    /// overlay's `chatViewportFloorHeight`) can read it in O(1) per body
-    /// eval instead of walking the array.
-    var hasDisplayableBobeMessage = false
     var failedSendRecoveries: [FailedSendRecovery] = []
-    var capturePermissionMissing = false
     var toolExecutions: [ToolExecution] = []
     var stateType: BobeStateType = .loading
 }
@@ -141,6 +113,5 @@ func deriveStateType(from context: BobeContext) -> BobeStateType {
     if context.speaking { return .speaking }
     if context.thinking { return .thinking }
     if context.lastMessage != nil, !context.speaking { return .wantsToSpeak }
-    if context.captureInProgress { return .capturing }
     return .idle
 }

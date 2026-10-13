@@ -1,0 +1,4 @@
+"NSCameraUsageDescription" = "Για να σαρώνει τον κωδικό σύνδεσης της BoBe.";
+"NSLocalNetworkUsageDescription" = "Για να φτάνει την BoBe σου.";
+"NSMicrophoneUsageDescription" = "Για να σε ακούει όσο κρατάς πατημένο το κουμπί ομιλίας.";
+"NSSpeechRecognitionUsageDescription" = "Για να γίνονται κείμενο τα λόγια σου σε αυτό το iPhone.";

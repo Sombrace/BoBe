@@ -1,8 +1,5 @@
 import SwiftUI
 
-/// Single-toggle settings panel that lives in its own sidebar entry.
-/// Gates jargon (codenames, MCP raw JSON, strict offline, Advanced) so
-/// novice users see a calm Settings window by default.
 struct ExpertModePanel: View {
     @Environment(\.theme) private var theme
     @Environment(ExpertMode.self) private var expert

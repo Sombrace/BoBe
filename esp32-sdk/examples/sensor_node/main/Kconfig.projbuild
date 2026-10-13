@@ -1,0 +1,12 @@
+menu "BoBe sensor example"
+config BOBE_EXAMPLE_BUTTON_GPIO
+    int "Optional active-low button GPIO (-1 disables)"
+    range -1 48
+    default -1
+    help
+        Select an input-capable GPIO appropriate for your board. Check its
+        pinout and avoid pins used by flash, PSRAM, or other peripherals.
+config BOBE_EXAMPLE_BUTTON_LABEL
+    string "Meaning of the button action"
+    default "Give me a brief update"
+endmenu

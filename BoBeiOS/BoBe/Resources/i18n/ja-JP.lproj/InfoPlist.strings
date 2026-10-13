@@ -1,0 +1,4 @@
+"NSCameraUsageDescription" = "BoBeのペアリングコードをスキャンするために使います。";
+"NSLocalNetworkUsageDescription" = "あなたのBoBeに接続するために使います。";
+"NSMicrophoneUsageDescription" = "話すボタンを押している間、あなたの声を聞くために使います。";
+"NSSpeechRecognitionUsageDescription" = "このiPhoneで、話した言葉を文字にするために使います。";

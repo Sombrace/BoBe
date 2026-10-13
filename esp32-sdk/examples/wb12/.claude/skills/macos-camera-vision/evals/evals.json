@@ -1,0 +1,45 @@
+{
+  "skill_name": "macos-camera-vision",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "List stable camera IDs without taking a picture or showing a consent prompt.",
+      "expected_output": "Uses discovery only and reports persistent IDs.",
+      "expectations": [
+        "Uses current command help",
+        "Does not capture or authorize",
+        "Reports unique IDs rather than inventing a default"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Check whether CAMERA-123 is ready without requesting permission.",
+      "expected_output": "Uses preflight and preserves authorization as a separate operation.",
+      "expectations": [
+        "Uses the exact camera ID",
+        "Does not authorize automatically",
+        "Reports the returned blocker"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Rectify and OCR an existing image; no camera is involved.",
+      "expected_output": "Uses only offline transforms with caller-owned dimensions and new paths.",
+      "expectations": [
+        "Does not enumerate or preflight cameras",
+        "Does not guess output dimensions",
+        "Does not claim the OCR identifies a physical target"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Photograph the WB-12 screen and call it a physical display pass.",
+      "expected_output": "Keeps the verdict inconclusive without matching calibration and logical evidence.",
+      "expectations": [
+        "Uses hil/calibration guidance",
+        "Selects an exact camera",
+        "Does not equate image creation with a physical pass"
+      ]
+    }
+  ]
+}

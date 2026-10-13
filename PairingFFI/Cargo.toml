@@ -1,0 +1,25 @@
+[package]
+name = "bobe-pairing-ffi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98.1"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+bobe-pairing-core = { path = "../PairingCore", version = "=0.1.0" }
+zeroize = "1.9.0"
+sha2 = "0.11.0"
+x509-parser = "0.18.1"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+overflow-checks = true
+panic = "unwind"

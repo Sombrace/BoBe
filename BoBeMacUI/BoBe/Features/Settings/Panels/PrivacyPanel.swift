@@ -1,13 +1,7 @@
+import AppKit
 import SwiftUI
 
 struct PrivacyPanel: View {
-    private struct DataFlowPresentation {
-        let icon: String
-        let title: String
-        let body: String
-        let color: Color
-    }
-
     private let deleteKeyword = "DELETE"
 
     @State private var showDeleteControls = false
@@ -15,79 +9,74 @@ struct PrivacyPanel: View {
     @State private var isDeletingAll = false
     @State private var statusMessage: String?
     @State private var statusIsError = false
-    @Environment(SettingsStore.self) private var settingsStore
+    @State private var diagnosticsEnabled = DiagnosticsMetrics.shared.isEnabled
+    @State private var diagnosticsStatusMessage: String?
+    @State private var diagnosticsStatusIsError = false
     @Environment(\.theme) private var theme
-
-    private var engineDataFlow: DataFlowPresentation {
-        switch self.settingsStore.settings?.engine {
-        case EngineKind.copilotCloud:
-            DataFlowPresentation(
-                icon: "cloud.fill",
-                title: L10n.tr("settings.privacy.data_flow.cloud.title"),
-                body: L10n.tr("settings.privacy.data_flow.cloud.body"),
-                color: self.theme.colors.warning
-            )
-        case EngineKind.local:
-            DataFlowPresentation(
-                icon: "desktopcomputer",
-                title: L10n.tr("settings.privacy.data_flow.local_engine.title"),
-                body: L10n.tr("settings.privacy.data_flow.local_engine.body"),
-                color: self.theme.colors.success
-            )
-        default:
-            DataFlowPresentation(
-                icon: "questionmark.circle",
-                title: L10n.tr("settings.privacy.data_flow.unknown_engine.title"),
-                body: L10n.tr("settings.privacy.data_flow.unknown_engine.body"),
-                color: self.theme.colors.textMuted
-            )
-        }
-    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                ProviderDataFlow()
+
+                BobeHairline()
+
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 8) {
-                        Image(systemName: "arrow.left.arrow.right")
+                        Image(systemName: "waveform.path.ecg")
                             .font(.system(size: 16))
                             .foregroundStyle(self.theme.colors.primary)
-                        Text(L10n.tr("settings.privacy.data_flow.title"))
+                        Text(L10n.tr("settings.privacy.diagnostics.title"))
                             .bobeTextStyle(.heading)
                             .foregroundStyle(self.theme.colors.text)
                     }
 
-                    Text(L10n.tr("settings.privacy.data_flow.description"))
+                    Text(L10n.tr("settings.privacy.diagnostics.description"))
                         .bobeTextStyle(.settingsBody)
                         .foregroundStyle(self.theme.colors.textMuted)
 
-                    self.dataFlowRow(
-                        icon: "internaldrive.fill",
-                        title: L10n.tr("settings.privacy.data_flow.local.title"),
-                        body: L10n.tr("settings.privacy.data_flow.local.body"),
-                        color: self.theme.colors.success
+                    Toggle(
+                        L10n.tr("settings.privacy.diagnostics.enabled"),
+                        isOn: self.$diagnosticsEnabled
                     )
-                    self.dataFlowRow(
-                        icon: self.engineDataFlow.icon,
-                        title: self.engineDataFlow.title,
-                        body: self.engineDataFlow.body,
-                        color: self.engineDataFlow.color
-                    )
-                    self.dataFlowRow(
-                        icon: "camera.viewfinder",
-                        title: L10n.tr("settings.privacy.data_flow.capture.title"),
-                        body: L10n.tr("settings.privacy.data_flow.capture.body"),
-                        color: self.theme.colors.warning
-                    )
-                    self.dataFlowRow(
-                        icon: "wrench.and.screwdriver.fill",
-                        title: L10n.tr("settings.privacy.data_flow.tools.title"),
-                        body: L10n.tr("settings.privacy.data_flow.tools.body"),
-                        color: self.theme.colors.tertiary
-                    )
+                    .toggleStyle(BobeLabeledSwitchStyle())
+                    .accessibilityIdentifier("settings.privacy.diagnostics.enabled")
+                    .onChange(of: self.diagnosticsEnabled) { _, enabled in
+                        Task { await self.updateDiagnosticsEnabled(enabled) }
+                    }
+
+                    Text(L10n.tr("settings.privacy.diagnostics.excluded"))
+                        .bobeTextStyle(.helper)
+                        .foregroundStyle(self.theme.colors.textMuted)
+
+                    HStack(spacing: 8) {
+                        Button(L10n.tr("settings.privacy.diagnostics.export")) {
+                            self.exportDiagnostics()
+                        }
+                        .bobeButton(.secondary, size: .small)
+                        .accessibilityIdentifier("settings.privacy.diagnostics.export")
+                        .disabled(!self.diagnosticsEnabled)
+
+                        Button(L10n.tr("settings.privacy.diagnostics.delete")) {
+                            self.deleteDiagnostics()
+                        }
+                        .bobeButton(.secondary, size: .small)
+                        .accessibilityIdentifier("settings.privacy.diagnostics.delete")
+                    }
+
+                    if let diagnosticsStatusMessage {
+                        Text(diagnosticsStatusMessage)
+                            .bobeTextStyle(.helper)
+                            .accessibilityIdentifier("settings.privacy.diagnostics.status")
+                            .foregroundStyle(
+                                self.diagnosticsStatusIsError
+                                    ? self.theme.colors.error
+                                    : self.theme.colors.success
+                            )
+                    }
                 }
 
-                Divider()
+                BobeHairline()
 
                 HStack(spacing: 8) {
                     Image(systemName: "externaldrive.fill")
@@ -112,11 +101,7 @@ struct PrivacyPanel: View {
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(self.theme.colors.surface)
-                        .stroke(self.theme.colors.border, lineWidth: 1)
-                )
+                .bobeRaised(cornerRadius: 16)
 
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 8) {
@@ -185,38 +170,48 @@ struct PrivacyPanel: View {
             }
             .padding(24)
         }
-        .task { await self.settingsStore.loadIfNeeded() }
+        .accessibilityIdentifier("settings.panel.privacy")
     }
 
-    private func dataFlowRow(
-        icon: String,
-        title: String,
-        body: String,
-        color: Color
-    ) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(color)
-                .frame(width: 18)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .bobeTextStyle(.rowTitle)
-                    .foregroundStyle(self.theme.colors.text)
-                Text(body)
-                    .bobeTextStyle(.helper)
-                    .foregroundStyle(self.theme.colors.textMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+    private func updateDiagnosticsEnabled(_ enabled: Bool) async {
+        do {
+            try await DiagnosticsMetrics.shared.setEnabled(enabled)
+            self.diagnosticsStatusIsError = false
+            self.diagnosticsStatusMessage = enabled
+                ? L10n.tr("settings.privacy.diagnostics.status.enabled")
+                : L10n.tr("settings.privacy.diagnostics.status.disabled")
+        } catch {
+            self.diagnosticsEnabled = DiagnosticsMetrics.shared.isEnabled
+            self.diagnosticsStatusIsError = true
+            self.diagnosticsStatusMessage = error.localizedDescription
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(self.theme.colors.surface)
-                .stroke(self.theme.colors.border, lineWidth: 1)
-        )
+    }
+
+    private func exportDiagnostics() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "bobe-diagnostics.json"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try DiagnosticsMetrics.shared.export(to: url)
+            self.diagnosticsStatusIsError = false
+            self.diagnosticsStatusMessage = L10n.tr("settings.privacy.diagnostics.status.exported")
+        } catch {
+            self.diagnosticsStatusIsError = true
+            self.diagnosticsStatusMessage = error.localizedDescription
+        }
+    }
+
+    private func deleteDiagnostics() {
+        do {
+            try DiagnosticsMetrics.shared.deleteRetainedData()
+            self.diagnosticsStatusIsError = false
+            self.diagnosticsStatusMessage = L10n.tr("settings.privacy.diagnostics.status.deleted")
+        } catch {
+            self.diagnosticsStatusIsError = true
+            self.diagnosticsStatusMessage = error.localizedDescription
+        }
     }
 
     private func deleteAllData() async {
@@ -229,7 +224,7 @@ struct PrivacyPanel: View {
             self.showDeleteControls = false
             self.deleteConfirmationText = ""
             self.statusIsError = false
-            self.statusMessage = response.message
+            self.statusMessage = response.resultSummary
         } catch {
             self.statusIsError = true
             self.statusMessage = error.localizedDescription

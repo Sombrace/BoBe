@@ -1,16 +1,15 @@
-//! Handler state. Five sub-contexts so handlers say what they depend on.
-
 use arc_swap::ArcSwap;
 use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::sqlite::SqlitePool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::config::Config;
 use crate::config::manager::ConfigManager;
-use crate::copilot::memory_file::MemoryFile;
-use crate::copilot::registry::WorkerRegistry;
+use crate::provider::AgentRuntime;
+use crate::provider::MemoryFile;
+use crate::provider::{AgentWorkspace, SkillStore};
 use crate::runtime::session::RuntimeSession;
 use crate::secrets::SecretStore;
 use crate::services::goals::goals_service::GoalsService;
@@ -24,52 +23,53 @@ use crate::voice::engines::VoiceEnginesSnapshot;
 use crate::voice::install_service::VoiceInstallService;
 use crate::voice::sinks::VoiceSink;
 
-/// Persistence, config, SSE, observability, secrets, HTTP egress.
 pub(crate) struct Infrastructure {
     pub(crate) db: SqlitePool,
+    pub(crate) paths: Arc<crate::util::paths::DataPaths>,
+    pub(crate) _runtime_locks: crate::util::runtime_lock::RuntimeLocks,
+    pub(crate) identity: Arc<crate::db::runtime_authority_repo::RuntimeIdentity>,
+    pub(crate) initialization:
+        Arc<ArcSwap<crate::db::runtime_initialization_repo::InitializationState>>,
     pub(crate) config: Arc<ArcSwap<Config>>,
+    pub(crate) config_root: Arc<std::path::PathBuf>,
     pub(crate) config_manager: Arc<ConfigManager>,
+    pub(crate) config_write_lock: Arc<std::sync::Mutex<()>>,
+    pub(crate) provider_restart_pending: Arc<AtomicBool>,
     pub(crate) event_queue: Arc<EventQueue>,
     pub(crate) connection_manager: Arc<SseConnectionManager>,
     pub(crate) mdns_announcer: Arc<MdnsAnnouncer>,
-    /// Trait so `mcp/config.rs` stays free-function while handlers are DI-friendly.
     pub(crate) secret_store: Arc<dyn SecretStore>,
-    /// `/metrics` calls `.render()` per request.
+    pub(crate) headless_secret_store: Arc<dyn SecretStore>,
     pub(crate) metrics_handle: PrometheusHandle,
-    /// Shared so Ollama/voice install + `/models` reuse the connection pool.
-    pub(crate) http_client: Arc<reqwest::Client>,
-    /// Serializes MCP config writes.
     pub(crate) mcp_config_lock: Arc<Mutex<()>>,
 }
 
-/// LLM runtime: state machine, Copilot workers, memory.md writer.
 pub(crate) struct RuntimeContext {
     pub(crate) runtime_session: Arc<RuntimeSession>,
-    pub(crate) workers: Arc<WorkerRegistry>,
+    pub(crate) workers: Arc<dyn AgentRuntime>,
+    pub(crate) active_providers: crate::provider::ProvidersConfig,
+    pub(crate) active_routes: crate::provider::ProviderRoutes,
+    pub(crate) active_agent: crate::config::AgentConfig,
+    pub(crate) provider_probe_active: Arc<AtomicBool>,
+    pub(crate) initialization_lock: Mutex<()>,
     pub(crate) memory_file: Arc<MemoryFile>,
-    /// In-flight detached LLM-stream task count. Shutdown waits up to 10s
-    /// for this to reach 0 after aborting the SDK; without it the DB pool
-    /// closed while tasks were mid-`handle_user_message`, panicking sqlx.
+    pub(crate) skill_store: Arc<SkillStore>,
+    pub(crate) agent_workspace: Arc<AgentWorkspace>,
+    pub(crate) personal_data_lifecycle: Arc<RwLock<()>>,
+    pub(crate) agent_authority_lifecycle: Arc<crate::provider::AgentAuthorityLifecycle>,
     pub(crate) in_flight_text_turns: Arc<AtomicUsize>,
+    pub(crate) runs: Arc<crate::runtime::run_registry::RunRegistry>,
+    pub(crate) message_requests: Arc<crate::runtime::message_requests::MessageRequests>,
+    pub(crate) background: Arc<crate::runtime::background_work::BackgroundWork>,
 }
 
-/// Voice: installer, hot-swap engine snapshot, concurrency flags + hook sink.
 pub(crate) struct VoiceContext {
     pub(crate) voice_install: Arc<VoiceInstallService>,
-    /// Hot-swapped post-install; WS handler snapshots at connect; hooks read at fire-time.
     pub(crate) voice_engines: Arc<ArcSwap<VoiceEnginesSnapshot>>,
-    /// Set true while a voice turn is in flight so hooks can branch on
-    /// tone/filler behavior. Cleared by `AtomicFlagGuard` RAII (held in
-    /// `voice/run_text_turn.rs::run_text_turn`).
-    pub(crate) voice_turn_active: Arc<AtomicBool>,
-    /// Single-flight permit for `/voice/stream`. Kokoro + per-WS Opus
-    /// encoder aren't concurrent-feed safe; a second connect closes 409.
     pub(crate) voice_ws_active: Arc<AtomicBool>,
-    /// Single-slot sink hooks (PreToolUse, ErrorOccurred) push filler PCM into.
     pub(crate) voice_sink: Arc<VoiceSink>,
 }
 
-/// File-backed entity stores + Ollama install orchestrator.
 pub(crate) struct DomainServices {
     pub(crate) souls_service: Arc<SoulsService>,
     pub(crate) user_profile_service: Arc<UserProfileService>,
@@ -77,15 +77,20 @@ pub(crate) struct DomainServices {
     pub(crate) ollama_install: Arc<OllamaInstallService>,
 }
 
-/// Auth + sign-in. Distinct from Infrastructure/Services so future auth
-/// surfaces (token rotation, alt providers) have a home.
 pub(crate) struct AuthContext {
-    /// Drives the bundled `copilot login` device flow; single-flight.
-    pub(crate) copilot_login: Arc<crate::copilot::login::LoginCoordinator>,
+    pub(crate) pairing: Arc<crate::api::pairing::PairingManager>,
+    pub(crate) local_enrollment:
+        Arc<crate::api::handlers::local_enrollment::LocalEnrollmentBootstrap>,
+    pub(crate) provider_login: Arc<crate::agent::auth::LoginCoordinator>,
+    pub(crate) agent: Arc<crate::agent::PiRuntime>,
 }
 
 pub(crate) struct BodyContext {
     pub(crate) gateway: Arc<crate::body::gateway::BodyGateway>,
+    pub(crate) endpoints: Arc<crate::db::endpoint_repo::EndpointRepo>,
+    pub(crate) trust: Arc<crate::db::device_trust_repo::DeviceTrustRepo>,
+    pub(crate) identities: Arc<crate::body::identity::BodyIdentityIndex>,
+    pub(crate) registry_lock: Arc<Mutex<()>>,
 }
 
 pub(crate) struct AppState {
@@ -100,5 +105,42 @@ pub(crate) struct AppState {
 impl AppState {
     pub(crate) fn config(&self) -> arc_swap::Guard<Arc<Config>> {
         self.infra.config.load()
+    }
+
+    pub(crate) fn disconnect_credentials(&self, credential_ids: &[String]) {
+        for credential_id in credential_ids {
+            self.infra
+                .connection_manager
+                .disconnect_credential(credential_id);
+        }
+    }
+
+    pub(crate) async fn disconnect_endpoint(&self, endpoint_id: &str) {
+        self.body.gateway.revoke_endpoint(endpoint_id).await;
+        self.infra
+            .connection_manager
+            .disconnect_endpoint(endpoint_id);
+    }
+
+    pub(crate) async fn apply_endpoint_registry_change(
+        &self,
+        endpoint_id: &str,
+    ) -> Result<(), crate::error::AppError> {
+        self.body.identities.refresh(&self.body.trust).await?;
+        self.disconnect_endpoint(endpoint_id).await;
+        Ok(())
+    }
+
+    pub(crate) async fn revoke_endpoint(
+        &self,
+        endpoint_id: &str,
+        reason: &str,
+    ) -> Result<bool, crate::error::AppError> {
+        let _guard = self.body.registry_lock.lock().await;
+        let revoked = self.body.trust.revoke_endpoint(endpoint_id, reason).await?;
+        if revoked {
+            self.apply_endpoint_registry_change(endpoint_id).await?;
+        }
+        Ok(revoked)
     }
 }

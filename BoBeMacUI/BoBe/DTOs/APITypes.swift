@@ -1,17 +1,16 @@
 import Foundation
 
-// MARK: - SSE Event Stream Types
 
-/// End-of-turn signalled by `text_delta` with `done: true`; no separate event.
 enum EventType: String, Codable, Sendable {
     case indicator
     case textDelta = "text_delta"
     case toolCallStart = "tool_call_start"
     case toolCallComplete = "tool_call_complete"
     case error
-    case heartbeat
     case conversationClosed = "conversation_closed"
     case conversationChanged = "conversation_changed"
+    case snapshotRequired = "snapshot_required"
+    case bodyRequest = "body_request"
     case unknown
 
     init(from decoder: Decoder) throws {
@@ -20,18 +19,53 @@ enum EventType: String, Codable, Sendable {
     }
 }
 
-/// The daemon emits a `timestamp` string on every SSE event but the
-/// client never reads it. JSON decode silently ignores unknown fields,
-/// so dropping it from the Codable struct is safe.
 struct StreamBundle: Codable, Sendable {
+    var channelId: UUID? = nil
+    let eventId: UInt64?
+    let runtimeIncarnationId: UUID?
+    let audience: String?
+    let runId: UUID?
+    let turnId: UUID?
     let type: EventType
     let payload: AnyCodablePayload
     let messageId: String
 
     enum CodingKeys: String, CodingKey {
+        case channelId = "channel_id"
+        case eventId = "event_id"
+        case runtimeIncarnationId = "runtime_incarnation_id"
+        case audience
+        case runId = "run_id"
+        case turnId = "turn_id"
         case type
         case payload
         case messageId = "message_id"
+    }
+}
+
+struct SnapshotRequiredPayload: Codable, Sendable {
+    let from: UInt64?
+    let to: UInt64?
+    let resumeAfter: UInt64?
+    let reason: String
+    let snapshotRequired: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case from, to, reason
+        case resumeAfter = "resume_after"
+        case snapshotRequired = "snapshot_required"
+    }
+}
+
+enum IndicatorType: String, Codable, Sendable, Equatable {
+    case idle = "IDLE"
+    case thinking = "THINKING"
+    case streaming = "STREAMING"
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = IndicatorType(rawValue: raw) ?? .unknown
     }
 }
 
@@ -39,8 +73,6 @@ struct IndicatorPayload: Codable, Sendable {
     let indicator: IndicatorType
 }
 
-/// On `done`, `delta` is the authoritative full assistant response rather
-/// than another incremental fragment.
 struct TextDeltaPayload: Codable, Sendable {
     let delta: String
     let done: Bool
@@ -58,9 +90,6 @@ struct ToolCallStartPayload: Codable, Sendable {
     }
 }
 
-/// The daemon also sends `error` and `duration_ms` but the client only
-/// flips the visible `.running` indicator off — neither field is
-/// surfaced today, so they're omitted from this Codable mirror.
 struct ToolCallCompletePayload: Codable, Sendable {
     let status: String
     let toolName: String
@@ -75,7 +104,6 @@ struct ToolCallCompletePayload: Codable, Sendable {
     }
 }
 
-/// Daemon emits two shapes: chat carries `code`; trigger carries `trigger`.
 struct ErrorPayload: Codable, Sendable {
     let code: String?
     let trigger: String?
@@ -111,7 +139,6 @@ struct ConversationChangedPayload: Codable, Sendable {
     }
 }
 
-// MARK: - Flexible JSON Payload Handling
 
 struct AnyCodablePayload: Codable, Sendable {
     let data: Data

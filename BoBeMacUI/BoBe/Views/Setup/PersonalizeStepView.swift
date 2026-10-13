@@ -14,50 +14,42 @@ struct PersonalizeStepView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text(L10n.tr("setup.personalize.title"))
-                    .bobeTextStyle(.setupTitle)
-                    .foregroundStyle(self.theme.colors.text)
-                Text(L10n.tr("setup.personalize.body"))
-                    .bobeTextStyle(.setupBody)
-                    .foregroundStyle(self.theme.colors.textMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        VStack(alignment: .leading, spacing: 22) {
+            SetupStepHeader(title: L10n.tr("setup.personalize.title"))
+                .padding(.top, 8)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text(L10n.tr("setup.personalize.name.label"))
-                    .bobeTextStyle(.setupHeading)
-                    .foregroundStyle(self.theme.colors.text)
-                TextField(
-                    L10n.tr("setup.personalize.name.placeholder"),
-                    text: self.$preferredName
+            self.field(
+                icon: "person.fill",
+                tint: SettingsCategory.userProfiles.tint,
+                label: L10n.tr("setup.personalize.name.label")
+            ) {
+                BobeTextField(
+                    placeholder: L10n.tr("setup.personalize.name.placeholder"),
+                    text: self.$preferredName,
+                    focused: Binding(
+                        get: { self.focusedField == .name },
+                        set: { if $0 { self.focusedField = .name } }
+                    )
                 )
-                .textFieldStyle(.roundedBorder)
-                .focused(self.$focusedField, equals: .name)
                 .accessibilityIdentifier("setup.personalize.name")
-                Text(L10n.tr("setup.personalize.name.help"))
-                    .bobeTextStyle(.helper)
-                    .foregroundStyle(self.theme.colors.textMuted)
             }
+            .setupStagger(0)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text(L10n.tr("setup.personalize.goal.label"))
-                    .bobeTextStyle(.setupHeading)
-                    .foregroundStyle(self.theme.colors.text)
-                TextField(
-                    L10n.tr("setup.personalize.goal.placeholder"),
-                    text: self.$firstGoal
+            self.field(
+                icon: "target",
+                tint: SettingsCategory.goals.tint,
+                label: L10n.tr("setup.personalize.goal.label")
+            ) {
+                BobeTextField(
+                    placeholder: L10n.tr("setup.personalize.goal.placeholder"),
+                    text: self.$firstGoal,
+                    onSubmit: self.onContinue
                 )
-                .textFieldStyle(.roundedBorder)
-                .focused(self.$focusedField, equals: .goal)
                 .accessibilityIdentifier("setup.personalize.goal")
-                Text(L10n.tr("setup.personalize.goal.help"))
-                    .bobeTextStyle(.helper)
-                    .foregroundStyle(self.theme.colors.textMuted)
             }
+            .setupStagger(1)
 
-            Spacer()
+            Spacer(minLength: 0)
 
             HStack {
                 Text(L10n.tr("setup.personalize.optional"))
@@ -71,5 +63,22 @@ struct PersonalizeStepView: View {
             }
         }
         .onAppear { self.focusedField = .name }
+    }
+
+    private func field(
+        icon: String,
+        tint: Color,
+        label: String,
+        @ViewBuilder input: () -> some View
+    ) -> some View {
+        HStack(alignment: .top, spacing: 13) {
+            BobeIconTile(systemName: icon, tint: tint, size: 34)
+            VStack(alignment: .leading, spacing: 7) {
+                Text(label)
+                    .bobeTextStyle(.heading)
+                    .foregroundStyle(self.theme.colors.text)
+                input()
+            }
+        }
     }
 }

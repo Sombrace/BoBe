@@ -1,13 +1,3 @@
-//! `/voice/install` endpoints. Drives the daemon-owned voice-model
-//! installer (replaces the legacy `scripts/install-voice-models.sh`):
-//!
-//!   GET    /voice/install/status   — current snapshot + per-model presence
-//!   POST   /voice/install/start    — kick off (sequential downloads)
-//!   POST   /voice/install/cancel   — best-effort cancel of in-flight job
-//!
-//! Welcome wizard + Settings → Voice surface these. Progress is poll-based
-//! today; the snapshot is cheap to render (4 models × a handful of fields).
-
 use std::sync::Arc;
 
 use axum::Json;
@@ -23,48 +13,68 @@ use crate::voice::install_service::{
 
 #[derive(Serialize)]
 pub(crate) struct InstallStatusResponse {
-    /// Aggregate state across all models (running / complete / failed).
     pub status: InstallStatus,
-    /// Concrete terminal failure, when status is `failed`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// Per-model progress entries, fixed order matching VoiceModelKind::all().
     pub models: Vec<ModelProgress>,
-    /// Snapshot of on-disk presence — orthogonal to `status` because
-    /// snapshot.status can be Idle while all four models are already
-    /// present from a previous run.
     pub installed: PresenceSnapshot,
+    pub ready: PresenceSnapshot,
 }
 
 #[derive(Serialize)]
 pub(crate) struct PresenceSnapshot {
-    /// Daemon-side TTS (Kokoro) presence — Mode B's only daemon model.
     pub tts: bool,
-    /// True when all required daemon models are present.
-    pub all_present: bool,
+    pub stt: bool,
 }
 
 pub(crate) async fn status(State(state): State<Arc<AppState>>) -> Json<InstallStatusResponse> {
     let snap: VoiceInstallSnapshot = state.voice.voice_install.subscribe().await.borrow().clone();
     let install = state.voice.voice_install.as_ref();
-    let tts = install.is_installed(VoiceModelKind::Tts);
-    let presence = PresenceSnapshot {
-        tts,
-        all_present: tts,
-    };
+    let engines = state.voice.voice_engines.load();
     Json(InstallStatusResponse {
         status: snap.status,
         error: snap.error,
         models: snap.models,
-        installed: presence,
+        installed: PresenceSnapshot {
+            tts: install.is_installed(VoiceModelKind::Tts),
+            stt: install.is_installed(VoiceModelKind::Stt),
+        },
+        ready: PresenceSnapshot {
+            tts: engines.tts.is_some(),
+            stt: engines.supports_daemon_stt(),
+        },
     })
 }
 
 pub(crate) async fn start(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    match state.voice.voice_install.start().await {
+    start_result(state.voice.voice_install.start().await)
+}
+
+pub(crate) async fn start_tts(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    start_result(
+        state
+            .voice
+            .voice_install
+            .start_kind(VoiceModelKind::Tts)
+            .await,
+    )
+}
+
+pub(crate) async fn start_stt(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    start_result(
+        state
+            .voice
+            .voice_install
+            .start_kind(VoiceModelKind::Stt)
+            .await,
+    )
+}
+
+fn start_result(result: Result<(), crate::error::AppError>) -> axum::response::Response {
+    match result {
         Ok(()) => StatusCode::ACCEPTED.into_response(),
         Err(crate::error::AppError::Conflict(msg)) => (StatusCode::CONFLICT, msg).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),
     }
 }
 

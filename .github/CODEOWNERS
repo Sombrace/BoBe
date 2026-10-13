@@ -2,9 +2,13 @@
 * @athatheo @johnkozaris
 
 # Release control plane — extra scrutiny
-justfile @athatheo @johnkozaris
 .gitignore @athatheo @johnkozaris
-docs/UpdatingOTA.md @athatheo @johnkozaris
+scripts/tasks/** @athatheo @johnkozaris
+scripts/check-* @athatheo @johnkozaris
+scripts/create-standalone-update-manifest.py @athatheo @johnkozaris
+scripts/install-standalone.sh @athatheo @johnkozaris
+scripts/uninstall-standalone.sh @athatheo @johnkozaris
+docs/releasing.md @athatheo @johnkozaris
 
 # macOS app signing and packaging
 BoBeMacUI/entitlements.plist @athatheo @johnkozaris
@@ -15,6 +19,8 @@ BoBeMacUI/Package.resolved @athatheo @johnkozaris
 # Dependency policy
 BoBeService/deny.toml @athatheo @johnkozaris
 BoBeService/Cargo.lock @athatheo @johnkozaris
+PairingCore/Cargo.lock @athatheo @johnkozaris
+PairingFFI/Cargo.lock @athatheo @johnkozaris
 
 # Security-sensitive code
 BoBeService/src/secrets.rs @athatheo @johnkozaris

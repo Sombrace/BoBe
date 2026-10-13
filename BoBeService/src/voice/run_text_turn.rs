@@ -1,8 +1,3 @@
-//! Voice turn convergence helper. `transcript_in` calls this on a final
-//! transcript; it owns single-flight admission, state emission
-//! (Thinking → Speaking → Listening), filler + Kokoro task spawn, and
-//! the LLM observer feeding `SentencePipeline`.
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -13,12 +8,7 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, warn};
 
 use crate::models::ids::conversation_turn_id_from_wire_id;
-use crate::speech::TtsEngine;
-use crate::speech::protocol::{
-    FLAG_FILLER, FLAG_FIRST_OF_TURN, ServerMessage, VoicePhase, encode_tts_frame,
-};
-use crate::util::atomic_flag_guard::AtomicFlagGuard;
-use crate::voice::abort_on_drop::AbortOnDrop;
+use crate::speech::protocol::{FLAG_FILLER, ServerMessage, VoicePhase, encode_tts_frame};
 use crate::voice::context::VoiceContext;
 use crate::voice::filler_library::FillerKind;
 use crate::voice::opus::{encode_pcm_with, make_opus_encoder};
@@ -26,32 +16,66 @@ use crate::voice::output::VoiceOutput;
 use crate::voice::protocol_helpers::{send_error, send_json, send_state};
 use crate::voice::sentence_pipeline::SentencePipeline;
 use crate::voice::session::SessionVoiceConfig;
+use crate::voice::spoken::SpokenScript;
+use crate::voice::synthesis::spawn_tts_task;
 use crate::voice::telemetry::{
-    CTR_FILLER_TRIGGER, CTR_TURN_COMPLETE, HIST_E2E_MS, HIST_TTS_SYNTH_MS, HIST_TURN_TOTAL_MS,
+    CTR_FILLER_TRIGGER, CTR_TURN_COMPLETE, HIST_E2E_MS, HIST_TURN_TOTAL_MS,
 };
+use tokio_util::task::AbortOnDropHandle;
 
-/// Time-to-first-audio budget. If the Kokoro task hasn't pushed any audio
-/// frames by this deadline (the LLM is slow or the first sentence is still
-/// buffering), the filler watchdog emits the pre-rendered cached phrase.
-/// Matches LiveKit/Pipecat/ElevenLabs production threshold.
 pub(crate) const FILLER_TRIGGER: Duration = Duration::from_millis(800);
+const SENTENCE_PAUSE: Duration = Duration::from_millis(250);
+const PLAYBACK_REPORT_LIMIT: Duration = Duration::from_mins(10);
+const PLAYBACK_REPORT_MARGIN: Duration = Duration::from_secs(30);
 
 pub(crate) enum VoiceTurnAdmission {
     Acquire,
     AlreadyHeld,
 }
 
-/// The convergence body. Caller is responsible for pre-validating the
-/// trimmed `text` (non-empty) and populating the session's `current_turn`
-/// slot if barge-in must be honored.
+struct VoiceRunLifetime {
+    session: Arc<crate::runtime::session::RuntimeSession>,
+    turn: crate::models::ids::ConversationTurnId,
+    admission: Option<crate::runtime::session::UserMessageGuard>,
+    registration: Option<crate::runtime::run_registry::RunRegistration>,
+    cancellation: tokio_util::sync::CancellationToken,
+    settled: bool,
+}
+
+impl VoiceRunLifetime {
+    async fn settle(&mut self) {
+        self.session.settle_interrupted_turn(self.turn).await;
+        self.settled = true;
+    }
+}
+
+impl Drop for VoiceRunLifetime {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+        if !self.settled {
+            let session = Arc::clone(&self.session);
+            let turn = self.turn;
+            let admission = self.admission.take();
+            let registration = self.registration.take();
+            tokio::spawn(async move {
+                session.settle_interrupted_turn(turn).await;
+                drop(admission);
+                drop(registration);
+            });
+        }
+    }
+}
+
 pub(crate) async fn run_text_turn(
     text: &str,
     turn_id: &str,
     ctx: &VoiceContext,
     voice_cfg: SessionVoiceConfig,
     playback_complete: Option<oneshot::Receiver<()>>,
+    script: Arc<SpokenScript>,
     admission: VoiceTurnAdmission,
 ) {
+    let received_at = chrono::Utc::now();
     let engines = &ctx.engines;
     let output = &ctx.output;
     let runtime_session = &ctx.runtime_session;
@@ -71,29 +95,89 @@ pub(crate) async fn run_text_turn(
         }
     };
 
+    let owner_input = match runtime_session
+        .bind_owner_answer(ctx.conversation_channel, text, received_at)
+        .await
+    {
+        Ok(input) => input,
+        Err(error) => {
+            error!(%error,turn_id,"voice.owner_answer_binding_failed");
+            send_error(
+                output,
+                "owner_answer_failed",
+                "The answer could not be linked to its question. The action is still paused.",
+            )
+            .await;
+            return;
+        }
+    };
     let guard = match admission {
         VoiceTurnAdmission::AlreadyHeld => None,
-        VoiceTurnAdmission::Acquire => match runtime_session.try_begin_user_message() {
+        VoiceTurnAdmission::Acquire => match runtime_session
+            .begin_user_message(ctx.conversation_channel)
+            .await
+        {
             Ok(guard) => Some(guard),
             Err(reason) => {
-                send_error(output, "conflict", reason).await;
-                // Roll the wire state back to Listening so the client UI
-                // doesn't get stuck mid-turn (relevant since the caller has
-                // pre-emitted Thinking before reaching here).
+                send_error(output, "conflict", &reason.to_string()).await;
                 send_state(output, VoicePhase::Listening, turn_id).await;
                 return;
             }
         },
     };
 
-    // Flag set AFTER single-flight admission — otherwise a microsecond
-    // window between flag-set and try_begin_user_message failure could let
-    // another worker class's UserPromptSubmitted hook see voice_mode=true
-    // and inject the voice-tone hint into a non-voice turn. RAII guard
-    // clears on drop including panic-unwind.
-    ctx.voice_turn_active.store(true, Ordering::Release);
-    let _voice_flag = AtomicFlagGuard::new(Arc::clone(&ctx.voice_turn_active));
-    let _sink_guard = ctx.voice_sink.install(output.clone()).await;
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let registration = match runtime_session.runs.register_cancellation(
+        assistant_turn_id.into(),
+        cancellation.clone(),
+        crate::runtime::run_registry::RunKind::Voice,
+        Some(ctx.conversation_channel),
+    ) {
+        Ok(registration) => registration,
+        Err(error) => {
+            error!(%error,turn_id,"voice.run_registration_failed");
+            send_error(output, "conflict", "This voice turn is already active").await;
+            send_state(output, VoicePhase::Listening, turn_id).await;
+            return;
+        }
+    };
+    let mut lifetime = VoiceRunLifetime {
+        session: Arc::clone(runtime_session),
+        turn: assistant_turn_id,
+        admission: guard,
+        registration: Some(registration),
+        cancellation: cancellation.clone(),
+        settled: false,
+    };
+    if let Err(error) = runtime_session
+        .answer_bound_input(
+            owner_input,
+            assistant_turn_id.into(),
+            text,
+            ctx.conversation_channel,
+        )
+        .await
+    {
+        error!(%error,turn_id,"voice.owner_answer_failed");
+        send_error(
+            output,
+            "owner_answer_failed",
+            "The answer could not be saved. The action is still paused.",
+        )
+        .await;
+        return;
+    }
+    let _sink_guard = match ctx
+        .voice_sink
+        .install(assistant_turn_id.into(), output.clone())
+    {
+        Ok(guard) => guard,
+        Err(error) => {
+            error!(%error,turn_id,"voice.output_binding_failed");
+            send_error(output, "conflict", "This voice output is already active").await;
+            return;
+        }
+    };
 
     send_state(output, VoicePhase::Thinking, turn_id).await;
     send_json(
@@ -108,15 +192,16 @@ pub(crate) async fn run_text_turn(
     send_state(output, VoicePhase::Speaking, turn_id).await;
     let speaking_start = Instant::now();
     let first_audio_emitted = Arc::new(AtomicBool::new(false));
-    // Wrap children in AbortOnDrop so a parent abort (barge-in / disconnect
-    // / cancel-phrase / rehello) cascades. Without this the kokoro task
-    // keeps holding `Mutex<OfflineTts>` for 1-3s after the parent unwinds,
-    // blocking the next turn's first synth.
-    let tts = if voice_cfg.client_tts {
+    let tts = if voice_cfg.speech_plan.uses_endpoint_tts() {
         None
     } else {
         let Some(tts) = engines.tts.as_ref().map(Arc::clone) else {
-            send_error(output, "engines_unavailable", "Kokoro is not installed").await;
+            send_error(
+                output,
+                "engines_unavailable",
+                "Pocket TTS English pack is not installed",
+            )
+            .await;
             send_state(output, VoicePhase::Listening, turn_id).await;
             return;
         };
@@ -133,40 +218,52 @@ pub(crate) async fn run_text_turn(
             output.clone(),
             turn_start,
         )
-        .map(AbortOnDrop::new)
+        .map(AbortOnDropHandle::new)
     });
     let (sentence_tx, sentence_rx) = mpsc::channel::<String>(16);
-    let voice_output_task = if voice_cfg.client_tts {
-        AbortOnDrop::new(spawn_client_tts_text_task(
+    let spoken = Arc::clone(&script);
+    let voice_output_task = if voice_cfg.speech_plan.uses_endpoint_tts() {
+        AbortOnDropHandle::new(spawn_client_tts_text_task(
             turn_id.to_string(),
             sentence_rx,
             output.clone(),
+            script,
         ))
     } else {
         let Some(tts) = tts else {
             return;
         };
-        AbortOnDrop::new(spawn_kokoro_task(
+        AbortOnDropHandle::new(spawn_tts_task(
             tts,
             turn_id.to_string(),
             sentence_rx,
             output.clone(),
             Arc::clone(&first_audio_emitted),
-            voice_cfg.clone(),
-            ctx.send_server_tts_text,
+            voice_cfg.speech_plan.voice_id.clone(),
+            voice_cfg.speed,
+            voice_cfg.speech_plan.tts_text_delivery,
             turn_start,
+            script,
         ))
     };
 
     let pipeline = Arc::new(tokio::sync::Mutex::new(SentencePipeline::new(turn_start)));
+    let stream_activity = Arc::new(tokio::sync::Notify::new());
+    let pause_release = AbortOnDropHandle::new(spawn_pause_release(
+        Arc::clone(&pipeline),
+        sentence_tx.clone(),
+        Arc::clone(&stream_activity),
+    ));
     let pipeline_for_obs = Arc::clone(&pipeline);
     let sentence_tx_for_obs = sentence_tx.clone();
     let observer = move |delta: String| {
         let pipeline = Arc::clone(&pipeline_for_obs);
         let sentence_tx = sentence_tx_for_obs.clone();
+        let stream_activity = Arc::clone(&stream_activity);
         async move {
-            let sentences = pipeline.lock().await.feed(&delta);
-            for sentence in sentences {
+            let mut pipeline = pipeline.lock().await;
+            stream_activity.notify_one();
+            for sentence in pipeline.feed(&delta) {
                 if sentence_tx.send(sentence).await.is_err() {
                     return;
                 }
@@ -174,9 +271,23 @@ pub(crate) async fn run_text_turn(
         }
     };
 
-    let turn_succeeded = runtime_session
-        .handle_user_message_with_observer(text, turn_id, assistant_turn_id, ctx.delivery, observer)
-        .await;
+    let turn_succeeded = tokio::select! {
+        biased;
+        () = cancellation.cancelled() => false,
+        result = runtime_session.handle_user_message_with_observer(
+            text,
+            turn_id,
+            assistant_turn_id,
+            ctx.delivery,
+            ctx.conversation_channel,
+            observer,
+        ) => result,
+    };
+    lifetime.settle().await;
+    {
+        let _quiescent = pipeline.lock().await;
+        abort_and_settle(pause_release, "sentence pause").await;
+    }
     if !turn_succeeded {
         drop(sentence_tx);
         abort_and_settle(voice_output_task, "voice output").await;
@@ -196,10 +307,17 @@ pub(crate) async fn run_text_turn(
     }
     drop(pipeline);
     drop(sentence_tx);
-    // Strip the AbortOnDrop wrappers on the natural-completion path so
-    // .await + .abort() run instead of the wrapper's Drop firing first.
-    let voice_output_handle = voice_output_task.into_inner();
-    let output_produced = match voice_output_handle.await {
+    let mut voice_output_task = voice_output_task;
+    let output_result = tokio::select! {
+        biased;
+        ()=cancellation.cancelled()=>{
+            voice_output_task.abort();
+            send_json(output,&ServerMessage::Truncate {turn_id:turn_id.to_owned(),keep_ms:0}).await;
+            voice_output_task.await
+        }
+        result=&mut voice_output_task=>result,
+    };
+    let output_produced = match output_result {
         Ok(produced) => produced,
         Err(e) if e.is_panic() => {
             error!(error = %e, "voice.output_task_panic");
@@ -237,14 +355,22 @@ pub(crate) async fn run_text_turn(
     )
     .await;
     if let Some(receiver) = playback_complete {
-        match tokio::time::timeout(Duration::from_mins(10), receiver).await {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) => debug!("voice.client_tts_completion_sender_dropped"),
-            Err(_) => warn!("voice.client_tts_completion_timeout"),
+        tokio::select! {
+            biased;
+            ()=cancellation.cancelled()=>send_json(output,&ServerMessage::Truncate {turn_id:turn_id.to_owned(),keep_ms:0}).await,
+            result=tokio::time::timeout(playback_report_limit(spoken.audio_duration()),receiver)=>match result {
+                Ok(Ok(()))=>{
+                    if let Err(error)=runtime_session.acknowledge_presentation(assistant_turn_id,ctx.conversation_channel).await {
+                        warn!(%error,turn_id,"voice.presentation_receipt_failed");
+                    }
+                }
+                Ok(Err(_))=>debug!("voice.client_tts_completion_sender_dropped"),
+                Err(_)=>warn!("voice.client_tts_completion_timeout"),
+            },
         }
     }
     send_state(output, VoicePhase::Listening, turn_id).await;
-    drop(guard);
+    drop(lifetime);
 
     let total_ms = turn_start.elapsed().as_millis() as u64;
     metrics::histogram!(HIST_TURN_TOTAL_MS).record(total_ms as f64);
@@ -256,8 +382,8 @@ pub(crate) async fn run_text_turn(
     );
 }
 
-async fn abort_and_settle<T>(task: AbortOnDrop<T>, task_name: &'static str) {
-    let handle = task.into_inner();
+async fn abort_and_settle<T>(task: AbortOnDropHandle<T>, task_name: &'static str) {
+    let handle = task.detach();
     handle.abort();
     match handle.await {
         Err(error) if error.is_cancelled() => {}
@@ -266,16 +392,48 @@ async fn abort_and_settle<T>(task: AbortOnDrop<T>, task_name: &'static str) {
     }
 }
 
+pub(crate) fn playback_report_limit(synthesised: Option<Duration>) -> Duration {
+    synthesised.map_or(PLAYBACK_REPORT_LIMIT, |audio| {
+        (audio + PLAYBACK_REPORT_MARGIN).min(PLAYBACK_REPORT_LIMIT)
+    })
+}
+
+fn spawn_pause_release(
+    pipeline: Arc<tokio::sync::Mutex<SentencePipeline>>,
+    sentence_tx: mpsc::Sender<String>,
+    stream_activity: Arc<tokio::sync::Notify>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            stream_activity.notified().await;
+            loop {
+                tokio::select! {
+                    () = stream_activity.notified() => {}
+                    () = tokio::time::sleep(SENTENCE_PAUSE) => break,
+                }
+            }
+            let mut pipeline = pipeline.lock().await;
+            for sentence in pipeline.settle() {
+                if sentence_tx.send(sentence).await.is_err() {
+                    return;
+                }
+            }
+        }
+    })
+}
+
 fn spawn_client_tts_text_task(
     turn_id: String,
     mut sentence_rx: mpsc::Receiver<String>,
     output: VoiceOutput,
+    script: Arc<SpokenScript>,
 ) -> tokio::task::JoinHandle<bool> {
     tokio::spawn(async move {
         let mut sequence = 0_u64;
         let mut produced = false;
         while let Some(text) = sentence_rx.recv().await {
             produced = true;
+            script.push(&text, sequence.saturating_add(1));
             send_json(
                 &output,
                 &ServerMessage::TtsText {
@@ -287,90 +445,11 @@ fn spawn_client_tts_text_task(
             .await;
             sequence = sequence.saturating_add(1);
         }
+        script.finish();
         produced
     })
 }
 
-fn spawn_kokoro_task(
-    tts: Arc<dyn TtsEngine>,
-    turn_id: String,
-    mut sentence_rx: mpsc::Receiver<String>,
-    output: VoiceOutput,
-    first_audio_emitted: Arc<AtomicBool>,
-    voice_cfg: SessionVoiceConfig,
-    send_tts_text: bool,
-    turn_start: Instant,
-) -> tokio::task::JoinHandle<bool> {
-    let sample_rate = tts.sample_rate();
-    tokio::spawn(async move {
-        let Some(mut encoder) = make_opus_encoder(sample_rate) else {
-            return false;
-        };
-        let mut chunk_id: u64 = 0;
-        let mut sentence_sequence: u64 = 0;
-        let mut first_chunk_pending = true;
-        let mut produced = false;
-        while let Some(sentence) = sentence_rx.recv().await {
-            let tts_clone = Arc::clone(&tts);
-            let sentence_owned = sentence.clone();
-            let voice_id = voice_cfg.voice_id.clone();
-            let speed = voice_cfg.speed;
-            let synth_start = Instant::now();
-            let synth = tokio::task::spawn_blocking(move || {
-                tts_clone.synthesize(&sentence_owned, &voice_id, speed)
-            })
-            .await;
-            let pcm = match synth {
-                Ok(Ok(pcm)) => pcm,
-                Ok(Err(e)) => {
-                    warn!(error = %e, "voice.kokoro_synth_failed");
-                    return false;
-                }
-                Err(e) => {
-                    warn!(error = %e, "voice.kokoro_join_failed");
-                    return false;
-                }
-            };
-            metrics::histogram!(HIST_TTS_SYNTH_MS)
-                .record(synth_start.elapsed().as_secs_f64() * 1_000.0);
-            if send_tts_text {
-                send_json(
-                    &output,
-                    &ServerMessage::TtsText {
-                        turn_id: turn_id.clone(),
-                        sequence: sentence_sequence,
-                        text: sentence,
-                    },
-                )
-                .await;
-                sentence_sequence = sentence_sequence.saturating_add(1);
-            }
-            for opus_packet in encode_pcm_with(&mut encoder, &pcm, sample_rate) {
-                let mut flags = 0_u8;
-                if first_chunk_pending {
-                    flags |= FLAG_FIRST_OF_TURN;
-                    first_chunk_pending = false;
-                    first_audio_emitted.swap(true, Ordering::AcqRel);
-                    metrics::histogram!(HIST_E2E_MS)
-                        .record(turn_start.elapsed().as_secs_f64() * 1_000.0);
-                }
-                let framed = encode_tts_frame(chunk_id, flags, &opus_packet);
-                chunk_id = chunk_id.saturating_add(1);
-                if !output.audio(framed).await {
-                    return produced;
-                }
-                produced = true;
-            }
-        }
-        produced
-    })
-}
-
-/// 800ms TTFT filler watchdog. Sleeps then races the Kokoro task for the
-/// "first audio emitted" flag. If we win (Kokoro hasn't produced anything
-/// yet), encode the pre-rendered filler PCM as Opus 20ms frames and stream
-/// them with `FLAG_FILLER` set so the client knows they're preemptible.
-/// Returns `None` when there's no filler cache available (graceful no-op).
 fn spawn_filler_watchdog(
     filler_pcm: Option<Arc<Vec<f32>>>,
     sample_rate: u32,
@@ -381,8 +460,11 @@ fn spawn_filler_watchdog(
     let pcm = filler_pcm?;
     Some(tokio::spawn(async move {
         tokio::time::sleep(FILLER_TRIGGER).await;
+        let Some(_sequence) = output.try_audio_sequence() else {
+            return;
+        };
         if first_audio_emitted.swap(true, Ordering::AcqRel) {
-            debug!("voice.filler_skipped_kokoro_already_emitted");
+            debug!("voice.filler_skipped_tts_already_emitted");
             return;
         }
         metrics::histogram!(HIST_E2E_MS).record(turn_start.elapsed().as_secs_f64() * 1_000.0);
@@ -407,11 +489,48 @@ mod tests {
     use super::*;
     use crate::voice::output::VoiceOutputFrame;
 
+    #[test]
+    fn the_wait_for_a_playback_report_follows_the_audio_that_was_sent() {
+        assert_eq!(playback_report_limit(None), PLAYBACK_REPORT_LIMIT);
+        assert_eq!(
+            playback_report_limit(Some(Duration::from_secs(12))),
+            Duration::from_secs(42)
+        );
+        assert_eq!(
+            playback_report_limit(Some(Duration::from_hours(1))),
+            PLAYBACK_REPORT_LIMIT
+        );
+    }
+
+    #[tokio::test]
+    async fn a_finished_sentence_is_sent_when_the_stream_pauses() {
+        let pipeline = Arc::new(tokio::sync::Mutex::new(SentencePipeline::new(
+            Instant::now(),
+        )));
+        let activity = Arc::new(tokio::sync::Notify::new());
+        let (sentence_tx, mut sentence_rx) = mpsc::channel::<String>(4);
+        let _task = AbortOnDropHandle::new(spawn_pause_release(
+            Arc::clone(&pipeline),
+            sentence_tx,
+            Arc::clone(&activity),
+        ));
+
+        assert!(pipeline.lock().await.feed("Let me check that.").is_empty());
+        activity.notify_one();
+        tokio::time::sleep(SENTENCE_PAUSE / 3).await;
+        assert!(sentence_rx.try_recv().is_err());
+        let released = tokio::time::timeout(SENTENCE_PAUSE * 8, sentence_rx.recv()).await;
+        assert_eq!(
+            released.ok().flatten().as_deref(),
+            Some("Let me check that.")
+        );
+    }
+
     #[tokio::test]
     async fn settled_child_cannot_emit_audio_after_terminal_state() {
         let (output, mut receiver) = VoiceOutput::channel(4);
         let child_output = output.clone();
-        let child = AbortOnDrop::new(tokio::spawn(async move {
+        let child = AbortOnDropHandle::new(tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(1)).await;
             child_output.audio(vec![1, 2, 3]).await
         }));

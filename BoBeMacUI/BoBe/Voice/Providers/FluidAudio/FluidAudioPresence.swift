@@ -1,9 +1,6 @@
 import FluidAudio
 import Foundation
 
-/// Static-only surface shared by every FluidAudio model presence type
-/// (Parakeet + Nemotron). Presence is deliberately separate from live
-/// progress, which now comes from FluidAudio's ModelHub callback.
 protocol FluidAudioPresence {
     static func isInstalled() -> Bool
 }
@@ -26,12 +23,7 @@ func voiceSttProgress(_ progress: DownloadProgress) -> VoiceSttLoadProgress {
     )
 }
 
-/// Shared filesystem helpers for the FluidAudio cache. Both presence enums
-/// previously inlined byte-identical copies of these.
 enum FluidAudioCache {
-    /// Default FluidAudio cache root (matches the SDK's `ModelRegistry`
-    /// default). We don't override `ModelRegistry.baseURL` so other apps
-    /// using FluidAudio can share this cache.
     static var root: URL {
         let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,

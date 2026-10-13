@@ -11,23 +11,16 @@ final class BobeStore {
     static let shared = BobeStore()
     static let messageWindowCapacity = 200
 
-    // MARK: - State
 
     private(set) var context = BobeContext()
     var isReconnecting = false
+    var repairIssue: RuntimeIssue?
     var isBackendFatal = false
     var hasConnectedOnce = false
 
-    /// User opted to silence BoBe's proactive surfacing (floating bubble +
-    /// TTS) without quitting the app. Session-scoped so a fresh launch
-    /// always defaults to "BoBe is allowed to be proactive again." Voice
-    /// playback is interrupted on toggle-on; resumes on next BoBe message
-    /// when toggled off.
     var proactiveSilenced = false
 
-    // MARK: - Locale (client-side only)
 
-    /// Empty string means "follow system locale".
     private static let localeOverrideKey = "bobe.locale_override"
     static let supportedLocales = [
         "en-US", "el-GR", "zh-CN", "de-DE", "es-ES", "pt-BR", "ko-KR", "ja-JP", "fr-FR",
@@ -47,38 +40,51 @@ final class BobeStore {
         self.context.capturing
     }
 
-    /// True ONLY while a screenshot is being taken THIS MOMENT (driven
-    /// by SSE `screenCapture` indicator). Different from `isCapturing`,
-    /// which is the persistent "capture system is enabled in settings"
-    /// flag. Use this for status surfaces that should reflect what
-    /// BoBe is doing right now (e.g. the avatar bubble "Capturing"
-    /// label); use `isCapturing` for menus that toggle the setting.
-    var isCaptureInProgress: Bool {
-        self.context.captureInProgress
-    }
-
     var isThinking: Bool {
         self.context.thinking
-    }
-
-    var hasMessage: Bool {
-        self.context.lastMessage != nil
     }
 
     var messages: [ChatMessage] {
         self.context.messages
     }
 
-    /// The most recent assistant message received through the live SSE stream.
-    /// Canonical history reloads intentionally do not update this value.
     private(set) var latestLiveBobeMessageId: String?
+    private var presentedMessages: Set<String> = []
+
+    func markResponsePresented(_ messageId: String) async {
+        guard !self.presentedMessages.contains(messageId),
+              let id = Self.turnIdentity(messageId) else { return }
+        let selection = self.selection
+        guard self.isCurrent(selection) else { return }
+        do {
+            try await DaemonClient(endpoint: selection.endpoint).markResponsePresented(id)
+            guard self.isCurrent(selection) else { return }
+            self.presentedMessages.formIntersection(Set(self.messages.map(\.id)))
+            self.presentedMessages.insert(messageId)
+        } catch {
+            bobeStoreLogger.warning("Presentation receipt failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    static func turnIdentity(_ messageId: String) -> UUID? {
+        guard messageId.hasPrefix("msg_") || messageId.hasPrefix("voice_") else { return nil }
+        let raw = String(messageId.dropFirst(messageId.hasPrefix("msg_") ? 4 : 6))
+        if let id = UUID(uuidString: raw) { return id }
+        guard raw.count == 32, raw.allSatisfy(\.isHexDigit) else { return nil }
+        return UUID(uuidString: [
+            String(raw.prefix(8)), String(raw.dropFirst(8).prefix(4)),
+            String(raw.dropFirst(12).prefix(4)), String(raw.dropFirst(16).prefix(4)),
+            String(raw.suffix(12)),
+        ].joined(separator: "-"))
+    }
 
     func recordLiveBobeMessage(_ messageId: String) {
         self.latestLiveBobeMessageId = messageId
     }
 
     var failedSendRecoveries: [FailedSendRecovery] {
-        self.context.failedSendRecoveries
+        let selection = self.currentSelection()
+        return self.context.failedSendRecoveries.filter { $0.selection == selection }
     }
 
     var errorMessage: String? {
@@ -91,10 +97,6 @@ final class BobeStore {
 
     var runningTools: [ToolExecution] {
         self.context.toolExecutions.filter { $0.status == .running }
-    }
-
-    var capturePermissionMissing: Bool {
-        self.context.capturePermissionMissing
     }
 
     var softWarning: String? {
@@ -113,26 +115,12 @@ final class BobeStore {
         if !self.context.daemonConnected {
             return self.hasConnectedOnce ? .reconnecting : .starting
         }
-        if let tool = self.runningTools.first {
-            return .usingTool(tool.toolName)
-        }
-        if self.context.speaking {
-            return .speaking
-        }
-        if self.context.thinking {
-            return .thinking
-        }
-        if self.context.captureInProgress {
-            return .capturing
-        }
-        // Daemon flag covers SSE-vs-daemon race; without this, rapid double-sends 409.
         if !self.context.acceptingUserMessages {
             return .thinking
         }
         return nil
     }
 
-    // MARK: - Private storage shared with extensions
 
     let client = DaemonClient.shared
     var streamingMessage = ""
@@ -141,23 +129,78 @@ final class BobeStore {
     var conversationClearTask: Task<Void, Never>?
     var textDeltaFlushTask: Task<Void, Never>?
     var captureStartupTask: Task<Void, Never>?
+    @ObservationIgnored var screenReadTask: Task<Void, Never>?
+    var isReadingScreen = false
+    var screenUnavailableNotice = false
+    @ObservationIgnored var screenUnavailableNoticeShown = false
     var conversationReloadGeneration: UInt64 = 0
     var conversationMutationRevision: UInt64 = 0
     var streamMutationRevision: UInt64 = 0
-    private var appNapActivity: NSObjectProtocol?
+    var eventSnapshotRecoveryActive = false
     private var backendObserverTask: Task<Void, Never>?
-    private var sleepWakeObservers: [NSObjectProtocol] = []
     @ObservationIgnored var reconnectStatusTask: Task<Void, Never>?
     @ObservationIgnored lazy var toolExecutionController = ToolExecutionController { [weak self] mutation in
         self?.updateState(mutation)
     }
 
-    private init() {}
+    private let currentSelection: @MainActor () -> EndpointSelection
+    private(set) var selection: EndpointSelection
+    private let sendRequest: @MainActor (EndpointSelection, String, UUID) async throws -> SendMessageResponse
+    private var endpointObserver: NSObjectProtocol?
+    private var eventStreamGeneration: UInt64 = 0
+
+    init(
+        currentSelection: @escaping @MainActor () -> EndpointSelection = { EndpointStore.shared.selection },
+        sendRequest: @escaping @MainActor (EndpointSelection, String, UUID) async throws -> SendMessageResponse = {
+            selection, content, requestID in
+            try await DaemonClient(endpoint: selection.endpoint).sendMessage(content, requestId: requestID)
+        }
+    ) {
+        self.currentSelection = currentSelection
+        self.selection = currentSelection()
+        self.sendRequest = sendRequest
+        self.endpointObserver = NotificationCenter.default.addObserver(
+            forName: .bobeEndpointIdentityChanged, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.selection != self.currentSelection() else { return }
+                let wasObserving = self.backendObserverTask != nil
+                self.synchronizeEndpoint()
+                if wasObserving { self.connect() }
+            }
+        }
+    }
+
+    func synchronizeEndpoint() {
+        let selection = self.currentSelection()
+        guard self.selection != selection else { return }
+        self.selection = selection
+        self.conversationReloadGeneration &+= 1
+        self.textDeltaFlushTask?.cancel()
+        self.textDeltaFlushTask = nil
+        self.lastMessageTimer?.cancel()
+        self.conversationClearTask?.cancel()
+        self.captureStartupTask?.cancel()
+        self.streamingMessage = ""
+        self.streamingMessageId = nil
+        self.latestLiveBobeMessageId = nil
+        self.presentedMessages = []
+        self.eventSnapshotRecoveryActive = false
+        self.context = BobeContext()
+        self.hasConnectedOnce = false
+        self.isBackendFatal = false
+        self.repairIssue = nil
+    }
+
+    func isCurrent(_ selection: EndpointSelection) -> Bool {
+        self.selection == selection && self.currentSelection() == selection
+    }
 
     func observeBackendState() {
         guard self.backendObserverTask == nil else { return }
         self.backendObserverTask = Task { [weak self] in
-            for await state in BackendService.shared.stateStream {
+            let states = await BackendService.shared.stateStream
+            for await state in states {
                 guard !Task.isCancelled else { return }
                 await MainActor.run { [weak self] in
                     switch state {
@@ -184,46 +227,54 @@ final class BobeStore {
         }
     }
 
-    /// Reconnects SSE on wake since the TCP connection is likely stale.
-    private func registerSleepWakeObservers() {
-        guard self.sleepWakeObservers.isEmpty else { return }
-        let center = NSWorkspace.shared.notificationCenter
-        let wakeObserver = center.addObserver(
-            forName: NSWorkspace.didWakeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, !self.isBackendFatal else { return }
-                bobeStoreLogger.info("System woke — reconnecting SSE")
-                await self.client.disconnectSSE()
-                self.connect()
-            }
-        }
-        self.sleepWakeObservers.append(wakeObserver)
-    }
-
-    // MARK: - Connection
 
     func connect() {
+        self.synchronizeEndpoint()
+        let selection = self.selection
+        self.eventStreamGeneration &+= 1
+        let generation = self.eventStreamGeneration
         self.observeBackendState()
-        self.registerSleepWakeObservers()
-        if self.appNapActivity == nil {
-            self.appNapActivity = ProcessInfo.processInfo.beginActivity(
-                options: .userInitiated,
-                reason: "Maintaining SSE connection to backend"
-            )
-        }
-        Task {
+        Task { [weak self] in
+            guard let self, self.acceptsEventStream(generation: generation, selection: selection) else { return }
             await self.client.connectSSE(
+                generation: generation,
+                selection: selection,
                 onEvent: { [weak self] bundle in
-                    await self?.processBundle(bundle)
+                    await self?.processEvent(bundle, generation: generation, selection: selection) ?? false
                 },
-                onConnectionChange: { [weak self] connected in
-                    await self?.handleConnectionChange(connected)
+                onConnectionChange: { [weak self] state in
+                    await self?.processConnectionChange(state, generation: generation, selection: selection)
                 }
             )
         }
+    }
+
+    private func processEvent(
+        _ bundle: StreamBundle, generation: UInt64, selection: EndpointSelection
+    ) async -> Bool {
+        guard self.acceptsEventStream(generation: generation, selection: selection) else { return false }
+        return await self.processBundle(bundle)
+    }
+
+    private func processConnectionChange(
+        _ state: RuntimeConnectionState, generation: UInt64, selection: EndpointSelection
+    ) async {
+        guard self.acceptsEventStream(generation: generation, selection: selection) else { return }
+        await self.handleConnectionChange(state)
+    }
+
+    private func acceptsEventStream(generation: UInt64, selection: EndpointSelection) -> Bool {
+        self.eventStreamGeneration == generation && self.isCurrent(selection)
+    }
+
+    func suspendEventStream() async {
+        self.eventStreamGeneration &+= 1
+        await self.client.disconnectSSE(generation: self.eventStreamGeneration)
+    }
+
+    func resumeEventStream() {
+        guard !self.isBackendFatal else { return }
+        self.connect()
     }
 
     func disconnect() {
@@ -232,18 +283,14 @@ final class BobeStore {
         self.lastMessageTimer?.cancel()
         self.conversationClearTask?.cancel()
         self.captureStartupTask?.cancel()
+        self.eventSnapshotRecoveryActive = false
         self.backendObserverTask?.cancel()
+        self.backendObserverTask = nil
         self.reconnectStatusTask?.cancel()
-        for observer in self.sleepWakeObservers {
-            NSWorkspace.shared.notificationCenter.removeObserver(observer)
-        }
-        self.sleepWakeObservers.removeAll()
-        if let activity = appNapActivity {
-            ProcessInfo.processInfo.endActivity(activity)
-            self.appNapActivity = nil
-        }
+        self.eventStreamGeneration &+= 1
+        let generation = self.eventStreamGeneration
         Task {
-            await self.client.disconnectSSE()
+            await self.client.disconnectSSE(generation: generation)
         }
     }
 
@@ -265,7 +312,27 @@ final class BobeStore {
         L10n.setLocaleOverride(self.localeOverride.isEmpty ? nil : self.localeOverride)
     }
 
-    // MARK: - Actions
+
+    func retryRuntimeConnection() async {
+        do {
+            _ = try await EndpointAttachService.shared.attachConfiguredEndpoint()
+            self.repairIssue = nil
+            self.isReconnecting = false
+            self.updateState { $0.daemonError = false }
+            self.connect()
+        } catch {
+            let issue = RuntimeIssue(error)
+            self.repairIssue = issue
+            if issue.primaryAction != .retryConnection {
+                SetupWindowManager.shared.showRuntimeRepair(issue: issue)
+            }
+        }
+    }
+
+    func repairRuntimeConnection() {
+        let issue = self.repairIssue ?? RuntimeIssue(AttachError.unreachable)
+        SetupWindowManager.shared.showRuntimeRepair(issue: issue)
+    }
 
     func dismissError() {
         self.updateState { ctx in
@@ -278,10 +345,6 @@ final class BobeStore {
         self.updateState { $0.softWarning = nil }
     }
 
-    /// Toggles proactive surfacing. Setting to `true` interrupts any in-flight
-    /// TTS so BoBe goes quiet immediately; setting to `false` re-enables the
-    /// floating bubble for the next BoBe message but does not retroactively
-    /// re-speak the current one (that would feel surprising).
     func toggleProactiveSilence() {
         self.proactiveSilenced.toggle()
         if self.proactiveSilenced {
@@ -296,33 +359,31 @@ final class BobeStore {
     }
 
     func toggleCapture() async -> Bool {
-        let newState = !self.context.capturing
+        await self.setCapture(!self.context.capturing)
+    }
+
+    @discardableResult
+    func setCapture(_ enabled: Bool) async -> Bool {
+        var request = SettingsUpdateRequest()
+        request.captureEnabled = enabled
         do {
-            if newState {
-                try await self.client.startCapture()
-            } else {
-                try await self.client.stopCapture()
-            }
+            _ = try await self.client.updateSettings(request)
             self.updateState { ctx in
-                ctx.capturing = newState
-                if !newState {
-                    ctx.captureInProgress = false
-                }
+                ctx.capturing = enabled
             }
-            return newState
-        } catch {
-            bobeStoreLogger.error("toggleCapture failed: \(error.localizedDescription)")
-            if newState, !CGPreflightScreenCaptureAccess() {
+            if enabled, !CGPreflightScreenCaptureAccess() {
                 CGRequestScreenCaptureAccess()
-                self.updateState { $0.capturePermissionMissing = true }
             }
+            if !enabled {
+                self.screenUnavailableNotice = false
+            }
+            return enabled
+        } catch {
+            bobeStoreLogger.error("Screen awareness change failed: \(error.localizedDescription)")
             return self.context.capturing
         }
     }
 
-    /// Voice variant — the daemon has already persisted the user turn server-side
-    /// (via `handle_user_message_with_observer`), so we just mirror it into the
-    /// overlay chat history without firing another HTTP send.
     func appendUserVoiceMessage(_ content: String) {
         self.cancelConversationClear()
         let userMessage = ChatMessage(
@@ -339,6 +400,8 @@ final class BobeStore {
     }
 
     func sendMessage(_ content: String, requestId: UUID = UUID()) async {
+        self.synchronizeEndpoint()
+        let selection = self.selection
         self.cancelConversationClear()
         let userMessage = ChatMessage(
             id: "user-\(requestId.uuidString.lowercased())",
@@ -353,28 +416,28 @@ final class BobeStore {
         }
 
         do {
-            let response = try await self.client.sendMessage(content, requestId: requestId)
+            let response = try await self.sendRequest(selection, content, requestId)
+            guard self.isCurrent(selection) else { return }
             self.updateState { ctx in
                 if response.replayed {
                     Self.removeMessage(userMessage.id, messages: &ctx.messages)
                 } else {
                     Self.markMessageSent(userMessage.id, messages: &ctx.messages)
                 }
-                // Optimistic lock — closes SSE-vs-daemon indicator race.
-                ctx.acceptingUserMessages = response.requestStatus == "completed"
+                ctx.acceptingUserMessages = true
             }
             if response.replayed {
                 await self.reloadCanonicalConversation()
             }
         } catch {
-            // Admission conflicts are transient; unsafe replay conflicts are terminal.
-            let isBusy409 = Self.isBusy409(error)
+            guard self.isCurrent(selection) else { return }
             let unsafeReplayMessage = Self.unsafeReplayMessage(error)
             bobeStoreLogger.error("sendMessage failed: \(error.localizedDescription)")
             self.updateState { ctx in
                 Self.removeMessage(userMessage.id, messages: &ctx.messages)
                 ctx.failedSendRecoveries.append(
                     FailedSendRecovery(
+                        selection: selection,
                         id: userMessage.id,
                         content: content,
                         requestId: requestId,
@@ -382,22 +445,13 @@ final class BobeStore {
                         failureMessage: unsafeReplayMessage
                     )
                 )
-                if !isBusy409, unsafeReplayMessage == nil {
+                if unsafeReplayMessage == nil {
                     ctx.errorMessage = error.localizedDescription
                     ctx.daemonError = false
                 }
-                ctx.acceptingUserMessages = !isBusy409
+                ctx.acceptingUserMessages = true
             }
         }
-    }
-
-    private static func isBusy409(_ error: any Error) -> Bool {
-        if case let DaemonError.httpError(statusCode, message, code) = error {
-            return statusCode == 409
-                && code == "CONFLICT"
-                && message.localizedCaseInsensitiveContains("BoBe")
-        }
-        return false
     }
 
     private static func unsafeReplayMessage(_ error: any Error) -> String? {
@@ -415,10 +469,11 @@ final class BobeStore {
     }
 
     func retryFailedSendRecovery(_ recoveryId: String) async {
+        self.synchronizeEndpoint()
         guard let recovery = self.context.failedSendRecoveries.first(where: { $0.id == recoveryId }) else {
             return
         }
-        guard recovery.canRetry else { return }
+        guard recovery.canRetry, self.isCurrent(recovery.selection) else { return }
 
         self.updateState { ctx in
             ctx.failedSendRecoveries.removeAll { $0.id == recoveryId }
@@ -482,12 +537,6 @@ final class BobeStore {
             self.conversationMutationRevision &+= 1
         }
         ctx.stateType = deriveStateType(from: ctx)
-        // Recompute the derived displayable-message flag once per mutation rather
-        // than walking the array on every body eval that reads it (the
-        // overlay's `chatViewportFloorHeight` is the hot path).
-        ctx.hasDisplayableBobeMessage = ctx.messages.contains(where: {
-            $0.sender == .bobe && $0.belongsInConversationTrace
-        })
         self.context = ctx
     }
 }

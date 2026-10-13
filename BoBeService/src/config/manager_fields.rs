@@ -1,5 +1,3 @@
-//! Accepts dotted keys (`"capture.enabled"`) and flat legacy keys (`"capture_enabled"`).
-
 use std::collections::HashMap;
 
 use tracing::warn;
@@ -16,14 +14,13 @@ pub(crate) fn apply(config: &mut Config, changes: &HashMap<String, serde_json::V
         };
     }
 
-    /// Swift omits `nil` via `JSONEncoder` default, so `""` from the wire means "clear".
     macro_rules! set_opt_string {
         ($field:expr, $value:expr, $key:expr) => {
             match $value {
                 serde_json::Value::Null => $field = None,
                 serde_json::Value::String(s) if s.is_empty() => $field = None,
-                v => match serde_json::from_value::<String>(v.clone()) {
-                    Ok(s) => $field = Some(s),
+                value => match serde_json::from_value::<String>(value.clone()) {
+                    Ok(value) => $field = Some(value),
                     Err(_) => warn!(field = $key, "config_manager.parse_failed"),
                 },
             }
@@ -31,295 +28,208 @@ pub(crate) fn apply(config: &mut Config, changes: &HashMap<String, serde_json::V
     }
 
     for (key, value) in changes {
-        let dotted = normalize_key(key);
-        let k = dotted.as_str();
-
-        match k {
-            "server.host" => set_parsed!(config.server.host, value, k),
-            "server.port" => set_parsed!(config.server.port, value, k),
-            "server.mdns_enabled" => set_parsed!(config.server.mdns_enabled, value, k),
-            "server.cors_origins" => set_parsed!(config.server.cors_origins, value, k),
-
-            "database.url" => set_parsed!(config.database.url, value, k),
-
-            "capture.enabled" => set_parsed!(config.capture.enabled, value, k),
+        let key = key.as_str();
+        match key {
+            "agent.enabled_tools" => set_parsed!(config.agent.enabled_tools, value, key),
+            "agent.execution" => set_parsed!(config.agent.execution, value, key),
+            "server.host" => set_parsed!(config.server.host, value, key),
+            "server.port" => set_parsed!(config.server.port, value, key),
+            "server.mdns_enabled" => set_parsed!(config.server.mdns_enabled, value, key),
+            "server.cors_origins" => set_parsed!(config.server.cors_origins, value, key),
+            "server.allowed_hosts" => set_parsed!(config.server.allowed_hosts, value, key),
+            "server.tls_cert_path" => set_opt_string!(config.server.tls_cert_path, value, key),
+            "server.tls_key_path" => set_opt_string!(config.server.tls_key_path, value, key),
+            "database.url" => set_parsed!(config.database.url, value, key),
+            "body.theme" => set_parsed!(config.body.theme, value, key),
+            "capture.enabled" => set_parsed!(config.capture.enabled, value, key),
             "capture.interval_seconds" => {
-                set_parsed!(config.capture.interval_seconds, value, k);
+                set_parsed!(config.capture.interval_seconds, value, key);
             }
-
-            "checkin.enabled" => set_parsed!(config.checkin.enabled, value, k),
-            "checkin.times" => set_parsed!(config.checkin.times, value, k),
-            "checkin.jitter_minutes" => set_parsed!(config.checkin.jitter_minutes, value, k),
+            "checkin.enabled" => set_parsed!(config.checkin.enabled, value, key),
+            "checkin.times" => set_parsed!(config.checkin.times, value, key),
+            "checkin.jitter_minutes" => {
+                set_parsed!(config.checkin.jitter_minutes, value, key);
+            }
             "checkin.interval_minutes" => {
-                set_parsed!(config.checkin.interval_minutes, value, k);
+                set_parsed!(config.checkin.interval_minutes, value, key);
             }
-
             "conversation.inactivity_timeout_seconds" => {
-                set_parsed!(config.conversation.inactivity_timeout_seconds, value, k);
+                set_parsed!(config.conversation.inactivity_timeout_seconds, value, key);
             }
             "conversation.auto_close_minutes" => {
-                set_parsed!(config.conversation.auto_close_minutes, value, k);
+                set_parsed!(config.conversation.auto_close_minutes, value, key);
             }
-
-            "logging.level" => set_parsed!(config.logging.level, value, k),
-            "logging.json" => set_parsed!(config.logging.json, value, k),
-            "logging.file" => set_parsed!(config.logging.file, value, k),
-
+            "logging.level" => set_parsed!(config.logging.level, value, key),
+            "logging.json" => set_parsed!(config.logging.json, value, key),
+            "logging.file" => set_parsed!(config.logging.file, value, key),
             "decision.cooldown_minutes" => {
-                set_parsed!(config.decision.cooldown_minutes, value, k);
+                set_parsed!(config.decision.cooldown_minutes, value, key);
             }
             "decision.extended_cooldown_minutes" => {
-                set_parsed!(config.decision.extended_cooldown_minutes, value, k);
+                set_parsed!(config.decision.extended_cooldown_minutes, value, key);
             }
-            "decision.recent_ai_messages_limit" => {
-                set_parsed!(config.decision.recent_ai_messages_limit, value, k);
-            }
-
-            "mcp.enabled" => set_parsed!(config.mcp.enabled, value, k),
-            "mcp.config_file" => set_parsed!(config.mcp.config_file, value, k),
-            "mcp.blocked_commands" => set_parsed!(config.mcp.blocked_commands, value, k),
-            "mcp.dangerous_env_keys" => set_parsed!(config.mcp.dangerous_env_keys, value, k),
-
+            "mcp.enabled" => set_parsed!(config.mcp.enabled, value, key),
+            "mcp.config_file" => set_parsed!(config.mcp.config_file, value, key),
+            "mcp.blocked_commands" => set_parsed!(config.mcp.blocked_commands, value, key),
+            "mcp.dangerous_env_keys" => set_parsed!(config.mcp.dangerous_env_keys, value, key),
             "goals.check_interval_seconds" => {
-                set_parsed!(config.goals.check_interval_seconds, value, k);
+                set_parsed!(config.goals.check_interval_seconds, value, key);
             }
-
-            "engine.engine" => set_parsed!(config.engine.engine, value, k),
-            "engine.provider_base_url" => {
-                set_opt_string!(config.engine.provider_base_url, value, k);
+            "goals.enabled" => set_parsed!(config.goals.enabled, value, key),
+            "memory.enabled" => set_parsed!(config.memory.enabled, value, key),
+            "voice.enabled" => set_parsed!(config.voice.enabled, value, key),
+            "voice.persona" => set_parsed!(config.voice.persona, value, key),
+            "voice.speed" => set_parsed!(config.voice.speed, value, key),
+            "voice.stt_language" => set_parsed!(config.voice.stt_language, value, key),
+            "voice.pause_sensitivity" => {
+                set_parsed!(config.voice.pause_sensitivity, value, key);
             }
-            "engine.provider_chat_model" => {
-                set_opt_string!(config.engine.provider_chat_model, value, k);
-            }
-            "engine.provider_batch_model" => {
-                set_opt_string!(config.engine.provider_batch_model, value, k);
-            }
-            "engine.provider_vision_model" => {
-                set_opt_string!(config.engine.provider_vision_model, value, k);
-            }
-            "engine.provider_chat_reasoning" => {
-                set_opt_string!(config.engine.provider_chat_reasoning, value, k);
-            }
-            "engine.provider_batch_reasoning" => {
-                set_opt_string!(config.engine.provider_batch_reasoning, value, k);
-            }
-            "engine.provider_vision_reasoning" => {
-                set_opt_string!(config.engine.provider_vision_reasoning, value, k);
-            }
-            "engine.provider_offline" => {
-                set_parsed!(config.engine.provider_offline, value, k);
-            }
-
-            "voice.enabled" => set_parsed!(config.voice.enabled, value, k),
-            "voice.persona" => set_parsed!(config.voice.persona, value, k),
-            "voice.speed" => set_parsed!(config.voice.speed, value, k),
-            "voice.stt_language" => set_parsed!(config.voice.stt_language, value, k),
-            "voice.pause_sensitivity" => set_parsed!(config.voice.pause_sensitivity, value, k),
             "voice.show_partial_caption" => {
-                set_parsed!(config.voice.show_partial_caption, value, k);
+                set_parsed!(config.voice.show_partial_caption, value, key);
             }
-
-            "seed_default_documents" => set_parsed!(config.seed_default_documents, value, k),
-
+            "seed_default_documents" => set_parsed!(config.seed_default_documents, value, key),
             _ => {}
         }
     }
 }
 
-pub(crate) fn normalize_key_pub(key: &str) -> String {
-    normalize_key(key)
+pub(crate) fn equivalent_json_value(left: &serde_json::Value, right: &serde_json::Value) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.as_f64(), right.as_f64()) {
+        (Some(left), Some(right)) => left.total_cmp(&right).is_eq(),
+        _ => false,
+    }
 }
 
-fn normalize_key(key: &str) -> String {
-    if key.contains('.') {
-        return key.to_string();
-    }
+pub(crate) fn compatible_json_type(
+    expected: &serde_json::Value,
+    received: &serde_json::Value,
+) -> bool {
+    expected.is_null()
+        || received.is_null()
+        || matches!(
+            (expected, received),
+            (serde_json::Value::Bool(_), serde_json::Value::Bool(_))
+                | (serde_json::Value::Number(_), serde_json::Value::Number(_))
+                | (serde_json::Value::String(_), serde_json::Value::String(_))
+                | (serde_json::Value::Array(_), serde_json::Value::Array(_))
+                | (serde_json::Value::Object(_), serde_json::Value::Object(_))
+        )
+}
 
-    match key {
-        "host" => "server.host",
-        "port" => "server.port",
-        "mdns_enabled" => "server.mdns_enabled",
-        "cors_origins" => "server.cors_origins",
-        "database_url" => "database.url",
-        "capture_enabled" => "capture.enabled",
-        "capture_interval_seconds" => "capture.interval_seconds",
-        "checkin_enabled" => "checkin.enabled",
-        "checkin_times" => "checkin.times",
-        "checkin_jitter_minutes" => "checkin.jitter_minutes",
-        "checkin_interval_minutes" => "checkin.interval_minutes",
-        "conversation_inactivity_timeout_seconds" => "conversation.inactivity_timeout_seconds",
-        "conversation_auto_close_minutes" => "conversation.auto_close_minutes",
-        "log_level" => "logging.level",
-        "log_json" => "logging.json",
-        "log_file" => "logging.file",
-        "decision_cooldown_minutes" => "decision.cooldown_minutes",
-        "decision_extended_cooldown_minutes" => "decision.extended_cooldown_minutes",
-        "recent_ai_messages_limit" => "decision.recent_ai_messages_limit",
-        "mcp_enabled" => "mcp.enabled",
-        "mcp_config_file" => "mcp.config_file",
-        "mcp_blocked_commands" => "mcp.blocked_commands",
-        "mcp_dangerous_env_keys" => "mcp.dangerous_env_keys",
-        "goal_check_interval_seconds" => "goals.check_interval_seconds",
-        "engine" => "engine.engine",
-        "provider_base_url" => "engine.provider_base_url",
-        "provider_chat_model" => "engine.provider_chat_model",
-        "provider_batch_model" => "engine.provider_batch_model",
-        "provider_vision_model" => "engine.provider_vision_model",
-        "provider_chat_reasoning" => "engine.provider_chat_reasoning",
-        "provider_batch_reasoning" => "engine.provider_batch_reasoning",
-        "provider_vision_reasoning" => "engine.provider_vision_reasoning",
-        "provider_offline" => "engine.provider_offline",
-        "voice_enabled" => "voice.enabled",
-        "voice_persona" => "voice.persona",
-        "voice_speed" => "voice.speed",
-        "voice_stt_language" => "voice.stt_language",
-        "voice_pause_sensitivity" => "voice.pause_sensitivity",
-        "voice_show_partial_caption" => "voice.show_partial_caption",
-        other => other,
-    }
-    .to_string()
+pub(crate) fn value(config: &Config, key: &str) -> Option<serde_json::Value> {
+    let serialized = serde_json::to_value(config).ok()?;
+    key.split('.')
+        .try_fold(&serialized, |value, component| value.get(component))
+        .cloned()
+}
+
+pub(crate) fn is_known_key(key: &str) -> bool {
+    matches!(
+        key,
+        "server.host"
+            | "agent.enabled_tools"
+            | "agent.execution"
+            | "server.port"
+            | "server.mdns_enabled"
+            | "server.cors_origins"
+            | "server.allowed_hosts"
+            | "server.tls_cert_path"
+            | "server.tls_key_path"
+            | "database.url"
+            | "body.theme"
+            | "capture.enabled"
+            | "capture.interval_seconds"
+            | "checkin.enabled"
+            | "checkin.times"
+            | "checkin.jitter_minutes"
+            | "checkin.interval_minutes"
+            | "conversation.inactivity_timeout_seconds"
+            | "conversation.auto_close_minutes"
+            | "logging.level"
+            | "logging.json"
+            | "logging.file"
+            | "decision.cooldown_minutes"
+            | "decision.extended_cooldown_minutes"
+            | "mcp.enabled"
+            | "mcp.config_file"
+            | "mcp.blocked_commands"
+            | "mcp.dangerous_env_keys"
+            | "goals.check_interval_seconds"
+            | "goals.enabled"
+            | "memory.enabled"
+            | "voice.enabled"
+            | "voice.persona"
+            | "voice.speed"
+            | "voice.stt_language"
+            | "voice.pause_sensitivity"
+            | "voice.show_partial_caption"
+            | "seed_default_documents"
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::engine_kind::EngineKind;
+    use crate::config::BodyTheme;
     use serde_json::json;
 
     fn changes(pairs: &[(&str, serde_json::Value)]) -> HashMap<String, serde_json::Value> {
         pairs
             .iter()
-            .map(|(k, v)| ((*k).to_string(), v.clone()))
+            .map(|(key, value)| ((*key).to_owned(), value.clone()))
             .collect()
     }
 
     #[test]
+    fn numeric_values_compare_across_json_integer_and_float_forms() {
+        assert!(equivalent_json_value(&json!(2.0), &json!(2)));
+        assert!(equivalent_json_value(&json!(-3), &json!(-3.0)));
+        assert!(!equivalent_json_value(&json!(2.5), &json!(2)));
+        assert!(!equivalent_json_value(&json!("2"), &json!(2)));
+    }
+
+    #[test]
     fn known_field_happy_path_mutates() {
-        let mut cfg = Config::default();
-        let original_interval = cfg.capture.interval_seconds;
+        let mut config = Config::default();
         apply(
-            &mut cfg,
+            &mut config,
             &changes(&[("capture.interval_seconds", json!(42))]),
         );
-        assert_eq!(cfg.capture.interval_seconds, 42);
-        assert_ne!(cfg.capture.interval_seconds, original_interval);
+        assert_eq!(config.capture.interval_seconds, 42);
     }
 
     #[test]
     fn unknown_field_is_noop() {
-        let mut cfg = Config::default();
-        let snapshot_engine = cfg.engine.engine;
+        let mut config = Config::default();
+        let before = config.capture.interval_seconds;
         apply(
-            &mut cfg,
+            &mut config,
             &changes(&[("nonexistent.field", json!("anything"))]),
         );
-        // The default branch in apply() is a no-op — but we want to also
-        // verify it doesn't accidentally clobber siblings via macro
-        // side-effects.
-        assert_eq!(cfg.engine.engine, snapshot_engine);
+        assert_eq!(config.capture.interval_seconds, before);
     }
 
     #[test]
-    fn wrong_type_is_silently_skipped() {
-        let mut cfg = Config::default();
-        let original = cfg.capture.interval_seconds;
-        // capture_interval_seconds is u64; a JSON string is the wrong type.
-        // set_parsed!'s match arm returns Err and warns — the field stays.
+    fn wrong_type_is_skipped() {
+        let mut config = Config::default();
+        let before = config.capture.interval_seconds;
         apply(
-            &mut cfg,
+            &mut config,
             &changes(&[("capture.interval_seconds", json!("not a number"))]),
         );
-        assert_eq!(cfg.capture.interval_seconds, original);
+        assert_eq!(config.capture.interval_seconds, before);
     }
 
     #[test]
-    fn engine_kind_decodes_known_variants() {
-        let mut cfg = Config::default();
-        apply(&mut cfg, &changes(&[("engine.engine", json!("local"))]));
-        assert_eq!(cfg.engine.engine, EngineKind::Local);
+    fn body_theme_key_updates_config() {
+        let mut config = Config::default();
         apply(
-            &mut cfg,
-            &changes(&[("engine.engine", json!("copilot_cloud"))]),
+            &mut config,
+            &changes(&[("body.theme", json!("solar-wide-awake"))]),
         );
-        assert_eq!(cfg.engine.engine, EngineKind::CopilotCloud);
-    }
-
-    #[test]
-    fn engine_kind_rejects_unknown_variant_silently() {
-        let mut cfg = Config::default();
-        cfg.engine.engine = EngineKind::CopilotCloud;
-        apply(
-            &mut cfg,
-            &changes(&[("engine.engine", json!("azure_openai"))]),
-        );
-        // serde rejects unknown variant — field stays at previous value,
-        // matching the "bad input is a no-op" contract of `set_parsed!`.
-        assert_eq!(cfg.engine.engine, EngineKind::CopilotCloud);
-    }
-
-    #[test]
-    fn empty_string_clears_optional_field() {
-        let mut cfg = Config::default();
-        cfg.engine.provider_chat_model = Some("gpt-4o".into());
-        apply(
-            &mut cfg,
-            &changes(&[("engine.provider_chat_model", json!(""))]),
-        );
-        // set_opt_string! treats empty string as explicit clear (Swift
-        // omits nil via JSONEncoder default, so "" is the wire signal).
-        assert_eq!(cfg.engine.provider_chat_model, None);
-    }
-
-    #[test]
-    fn null_clears_optional_field() {
-        let mut cfg = Config::default();
-        cfg.engine.provider_chat_model = Some("gpt-4o".into());
-        apply(
-            &mut cfg,
-            &changes(&[("engine.provider_chat_model", serde_json::Value::Null)]),
-        );
-        assert_eq!(cfg.engine.provider_chat_model, None);
-    }
-
-    #[test]
-    fn flat_key_normalizes_to_dotted() {
-        assert_eq!(normalize_key("capture_enabled"), "capture.enabled");
-        assert_eq!(normalize_key("engine"), "engine.engine");
-        assert_eq!(normalize_key("voice_speed"), "voice.speed");
-    }
-
-    #[test]
-    fn dotted_key_passes_through_unchanged() {
-        assert_eq!(normalize_key("server.host"), "server.host");
-        assert_eq!(
-            normalize_key("engine.provider_base_url"),
-            "engine.provider_base_url"
-        );
-    }
-
-    #[test]
-    fn unknown_flat_key_passes_through_as_other() {
-        // `other => other` — the function does NOT alter unknown keys,
-        // it just forwards them. apply() will then ignore them.
-        assert_eq!(
-            normalize_key("totally_unknown_field"),
-            "totally_unknown_field"
-        );
-    }
-
-    #[test]
-    fn multiple_changes_apply_independently() {
-        let mut cfg = Config::default();
-        apply(
-            &mut cfg,
-            &changes(&[
-                ("capture.enabled", json!(true)),
-                ("voice.speed", json!(1.25_f32)),
-                ("engine.provider_offline", json!(false)),
-            ]),
-        );
-        assert!(cfg.capture.enabled);
-        assert!((cfg.voice.speed - 1.25).abs() < 0.001);
-        assert!(!cfg.engine.provider_offline);
+        assert_eq!(config.body.theme, BodyTheme::SolarWideAwake);
     }
 }

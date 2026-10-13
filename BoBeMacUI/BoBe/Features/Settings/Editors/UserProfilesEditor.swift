@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct UserProfilesEditor: View {
+    @State private var client = DaemonClient(endpoint: DaemonConfig.endpoint)
+
     var body: some View {
         EntityListEditor<UserProfile, UserProfileCreateRequest, UserProfileUpdateRequest>(
             strings: EntityEditorStrings(
@@ -16,12 +18,12 @@ struct UserProfilesEditor: View {
             ),
             emptyIcon: "person.crop.circle",
             actions: EntityActions(
-                list: { try await DaemonClient.shared.listUserProfiles().profiles },
-                create: { try await DaemonClient.shared.createUserProfile($0) },
-                update: { id, request in try await DaemonClient.shared.updateUserProfile(id, request) },
-                delete: { try await DaemonClient.shared.deleteUserProfile($0) },
-                enable: { _ = try await DaemonClient.shared.enableUserProfile($0) },
-                disable: { _ = try await DaemonClient.shared.disableUserProfile($0) },
+                list: { [client = self.client] in try await client.listUserProfiles().profiles },
+                create: { [client = self.client] request in try await client.createUserProfile(request) },
+                update: { [client = self.client] id, request in try await client.updateUserProfile(id, request) },
+                delete: { [client = self.client] id in try await client.deleteUserProfile(id) },
+                enable: { [client = self.client] id in try await client.enableUserProfile(id) },
+                disable: { [client = self.client] id in try await client.disableUserProfile(id) },
                 buildCreateRequest: { name in
                     UserProfileCreateRequest(name: name, content: "# \(name)\n\nDescribe this profile here.\n")
                 },

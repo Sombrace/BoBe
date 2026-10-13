@@ -2,76 +2,68 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
+use sha2::{Digest, Sha256};
 use tracing::{debug, error, info, warn};
 
 const VISION_FAILURE_BREAKER_THRESHOLD: u32 = 3;
 
 const VISION_FAILURE_COOLDOWN: Duration = Duration::from_mins(3);
 
+const SCREEN_READ_DEADLINE: Duration = Duration::from_secs(20);
+
 use crate::config::Config;
 use crate::db::SqliteCooldownRepo;
 use crate::runtime::capture_learner::CaptureLearner;
 use crate::runtime::proactive_generator::ProactiveGenerator;
 use crate::runtime::state::Decision;
-use crate::util::capture::ScreenCapture;
+use crate::util::sse::body_requests::{BodyAction, BodyRequestError, ScreenReading};
+use crate::util::sse::connection_manager::SseConnectionManager;
 use crate::util::sse::event_queue::EventQueue;
 use crate::util::sse::factories::trigger_error_event;
-use crate::util::sse::indicator_guard::IndicatorGuard;
-use crate::util::sse::types::IndicatorType;
 
-use crate::runtime::turn_admission::{TurnAdmission, TurnSource};
-use crate::util::atomic_flag_guard::AtomicFlagGuard;
+use crate::runtime::turn_admission::TurnSource;
 
 pub(crate) struct CaptureTrigger {
-    screen_capture: Arc<ScreenCapture>,
+    connections: Arc<SseConnectionManager>,
     capture_learner: Arc<CaptureLearner>,
     generator: Arc<ProactiveGenerator>,
     cooldown_repo: Arc<SqliteCooldownRepo>,
     event_queue: Arc<EventQueue>,
     config: Arc<ArcSwap<Config>>,
-    /// Same Arc as `RuntimeSession.user_message_in_flight`. CAS true at
-    /// the top of `fire()` to serialize with text + voice turns; skip the
-    /// cycle if another turn is already running. Without this gate the
-    /// capture trigger's indicator pushes (`ScreenCapture` → `Thinking`
-    /// → `Idle`) overwrote whatever indicator a concurrent voice or
-    /// text turn had set, leaving the Swift store out of sync.
-    turn_admission: Arc<TurnAdmission>,
-    enabled: bool,
+    personal_data_lifecycle: Arc<tokio::sync::RwLock<()>>,
     context_count: usize,
+    previous_capture: Option<[u8; 32]>,
     vision_failure_count: u32,
     vision_breaker_tripped_at: Option<Instant>,
-    /// Suppresses alternating paused/restored SSE events while broken.
     vision_pause_announced: bool,
 }
 
 impl CaptureTrigger {
     pub(crate) fn new(
-        screen_capture: Arc<ScreenCapture>,
+        connections: Arc<SseConnectionManager>,
         capture_learner: Arc<CaptureLearner>,
         generator: Arc<ProactiveGenerator>,
         cooldown_repo: Arc<SqliteCooldownRepo>,
         event_queue: Arc<EventQueue>,
         config: Arc<ArcSwap<Config>>,
-        turn_admission: Arc<TurnAdmission>,
+        personal_data_lifecycle: Arc<tokio::sync::RwLock<()>>,
     ) -> Self {
         Self {
-            screen_capture,
+            connections,
             capture_learner,
             generator,
             cooldown_repo,
             event_queue,
             config,
-            turn_admission,
-            enabled: false,
+            personal_data_lifecycle,
             context_count: 0,
+            previous_capture: None,
             vision_failure_count: 0,
             vision_breaker_tripped_at: None,
             vision_pause_announced: false,
         }
     }
 
-    /// Reset vision-breaker state after a successful capture and surface
-    /// the SSE recovery notice if we were previously paused. Idempotent.
     fn announce_vision_recovered(&mut self) {
         self.vision_failure_count = 0;
         self.vision_breaker_tripped_at = None;
@@ -85,19 +77,11 @@ impl CaptureTrigger {
         }
     }
 
-    /// CAS the shared in-flight flag; returns a guard that releases on drop.
-    /// `None` means another turn is already running — caller should skip.
-    fn try_acquire_in_flight(&self) -> Option<AtomicFlagGuard> {
-        self.turn_admission.try_admit(TurnSource::Capture)
-    }
-
     fn vision_breaker_open(&mut self) -> bool {
         let Some(tripped_at) = self.vision_breaker_tripped_at else {
             return false;
         };
         if tripped_at.elapsed() >= VISION_FAILURE_COOLDOWN {
-            // Failure count stays high until a success clears it, so the
-            // breaker re-trips if vision is still broken.
             self.vision_breaker_tripped_at = None;
             info!("capture_trigger.vision_breaker_reopened");
             false
@@ -106,26 +90,8 @@ impl CaptureTrigger {
         }
     }
 
-    pub(crate) async fn start(&mut self) {
-        self.enabled = true;
-        info!("capture_trigger.started");
-    }
-
-    pub(crate) async fn stop(&mut self) {
-        self.enabled = false;
-        info!("capture_trigger.stopped");
-    }
-
     pub(crate) async fn fire(&mut self) -> Decision {
-        // Single-flight gate: skip if a text- or voice-turn is in flight
-        // so concurrent indicators don't race. RAII guard releases on
-        // every return path including panic-unwind.
-        let Some(_in_flight_guard) = self.try_acquire_in_flight() else {
-            debug!("capture_trigger.skipped_user_message_in_flight");
-            return Decision::Idle;
-        };
-        let _indicator_guard = IndicatorGuard::new(Arc::clone(&self.event_queue));
-
+        let _personal_data = Arc::clone(&self.personal_data_lifecycle).read_owned().await;
         let Some(description) = self.run_capture_cycle().await else {
             return Decision::Idle;
         };
@@ -141,20 +107,12 @@ impl CaptureTrigger {
                 cooldown_type = %cooldown.cooldown_type,
                 "capture_trigger.cooldown_active"
             );
-            self.event_queue.set_indicator(IndicatorType::Idle);
             return Decision::Idle;
         }
 
-        self.event_queue.set_indicator(IndicatorType::Thinking);
-        let decision = self
-            .generator
-            .generate_proactive_response(
-                cfg.conversation.auto_close_minutes as i64,
-                Some(description),
-            )
-            .await;
-        self.event_queue.set_indicator(IndicatorType::Idle);
-        decision
+        self.generator
+            .generate_proactive_response(TurnSource::Capture, Some(description))
+            .await
     }
 
     async fn run_capture_cycle(&mut self) -> Option<String> {
@@ -166,30 +124,63 @@ impl CaptureTrigger {
         let cycle_num = self.context_count + 1;
         info!(cycle = cycle_num, "capture_trigger.cycle_start");
 
-        self.event_queue.set_indicator(IndicatorType::ScreenCapture);
-        let capture_result = match self.screen_capture.capture_screen().await {
-            Ok(r) => r,
+        let reading = match self
+            .connections
+            .request(BodyAction::ScreenRead, SCREEN_READ_DEADLINE)
+            .await
+            .and_then(ScreenReading::from_result)
+        {
+            Ok(reading) => reading,
+            Err(BodyRequestError::NoBody) => {
+                debug!(cycle = cycle_num, "capture_trigger.no_screen_body");
+                return None;
+            }
+            Err(BodyRequestError::Declined(reason)) => {
+                info!(cycle = cycle_num, %reason, "capture_trigger.screen_declined");
+                return None;
+            }
             Err(e) => {
-                error!(error = %e, cycle = cycle_num, "capture_trigger.screenshot_failed");
-                self.event_queue.set_indicator(IndicatorType::Idle);
+                error!(error = %e, cycle = cycle_num, "capture_trigger.screen_read_failed");
                 return None;
             }
         };
-        self.event_queue.set_indicator(IndicatorType::Thinking);
+        let mut digest = Sha256::new();
+        digest.update(reading.text.as_bytes());
+        digest.update([0]);
+        digest.update(
+            reading
+                .application
+                .as_deref()
+                .unwrap_or_default()
+                .as_bytes(),
+        );
+        digest.update([0]);
+        digest.update(
+            reading
+                .window_title
+                .as_deref()
+                .unwrap_or_default()
+                .as_bytes(),
+        );
+        let fingerprint: [u8; 32] = digest.finalize().into();
+        if self.previous_capture == Some(fingerprint) {
+            debug!("capture_trigger.unchanged_screen");
+            return None;
+        }
         let result = self
             .capture_learner
             .learn(
-                capture_result.image,
-                capture_result.active_window.as_deref(),
+                &reading.text,
+                reading.application.as_deref(),
+                reading.window_title.as_deref(),
             )
             .await;
-        self.event_queue.set_indicator(IndicatorType::Idle);
 
         match result {
             Ok(description) => {
+                self.previous_capture = Some(fingerprint);
                 self.announce_vision_recovered();
                 if description.is_empty() {
-                    // Empty description = uninformative screen, not a failure.
                     debug!(cycle = cycle_num, "capture_trigger.empty_description");
                     None
                 } else {
@@ -206,7 +197,7 @@ impl CaptureTrigger {
                         self.vision_pause_announced = true;
                         self.event_queue.push(trigger_error_event(
                             "vision",
-                            "Screen awareness paused — vision unavailable.",
+                            "Screen awareness is paused because the screen could not be read.",
                             true,
                         ));
                     }

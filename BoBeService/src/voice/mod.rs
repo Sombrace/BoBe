@@ -1,10 +1,5 @@
-//! Voice-handler-side modules — distinct from `speech/` which holds the
-//! Kokoro TTS engine. Files here are about wiring TTS into the WS turn
-//! loop: per-WS session state, per-turn convergence body, pre-rendered
-//! filler library, sink registry, telemetry counters.
-
-pub(crate) mod abort_on_drop;
 pub(crate) mod cancel_phrases;
+pub(crate) mod capture_in;
 pub(crate) mod context;
 pub(crate) mod control;
 pub(crate) mod engines;
@@ -14,11 +9,14 @@ pub(crate) mod install_extract;
 pub(crate) mod install_service;
 pub(crate) mod opus;
 pub(crate) mod output;
+pub(crate) mod preview;
 pub(crate) mod protocol_helpers;
 pub(crate) mod run_text_turn;
 pub(crate) mod sentence_pipeline;
 pub(crate) mod session;
 pub(crate) mod sinks;
+pub(crate) mod spoken;
+pub(crate) mod synthesis;
 pub(crate) mod telemetry;
 pub(crate) mod text_prep;
 pub(crate) mod transcript_in;

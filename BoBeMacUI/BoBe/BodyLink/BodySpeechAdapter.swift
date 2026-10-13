@@ -1,4 +1,3 @@
-@preconcurrency import AVFoundation
 import Foundation
 import OSLog
 
@@ -10,7 +9,6 @@ private let bodyAdapterLogger = Logger(
 actor BodySpeechAdapter {
     static let shared = BodySpeechAdapter()
 
-    private let session = URLSession(configuration: .default)
     private let stt = FluidAudioStt()
     private var baseURL: URL?
     private var token: String?
@@ -19,7 +17,6 @@ actor BodySpeechAdapter {
     private var activeRoute: BodyRoute?
     private var captureOpen = false
     private var eouSegments: [String] = []
-    private var decoder: OpusDecoder?
     private var expectedMicrophoneSequence: UInt32?
     private var contractValidated = false
 
@@ -86,6 +83,7 @@ actor BodySpeechAdapter {
             onEou: { [weak self] text in
                 await self?.handleEou(text)
             },
+            onFailure: { _ in },
             onProgress: { _ in }
         )
     }
@@ -103,9 +101,14 @@ actor BodySpeechAdapter {
             throw BodySpeechAdapterError.invalidConfiguration
         }
         var request = URLRequest(url: url)
-        DaemonEndpoint.remote(baseURL: baseURL, bearerToken: token).authorize(&request)
+        let endpoint = DaemonEndpoint.remote(baseURL: baseURL, bearerToken: token)
+        endpoint.authorize(&request)
         request.setValue("bobe.speech-adapter.v1", forHTTPHeaderField: "Sec-WebSocket-Protocol")
-        let socket = self.session.webSocketTask(with: request)
+        let session = DaemonTransportPolicy.session(
+            for: endpoint,
+            purpose: .bodyLoopbackWebSocket
+        )
+        let socket = session.webSocketTask(with: request)
         self.socket = socket
         self.contractValidated = false
         socket.resume()
@@ -147,7 +150,6 @@ actor BodySpeechAdapter {
             self.captureOpen = false
             self.eouSegments.removeAll(keepingCapacity: true)
             self.expectedMicrophoneSequence = nil
-            self.decoder = nil
             try await self.stt.reset()
             guard self.socket != nil, self.activeRoute == nil else {
                 throw BodySpeechAdapterError.notConnected
@@ -180,25 +182,18 @@ actor BodySpeechAdapter {
         else {
             throw BodySpeechAdapterError.staleRoute
         }
-        switch header.kind {
-        case .microphonePcm:
-            guard self.captureOpen,
-                  let frame = BodyLinkMicrophoneFrame.parse(payload),
-                  frame.streamId == route.captureStreamId,
-                  frame.sequence == header.sequence,
-                  self.expectedMicrophoneSequence == nil
-                    || self.expectedMicrophoneSequence == frame.sequence
-                   || frame.hasDiscontinuity
-            else {
-                throw BodySpeechAdapterError.malformedMedia
-            }
-            self.expectedMicrophoneSequence = frame.sequence &+ 1
-            try await self.stt.acceptSamples(Self.floatSamples(from: frame.pcm))
-        case .ttsOpus:
-            try await self.decodeAndReturnPcm(header: header, payload: payload)
-        case .speakerPcm:
-            throw BodySpeechAdapterError.unsupportedFrame
+        guard self.captureOpen,
+              let frame = BodyLinkMicrophoneFrame.parse(payload),
+              frame.streamId == route.captureStreamId,
+              frame.sequence == header.sequence,
+              self.expectedMicrophoneSequence == nil
+                || self.expectedMicrophoneSequence == frame.sequence
+                || frame.hasDiscontinuity
+        else {
+            throw BodySpeechAdapterError.malformedMedia
         }
+        self.expectedMicrophoneSequence = frame.sequence &+ 1
+        try await self.stt.acceptSamples(Self.floatSamples(from: frame.pcm))
     }
 
     private func handlePartial(_ text: String) async {
@@ -236,77 +231,10 @@ actor BodySpeechAdapter {
         }
     }
 
-    private func decodeAndReturnPcm(
-        header: BodyAdapterMediaHeader,
-        payload: Data
-    ) async throws {
-        guard let parsed = TtsFrameHeader.parse(payload) else {
-            throw BodySpeechAdapterError.malformedMedia
-        }
-        let format = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: Double(VoiceWire.ttsOutputSampleRate),
-            channels: 1,
-            interleaved: false
-        )
-        guard let format,
-              let buffer = AVAudioPCMBuffer(
-                  pcmFormat: format,
-                  // Match the proven Mac playback path: Apple's Opus converter
-                  // requires room for the protocol's 60 ms maximum even though
-                  // BoBe emits 20 ms packets.
-                  frameCapacity: AVAudioFrameCount(VoiceWire.ttsOutputSampleRate * 3 / 50)
-              )
-        else {
-            throw BodySpeechAdapterError.audioBuffer
-        }
-        if self.decoder == nil {
-            self.decoder = try OpusDecoder(outputFormat: format)
-        }
-        try parsed.payload.withUnsafeBytes { raw in
-            try self.decoder?.decode(raw.bindMemory(to: UInt8.self), to: buffer)
-        }
-        let expectedFrames = AVAudioFrameCount(VoiceWire.ttsOutputSampleRate / 50)
-        guard buffer.frameLength > 0, buffer.frameLength <= expectedFrames else {
-            bodyAdapterLogger.error(
-                "Unexpected decoded frame count: \(buffer.frameLength, privacy: .public)"
-            )
-            throw BodySpeechAdapterError.audioBuffer
-        }
-        guard let channel = buffer.int16ChannelData?[0] else {
-            bodyAdapterLogger.error("Decoded Opus buffer has no Int16 channel")
-            throw BodySpeechAdapterError.audioBuffer
-        }
-        var pcm = Data(
-            bytes: channel,
-            count: Int(buffer.frameLength) * MemoryLayout<Int16>.size
-        )
-        // Apple's decoder applies Opus pre-skip to the first packet (typically
-        // 420 rather than 480 samples at 24 kHz). Prefix silence represents
-        // that stream-start priming without inserting a gap after speech.
-        if pcm.count < 960 {
-            var padded = Data(repeating: 0, count: 960 - pcm.count)
-            padded.append(pcm)
-            pcm = padded
-        }
-        let response = BodyAdapterMediaHeader(
-            kind: .speakerPcm,
-            connectionGeneration: header.connectionGeneration,
-            leaseId: header.leaseId,
-            streamId: header.streamId,
-            sequence: header.sequence
-        ).encode(payload: pcm)
-        guard let socket = self.socket else {
-            throw BodySpeechAdapterError.notConnected
-        }
-        try await socket.send(.data(response))
-    }
-
     private func clearTurn() async {
         self.activeRoute = nil
         self.captureOpen = false
         self.eouSegments.removeAll(keepingCapacity: true)
-        self.decoder = nil
         self.expectedMicrophoneSequence = nil
         try? await self.stt.reset()
     }
@@ -358,7 +286,6 @@ private enum BodySpeechAdapterError: LocalizedError {
     case malformedMedia
     case routeConflict
     case staleRoute
-    case audioBuffer
     case notConnected
     case incompatibleContract
 
@@ -370,7 +297,6 @@ private enum BodySpeechAdapterError: LocalizedError {
         case .malformedMedia: "Malformed body adapter media"
         case .routeConflict: "A different body route is already active"
         case .staleRoute: "Body adapter route is stale"
-        case .audioBuffer: "Unable to decode body audio"
         case .notConnected: "Body speech adapter is not connected"
         case .incompatibleContract: "Body speech adapter protocol or audio format is incompatible"
         }

@@ -1,5 +1,3 @@
-//! One install at a time; mutex on in-flight handle lets POST /local-runtime/install return 409.
-
 use std::sync::Arc;
 
 use tokio::sync::{Mutex, watch};
@@ -14,7 +12,6 @@ use crate::services::ollama::manager::{OllamaManager, PullProgress};
 enum InstallStage {
     Text,
     Batch,
-    Vision,
 }
 
 impl InstallStage {
@@ -22,7 +19,6 @@ impl InstallStage {
         match self {
             InstallStage::Text => "chat-model",
             InstallStage::Batch => "batch-model",
-            InstallStage::Vision => "vision-model",
         }
     }
 }
@@ -32,7 +28,6 @@ pub(crate) struct InstallSnapshot {
     pub(crate) runtime: DownloadProgress,
     pub(crate) chat_model: PullProgress,
     pub(crate) batch_model: PullProgress,
-    pub(crate) vision_model: PullProgress,
     pub(crate) status: InstallStatus,
 }
 
@@ -50,7 +45,6 @@ pub(crate) enum InstallStatus {
 pub(crate) struct InstallRequest {
     pub(crate) chat_model: String,
     pub(crate) batch_model: String,
-    pub(crate) vision_model: String,
 }
 
 pub(crate) struct OllamaInstallService {
@@ -180,7 +174,6 @@ impl OllamaInstallService {
             return Err(AppError::Canceled("Install canceled".into()));
         }
 
-        // Validate before daemon start to catch partial extracts.
         if needs_managed_binary {
             self.binary_manager
                 .validate_ollama_binary(&binary_path)
@@ -195,7 +188,6 @@ impl OllamaInstallService {
             return Err(AppError::Canceled("Install canceled".into()));
         }
 
-        // Sequential pulls: Ollama serializes server-side anyway; concurrent thrashes the network.
         let installed = self
             .ollama_manager
             .list_installed_models()
@@ -244,22 +236,6 @@ impl OllamaInstallService {
             .await?;
         }
 
-        let installed_final = self
-            .ollama_manager
-            .list_installed_models()
-            .await
-            .unwrap_or_default();
-        let snapshot_for_vision = snapshot_tx.clone();
-        let cancel_rx_for_vision = cancel_rx.clone();
-        self.maybe_pull_model(
-            &req.vision_model,
-            &installed_final,
-            InstallStage::Vision,
-            &snapshot_for_vision,
-            cancel_rx_for_vision,
-        )
-        .await?;
-
         Ok(())
     }
 
@@ -307,10 +283,6 @@ impl OllamaInstallService {
                         batch_model: progress,
                         ..snap
                     },
-                    InstallStage::Vision => InstallSnapshot {
-                        vision_model: progress,
-                        ..snap
-                    },
                 };
                 pump_snapshot_tx.send(updated).ok();
             }
@@ -339,10 +311,6 @@ impl OllamaInstallService {
             },
             InstallStage::Batch => InstallSnapshot {
                 batch_model: progress,
-                ..snap
-            },
-            InstallStage::Vision => InstallSnapshot {
-                vision_model: progress,
                 ..snap
             },
         };

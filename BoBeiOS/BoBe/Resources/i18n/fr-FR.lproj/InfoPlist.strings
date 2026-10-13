@@ -1,0 +1,4 @@
+"NSCameraUsageDescription" = "Pour scanner le code d’association de BoBe.";
+"NSLocalNetworkUsageDescription" = "Pour joindre votre BoBe.";
+"NSMicrophoneUsageDescription" = "Pour vous entendre pendant que vous maintenez le bouton de parole.";
+"NSSpeechRecognitionUsageDescription" = "Pour transformer vos paroles en texte sur cet iPhone.";

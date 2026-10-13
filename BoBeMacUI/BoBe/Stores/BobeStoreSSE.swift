@@ -1,34 +1,61 @@
 import Foundation
 
 extension BobeStore {
-    func processBundle(_ bundle: StreamBundle) async {
+    @discardableResult
+    func processBundle(_ bundle: StreamBundle) async -> Bool {
         switch bundle.type {
         case .indicator:
             if let payload = try? bundle.payload.decode(as: IndicatorPayload.self) {
+                if payload.indicator == .idle {
+                    self.eventSnapshotRecoveryActive = false
+                }
                 self.handleIndicator(payload)
             }
         case .textDelta:
-            // `done: true` is the end-of-turn marker.
-            if let payload = try? bundle.payload.decode(as: TextDeltaPayload.self) {
+            if let payload = try? bundle.payload.decode(as: TextDeltaPayload.self),
+               !self.eventSnapshotRecoveryActive || payload.done {
                 self.handleTextDelta(payload, messageId: bundle.messageId)
+                if payload.done {
+                    self.eventSnapshotRecoveryActive = false
+                }
             }
         case .toolCallStart, .toolCallComplete:
-            self.handleToolCall(bundle.payload)
+            if !self.eventSnapshotRecoveryActive {
+                self.handleToolCall(bundle.payload)
+            }
         case .conversationClosed:
             if let payload = try? bundle.payload.decode(as: ConversationClosedPayload.self) {
                 self.handleConversationClosed(payload)
             }
         case .conversationChanged:
-            if let payload = try? bundle.payload.decode(as: ConversationChangedPayload.self) {
-                await self.reloadCanonicalConversation(expectedId: payload.conversationId)
+            if let payload = try? bundle.payload.decode(as: ConversationChangedPayload.self),
+               await self.reloadCanonicalConversation(expectedId: payload.conversationId) {
+                self.eventSnapshotRecoveryActive = false
             }
+        case .snapshotRequired:
+            guard let payload = try? bundle.payload.decode(as: SnapshotRequiredPayload.self),
+                  payload.snapshotRequired
+            else { return false }
+            bobeStoreLogger.warning("Event stream snapshot required: \(payload.reason)")
+            self.eventSnapshotRecoveryActive = true
+            guard await self.reloadCanonicalConversation(replacingActiveStream: true) else {
+                bobeStoreLogger.error("Event stream snapshot recovery failed")
+                return false
+            }
+            self.eventSnapshotRecoveryActive = false
         case .error:
+            self.eventSnapshotRecoveryActive = false
             if let payload = try? bundle.payload.decode(as: ErrorPayload.self) {
                 self.handleErrorPayload(payload, messageId: bundle.messageId)
             }
-        case .heartbeat, .unknown:
+        case .bodyRequest:
+            if let payload = try? bundle.payload.decode(as: BodyRequestPayload.self) {
+                self.handleBodyRequest(payload)
+            }
+        case .unknown:
             break
         }
+        return true
     }
 
     private func handleIndicator(_ payload: IndicatorPayload) {
@@ -37,26 +64,16 @@ extension BobeStore {
         self.updateState { ctx in
             switch indicator {
             case .idle:
-                ctx.captureInProgress = false
                 ctx.thinking = false
                 ctx.speaking = false
                 ctx.acceptingUserMessages = true
-            case .screenCapture:
-                ctx.captureInProgress = true
-                ctx.thinking = false
-                ctx.speaking = false
-                ctx.acceptingUserMessages = false
             case .thinking:
-                ctx.captureInProgress = false
                 ctx.thinking = true
                 ctx.speaking = false
-                ctx.acceptingUserMessages = false
             case .streaming:
-                ctx.captureInProgress = false
                 let hasVisibleText = self.hasVisibleGlyphs(self.streamingMessage) || self.hasVisibleGlyphs(ctx.currentMessage)
                 ctx.thinking = !hasVisibleText
                 ctx.speaking = hasVisibleText
-                ctx.acceptingUserMessages = false
             case .unknown:
                 break
             }
@@ -73,11 +90,19 @@ extension BobeStore {
         }
     }
 
-    /// Preserve interrupted text, surface recoverable failures, and reserve the
-    /// fatal banner for errors that make the daemon unusable.
     private func handleErrorPayload(_ payload: ErrorPayload, messageId: String) {
         if !payload.isTriggerError {
             self.finalizeStreamingMessageAfterError(messageId: messageId)
+        }
+        if payload.code == "turn_cancelled" {
+            self.updateState {
+                $0.thinking = false
+                $0.speaking = false
+                $0.acceptingUserMessages = true
+                $0.errorMessage = nil
+                $0.daemonError = false
+            }
+            return
         }
 
         if payload.recoverable {
@@ -121,7 +146,6 @@ extension BobeStore {
 
         self.streamingMessage += payload.delta
 
-        // Task existence is the dirty flag — accumulated deltas flush on timer.
         if self.textDeltaFlushTask == nil {
             self.textDeltaFlushTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(StoreTiming.textDeltaFlushMilliseconds))
@@ -210,10 +234,14 @@ extension BobeStore {
         self.scheduleConversationEndSettlement()
     }
 
+    @discardableResult
     func reloadCanonicalConversation(
         expectedId: String? = nil,
         replacingActiveStream: Bool = false
-    ) async {
+    ) async -> Bool {
+        self.synchronizeEndpoint()
+        let selection = self.selection
+        let client = DaemonClient(endpoint: selection.endpoint)
         let interrupted = replacingActiveStream
             ? self.freezeActiveStreamBeforeCanonicalReplacement()
             : nil
@@ -222,24 +250,26 @@ extension BobeStore {
         let mutationRevision = self.conversationMutationRevision
         let streamRevision = self.streamMutationRevision
         do {
-            let snapshot = try await self.client.getCurrentConversation()
-            guard generation == self.conversationReloadGeneration,
+            let snapshot = try await client.getCurrentConversation()
+            guard self.isCurrent(selection), generation == self.conversationReloadGeneration,
                   mutationRevision == self.conversationMutationRevision,
                   streamRevision == self.streamMutationRevision
             else {
-                return
+                return false
             }
             if let expectedId, snapshot.conversationId != expectedId {
                 bobeStoreLogger.warning("Conversation resync ignored a stale change event")
-                return
+                return false
             }
             guard replacingActiveStream
                 || (self.streamingMessageId == nil && self.context.currentMessage.isEmpty)
             else {
                 bobeStoreLogger.info("Conversation resync deferred during active streaming")
-                return
+                return false
             }
-            var messages = Self.canonicalMessages(from: snapshot.turns)
+            let existingIds = Set(snapshot.turns.map(\.id))
+            let pending = snapshot.pendingUpdates.filter { !existingIds.contains($0.id) }
+            var messages = Self.canonicalMessages(from: (pending + snapshot.turns).sorted { $0.createdAt < $1.createdAt })
             if let interrupted,
                !messages.contains(where: { $0.id == interrupted.id }) {
                 messages.append(interrupted)
@@ -257,10 +287,12 @@ extension BobeStore {
                 context.toolExecutions = []
                 context.conversationEnding = false
             }
+            return true
         } catch {
             bobeStoreLogger.error(
                 "Conversation resync failed: \(error.localizedDescription, privacy: .public)"
             )
+            return false
         }
     }
 

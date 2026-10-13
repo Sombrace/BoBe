@@ -1,6 +1,6 @@
 use crate::error::AppError;
 use crate::models::conversation::{Conversation, ConversationTurn};
-use crate::models::ids::{ConversationId, ConversationTurnId};
+use crate::models::ids::{ConversationChannelId, ConversationId, ConversationTurnId};
 use crate::models::types::{ConversationState, TurnRole};
 use chrono::Utc;
 use sqlx::SqlitePool;
@@ -11,14 +11,91 @@ pub(crate) struct SqliteConversationRepo {
 }
 
 impl SqliteConversationRepo {
+    pub(crate) async fn acknowledge_presentation(
+        &self,
+        turn: ConversationTurnId,
+        channel: ConversationChannelId,
+    ) -> Result<(), AppError> {
+        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let complete:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM conversation_turns t JOIN conversations c ON c.id=t.conversation_id WHERE t.id=?1 AND c.channel_id=?2 AND t.role='assistant' AND t.is_complete=1)")
+            .bind(turn).bind(channel).fetch_one(&mut *transaction).await?;
+        if !complete {
+            return Err(AppError::NotFound(
+                "complete response was not found in this channel".into(),
+            ));
+        }
+        let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Nanos, true);
+        sqlx::query("INSERT OR IGNORE INTO conversation_presentations (turn_id,channel_id,presented_at) VALUES (?1,?2,?3)")
+            .bind(turn).bind(channel).bind(&now).execute(&mut *transaction).await?;
+        sqlx::query("UPDATE agent_jobs SET delivery_status='presented' WHERE delivery_id=?1 AND channel_id=?2 AND delivery_status IN ('delivering','committed')")
+            .bind(turn).bind(channel).execute(&mut *transaction).await?;
+        sqlx::query("UPDATE owner_input_presentations SET presented_at=COALESCE(presented_at,?3) WHERE turn_id=?1 AND channel_id=?2 AND EXISTS(SELECT 1 FROM owner_inputs WHERE id=input_id AND status='pending' AND expires_at>?3)")
+            .bind(turn).bind(channel).bind(now).execute(&mut *transaction).await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn unpresented_updates(
+        &self,
+        channel: ConversationChannelId,
+    ) -> Result<Vec<ConversationTurn>, AppError> {
+        Ok(sqlx::query_as("SELECT t.* FROM conversation_turns t JOIN conversations c ON c.id=t.conversation_id
+            WHERE c.channel_id=?1 AND t.role='assistant' AND t.is_complete=1
+            AND (EXISTS(SELECT 1 FROM agent_jobs j WHERE j.delivery_id=t.id AND j.delivery_status='committed')
+              OR EXISTS(SELECT 1 FROM owner_input_presentations p JOIN owner_inputs i ON i.id=p.input_id WHERE p.turn_id=t.id AND i.status='pending' AND p.presented_at IS NULL))
+            AND NOT EXISTS(SELECT 1 FROM conversation_presentations p WHERE p.turn_id=t.id AND p.channel_id=?1)
+            ORDER BY t.created_at,t.rowid LIMIT 100")
+            .bind(channel).fetch_all(&self.pool).await?)
+    }
+
+    pub(crate) async fn recall(
+        &self,
+        params: crate::provider::history::HistoryRecallParams,
+    ) -> Result<Vec<crate::provider::history::HistoryMatch>, AppError> {
+        let query = params.query.as_deref().unwrap_or("").trim();
+        let limit = params.limit.unwrap_or(12);
+        if query.len() > 256 || !(1..=30).contains(&limit) {
+            return Err(AppError::Validation(
+                "History recall accepts a query of at most 256 bytes and a limit of 1-30".into(),
+            ));
+        }
+        let channel = params
+            .channel_id
+            .as_deref()
+            .map(str::parse::<ConversationChannelId>)
+            .transpose()
+            .map_err(|error| AppError::Validation(format!("invalid history channel: {error}")))?;
+        let mut matches = sqlx::query_as::<_, crate::provider::history::HistoryMatch>(
+            "SELECT c.channel_id,t.conversation_id,t.id AS turn_id,t.role,
+             substr(t.content,max(1,instr(lower(t.content),lower(?1))-200),2000) AS content,t.is_complete,t.created_at
+             FROM conversation_turns t JOIN conversations c ON c.id=t.conversation_id
+             WHERE (?1='' OR instr(lower(t.content),lower(?1))>0) AND (?3 IS NULL OR c.channel_id=?3)
+             ORDER BY t.created_at DESC,t.id DESC LIMIT ?2",
+        ).bind(query).bind(limit).bind(channel).fetch_all(&self.pool).await?;
+        let endpoints: Vec<(String, String)> = sqlx::query_as("SELECT id,label FROM endpoints")
+            .fetch_all(&self.pool)
+            .await?;
+        for matched in &mut matches {
+            matched.channel_label = if matched.channel_id == ConversationChannelId::OWNER {
+                Some("Owner channel".into())
+            } else {
+                endpoints
+                    .iter()
+                    .find(|(id, _)| ConversationChannelId::for_endpoint(id) == matched.channel_id)
+                    .map(|(_, label)| label.clone())
+            };
+        }
+        Ok(matches)
+    }
+
     pub(crate) fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
     pub(crate) async fn save(&self, conversation: &Conversation) -> Result<Conversation, AppError> {
         sqlx::query(
-            r"INSERT INTO conversations (id, state, closed_at, summary, created_at, updated_at)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            r"INSERT INTO conversations (id, state, closed_at, summary, created_at, updated_at, channel_id)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                ON CONFLICT(id) DO UPDATE SET
                    state = excluded.state,
                    closed_at = excluded.closed_at,
@@ -31,6 +108,7 @@ impl SqliteConversationRepo {
         .bind(&conversation.summary)
         .bind(conversation.created_at)
         .bind(conversation.updated_at)
+        .bind(conversation.channel_id)
         .execute(&self.pool)
         .await?;
 
@@ -51,21 +129,31 @@ impl SqliteConversationRepo {
     }
 
     pub(crate) async fn get_pending_or_active(&self) -> Result<Option<Conversation>, AppError> {
+        self.get_open_in_channel(None).await
+    }
+
+    pub(crate) async fn get_open_in_channel(
+        &self,
+        channel: Option<ConversationChannelId>,
+    ) -> Result<Option<Conversation>, AppError> {
         Ok(sqlx::query_as::<_, Conversation>(
-            "SELECT * FROM conversations WHERE state IN (?1, ?2) ORDER BY updated_at DESC LIMIT 1",
+            "SELECT * FROM conversations WHERE state IN (?1, ?2) AND (?3 IS NULL OR channel_id=?3) ORDER BY updated_at DESC LIMIT 1",
         )
         .bind(ConversationState::Pending.as_str())
         .bind(ConversationState::Active.as_str())
+        .bind(channel)
         .fetch_optional(&self.pool)
         .await?)
     }
 
     pub(crate) async fn get_last_closed_with_turns(
         &self,
+        channel: Option<ConversationChannelId>,
     ) -> Result<Option<Conversation>, AppError> {
         Ok(sqlx::query_as::<_, Conversation>(
             "SELECT c.* FROM conversations c
              WHERE c.state = ?1
+               AND (?2 IS NULL OR c.channel_id=?2)
                AND EXISTS (
                    SELECT 1 FROM conversation_turns t
                    WHERE t.conversation_id = c.id
@@ -74,6 +162,7 @@ impl SqliteConversationRepo {
              LIMIT 1",
         )
         .bind(ConversationState::Closed.as_str())
+        .bind(channel)
         .fetch_optional(&self.pool)
         .await?)
     }
@@ -149,8 +238,7 @@ impl SqliteConversationRepo {
         &self,
         turn: &ConversationTurn,
     ) -> Result<ConversationTurn, AppError> {
-        // Transaction prevents TOCTOU race: verify not closed + insert + touch timestamp
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
 
         let conv_state: Option<(String,)> =
             sqlx::query_as("SELECT state FROM conversations WHERE id = ?1")
@@ -215,7 +303,7 @@ impl SqliteConversationRepo {
         content: &str,
         is_complete: bool,
     ) -> Result<Option<ConversationTurn>, AppError> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let now = Utc::now();
 
         let conversation_id: Option<(ConversationId,)> =
@@ -257,6 +345,7 @@ impl SqliteConversationRepo {
         )
     }
 
+    #[cfg(test)]
     pub(crate) async fn get_turns(
         &self,
         conversation_id: ConversationId,
@@ -291,10 +380,6 @@ impl SqliteConversationRepo {
         .await?)
     }
 
-    /// Single-row staleness check — avoids loading 100 turn rows just to
-    /// find the most-recent user turn. Returns `None` when no user turn
-    /// has been recorded yet (the conversation `created_at` is then the
-    /// staleness reference).
     pub(crate) async fn last_user_turn_at(
         &self,
         conversation_id: ConversationId,
@@ -331,12 +416,83 @@ impl SqliteConversationRepo {
                 .await?;
         Ok(row.0)
     }
+
+    pub(crate) async fn list_open(&self) -> Result<Vec<Conversation>, AppError> {
+        Ok(sqlx::query_as("SELECT * FROM conversations WHERE state IN ('active','pending') ORDER BY updated_at,id")
+            .fetch_all(&self.pool).await?)
+    }
 }
 
 #[cfg(test)]
 #[allow(clippy::expect_used, reason = "tests panic on precondition failures")]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn conversation_writes_wait_for_other_durable_work() {
+        let root =
+            std::env::temp_dir().join(format!("bobe-conversation-writer-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create database directory");
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(2)
+            .min_connections(2)
+            .connect_with(
+                sqlx::sqlite::SqliteConnectOptions::new()
+                    .filename(root.join("state.sqlite3"))
+                    .create_if_missing(true)
+                    .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                    .busy_timeout(std::time::Duration::from_secs(2)),
+            )
+            .await
+            .expect("open disk-backed pool");
+        sqlx::raw_sql(include_str!("../../migrations/schema.sql"))
+            .execute(&pool)
+            .await
+            .expect("initialize schema");
+        let repo = SqliteConversationRepo::new(pool.clone());
+        let conversation = repo
+            .save(&Conversation::new_active())
+            .await
+            .expect("save conversation");
+        let mut outcomes = Vec::new();
+        for update in [false, true] {
+            let turn = ConversationTurn::new(conversation.id, TurnRole::Assistant, "draft".into());
+            if update {
+                repo.add_turn(&turn).await.expect("save draft turn");
+            }
+            let writer = pool
+                .begin_with("BEGIN IMMEDIATE")
+                .await
+                .expect("reserve competing writer");
+            let other = SqliteConversationRepo::new(pool.clone());
+            let (started, start) = tokio::sync::oneshot::channel();
+            let mutation = tokio::spawn(async move {
+                started.send(()).expect("notify mutation started");
+                if update {
+                    other
+                        .update_turn_content_and_completion(turn.id, "complete", true)
+                        .await
+                        .map(|turn| turn.expect("updated turn exists"))
+                } else {
+                    other.add_turn(&turn).await
+                }
+            });
+            start.await.expect("mutation started");
+            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+            let waited = !mutation.is_finished();
+            writer.commit().await.expect("release competing writer");
+            outcomes.push((waited, mutation.await.expect("join mutation")));
+        }
+        pool.close().await;
+        std::fs::remove_dir_all(root).expect("remove database directory");
+        for (waited, result) in outcomes {
+            assert!(
+                waited,
+                "conversation mutation must wait for the existing writer instead of attempting a snapshot upgrade"
+            );
+            result.expect("conversation mutation succeeds after writer commits");
+        }
+    }
 
     #[tokio::test]
     async fn latest_user_turn_queries_use_covering_indexes() {
@@ -432,7 +588,7 @@ mod tests {
             .await
             .expect("close empty conversation");
         let last = repo
-            .get_last_closed_with_turns()
+            .get_last_closed_with_turns(None)
             .await
             .expect("get_last_closed_with_turns")
             .expect("has closed conversation");

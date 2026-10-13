@@ -1,26 +1,31 @@
-//! Tarball extraction helpers for the voice install service. The only
-//! tarball today is Kokoro TTS; daemon-side ASR/VAD/smart-turn were ripped
-//! out in M6.B (Mode-B-only pivot) along with their epoch-suffix renaming.
-
 use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
 
-pub(super) fn tempfile_dir() -> Result<PathBuf, std::io::Error> {
-    let base = std::env::temp_dir();
+pub(super) fn tempfile_dir(base: &Path) -> Result<PathBuf, std::io::Error> {
+    std::fs::create_dir_all(base)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(base, std::fs::Permissions::from_mode(0o700))?;
+    }
     let unique = format!(
-        "bobe-voice-install-{}",
+        ".voice-install-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos())
     );
     let path = base.join(unique);
-    std::fs::create_dir_all(&path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new().mode(0o700).create(&path)?;
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir(&path)?;
     Ok(path)
 }
 
-/// Extract a .tar.bz2 archive whose contents are a single directory.
-/// Find that directory inside `tmp_dir`, move it to `final_target`.
 pub(super) async fn extract_and_install(
     archive: &Path,
     tmp_dir: &Path,
@@ -49,14 +54,68 @@ pub(super) async fn extract_and_install(
     let extracted =
         extracted.ok_or_else(|| AppError::Internal("tarball had no directory inside".into()))?;
 
-    if let Some(parent) = final_target.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    tokio::fs::rename(&extracted, final_target).await?;
+    install_directory(&extracted, final_target).await?;
     if let Err(error) = tokio::fs::remove_file(archive).await
         && error.kind() != std::io::ErrorKind::NotFound
     {
         tracing::warn!(path = %archive.display(), error = %error, "voice_install.archive_cleanup_failed");
     }
     Ok(())
+}
+
+pub(super) async fn install_directory(
+    extracted: &Path,
+    final_target: &Path,
+) -> Result<(), AppError> {
+    if let Some(parent) = final_target.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let backup = final_target.with_extension("replaced");
+    if tokio::fs::try_exists(&backup).await? {
+        tokio::fs::remove_dir_all(&backup).await?;
+    }
+    let had_existing = tokio::fs::try_exists(final_target).await?;
+    if had_existing {
+        tokio::fs::rename(final_target, &backup).await?;
+    }
+    if let Err(error) = tokio::fs::rename(extracted, final_target).await {
+        if had_existing {
+            drop(tokio::fs::rename(&backup, final_target).await);
+        }
+        return Err(error.into());
+    }
+    if had_existing {
+        tokio::fs::remove_dir_all(&backup).await?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staging_directory_is_private_and_inside_models_filesystem() {
+        let root = std::env::temp_dir().join(format!("bobe-voice-stage-{}", uuid::Uuid::new_v4()));
+        let staging = tempfile_dir(&root).unwrap();
+
+        assert_eq!(staging.parent(), Some(root.as_path()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{MetadataExt, PermissionsExt};
+            assert_eq!(
+                std::fs::metadata(&root).unwrap().dev(),
+                std::fs::metadata(&staging).unwrap().dev()
+            );
+            assert_eq!(
+                std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(
+                std::fs::metadata(&staging).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

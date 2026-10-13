@@ -1,84 +1,76 @@
-//! Single active-turn voice sink. The admitted turn installs its endpoint
-//! output; hooks can never target an idle connection or a different endpoint.
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-use tokio::sync::RwLock;
 use tracing::warn;
+use uuid::Uuid;
 
+use crate::error::AppError;
 use crate::speech::protocol::{FLAG_FILLER, encode_tts_frame};
 use crate::voice::filler_library::{FillerKind, FillerLibrary};
 use crate::voice::opus::{encode_pcm_with, make_opus_encoder};
 use crate::voice::output::VoiceOutput;
 
+#[derive(Default)]
 pub(crate) struct VoiceSink {
-    inner: RwLock<Option<SinkSlot>>,
-    /// Stamped onto each install; SinkGuard::drop only clears when it matches.
-    next_generation: AtomicU64,
-}
-
-struct SinkSlot {
-    output: VoiceOutput,
-    generation: u64,
-}
-
-impl Default for VoiceSink {
-    fn default() -> Self {
-        Self::new()
-    }
+    outputs: Mutex<HashMap<Uuid, VoiceOutput>>,
 }
 
 impl VoiceSink {
     pub(crate) fn new() -> Self {
-        Self {
-            inner: RwLock::new(None),
-            next_generation: AtomicU64::new(1),
-        }
+        Self::default()
     }
 
-    /// Drop clears the slot; mid-turn disconnects make later hook fires no-op.
-    pub(crate) async fn install(self: &Arc<Self>, output: VoiceOutput) -> SinkGuard {
-        let generation = self.next_generation.fetch_add(1, Ordering::AcqRel);
-        *self.inner.write().await = Some(SinkSlot { output, generation });
-        SinkGuard {
-            slot: Arc::clone(self),
-            generation,
+    pub(crate) fn install(
+        self: &Arc<Self>,
+        run_id: Uuid,
+        output: VoiceOutput,
+    ) -> Result<SinkGuard, AppError> {
+        let mut outputs = self.lock();
+        if outputs.contains_key(&run_id) {
+            return Err(AppError::Conflict(
+                "voice output is already bound to this run".into(),
+            ));
         }
+        outputs.insert(run_id, output);
+        Ok(SinkGuard {
+            sink: Arc::clone(self),
+            run_id,
+        })
     }
 
-    pub(crate) async fn get(&self) -> Option<VoiceOutput> {
-        self.inner
-            .read()
-            .await
-            .as_ref()
-            .map(|slot| slot.output.clone())
+    fn get(&self, run_id: Uuid) -> Option<VoiceOutput> {
+        self.lock().get(&run_id).cloned()
+    }
+
+    fn lock(&self) -> MutexGuard<'_, HashMap<Uuid, VoiceOutput>> {
+        self.outputs.lock().unwrap_or_else(|poisoned| {
+            tracing::error!("voice output registry was poisoned");
+            poisoned.into_inner()
+        })
     }
 }
 
-/// RAII clear on drop; clear runs in a detached task. Generation match
-/// preserves newer installs. Prefer explicit `uninstall_if_current`.
 pub(crate) struct SinkGuard {
-    slot: Arc<VoiceSink>,
-    generation: u64,
+    sink: Arc<VoiceSink>,
+    run_id: Uuid,
 }
 
 impl Drop for SinkGuard {
     fn drop(&mut self) {
-        let slot = Arc::clone(&self.slot);
-        let generation = self.generation;
-        tokio::spawn(async move {
-            let mut guard = slot.inner.write().await;
-            if guard.as_ref().is_some_and(|s| s.generation == generation) {
-                *guard = None;
-            }
-        });
+        self.sink.lock().remove(&self.run_id);
     }
 }
 
-/// 20ms Opus frames with `FLAG_FILLER`. No-op if disconnected / library missing.
-pub(crate) async fn emit_filler(sink: &VoiceSink, library: &FillerLibrary, kind: FillerKind) {
-    let Some(output) = sink.get().await else {
+pub(crate) async fn emit_filler(
+    sink: &VoiceSink,
+    run_id: Uuid,
+    library: &FillerLibrary,
+    kind: FillerKind,
+) {
+    let Some(output) = sink.get(run_id) else {
+        return;
+    };
+    let Some(_sequence) = output.try_audio_sequence() else {
         return;
     };
     let Some(pcm) = library.get(kind) else {
@@ -93,13 +85,12 @@ pub(crate) async fn emit_filler(sink: &VoiceSink, library: &FillerLibrary, kind:
         let framed = encode_tts_frame(chunk_id, FLAG_FILLER, &packet);
         chunk_id = chunk_id.saturating_add(1);
         if !output.audio(framed).await {
-            warn!("voice.sink_emit_send_failed");
+            warn!(%run_id, "voice.sink_emit_send_failed");
             return;
         }
     }
 }
 
-/// Case-insensitive; unknown tools fall through to `ToolGeneric`.
 pub(crate) fn filler_for_tool(tool_name: &str) -> FillerKind {
     let lower = tool_name.to_ascii_lowercase();
     if (lower.contains("web") && lower.contains("search")) || lower == "websearch" {
@@ -126,25 +117,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn newer_install_survives_older_guard_drop() {
+    async fn concurrent_voice_turns_do_not_redirect_the_first_turns_tool_audio() {
         let sink = Arc::new(VoiceSink::new());
-
-        let (output_a, _rx_a) = VoiceOutput::channel(8);
-        let guard_a = sink.install(output_a).await;
-
-        let (output_b, _rx_b) = VoiceOutput::channel(8);
-        let _guard_b = sink.install(output_b).await;
-
-        // Simulate the older guard's late drop racing the newer install.
-        drop(guard_a);
-        // Yield so the spawned drop task runs.
-        tokio::task::yield_now().await;
-        tokio::task::yield_now().await;
-
-        // Newer install must still be live.
+        let first_id = Uuid::new_v4();
+        let second_id = Uuid::new_v4();
+        let (first, mut first_output) = VoiceOutput::channel(8);
+        let (second, mut second_output) = VoiceOutput::channel(8);
+        let first_guard = sink.install(first_id, first).unwrap();
+        let second_guard = sink.install(second_id, second.clone()).unwrap();
+        assert!(sink.install(first_id, second).is_err());
+        assert!(sink.get(first_id).unwrap().audio(vec![1, 2, 3]).await);
         assert!(
-            sink.get().await.is_some(),
-            "older guard drop must not clear newer slot"
+            first_output.try_recv().is_ok(),
+            "first turn audio was redirected to a different voice output"
         );
+        assert!(second_output.try_recv().is_err());
+        drop(first_guard);
+        assert!(sink.get(first_id).is_none());
+        assert!(sink.get(second_id).unwrap().audio(vec![4, 5, 6]).await);
+        assert!(second_output.try_recv().is_ok());
+        drop(second_guard);
+        assert!(sink.get(second_id).is_none());
     }
 }

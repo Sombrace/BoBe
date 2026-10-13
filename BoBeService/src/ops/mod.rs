@@ -1,0 +1,12 @@
+pub(crate) mod admin_socket;
+pub(crate) mod backup;
+pub(crate) mod chat;
+pub(crate) mod config_report;
+pub(crate) mod device_pairing;
+pub(crate) mod exit;
+pub(crate) mod headless;
+pub(crate) mod service;
+pub(crate) mod setup;
+pub(crate) mod status;
+pub(crate) mod update;
+pub(crate) mod voice;

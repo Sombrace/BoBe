@@ -1,21 +1,17 @@
-//! WS endpoint `/voice/stream` (Mode B). Hello handshake → client streams
-//! `transcript_partial`/`transcript_final` JSON → daemon admits single-
-//! flight + spawns `run_text_turn` → streams TTS Opus binary back.
-//! Barge-in or cancel-phrase aborts the active turn; disconnect tears down.
-
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Extension, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::api::middleware::AllowedOrigins;
+use crate::api::principal::Principal;
 use crate::app_state::AppState;
 use crate::runtime::response_streamer::StreamDelivery;
 use crate::voice::context::VoiceContext;
@@ -26,14 +22,15 @@ use crate::voice::protocol_helpers::close_with_error;
 use crate::voice::session::{VoiceDefaults, VoiceSession};
 
 const OUTBOUND_CHANNEL_CAPACITY: usize = 64;
-/// Server Ping cadence; auto-Pong from the client doubles as freshness.
 const KEEPALIVE_PING_INTERVAL: Duration = Duration::from_secs(25);
-/// Recv-side close window; auto-Pongs land inside it for any live client.
 const KEEPALIVE_STALE_TIMEOUT: Duration = Duration::from_mins(1);
 const WS_SEND_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Drop-on-panic clears the flag so a crashed handler doesn't lock the slot.
-struct VoiceWsPermit(Arc<AtomicBool>);
+fn completion_matches_current_turn(current_turn_id: Option<&str>, completed_turn_id: &str) -> bool {
+    current_turn_id.is_some_and(|turn_id| turn_id == completed_turn_id)
+}
+
+pub(super) struct VoiceWsPermit(Arc<AtomicBool>);
 
 impl Drop for VoiceWsPermit {
     fn drop(&mut self) {
@@ -41,8 +38,10 @@ impl Drop for VoiceWsPermit {
     }
 }
 
-/// Returns `None` after `voice_busy` close so callers can `return` directly.
-async fn acquire_permit(socket: WebSocket, state: &AppState) -> Option<(WebSocket, VoiceWsPermit)> {
+pub(super) async fn acquire_permit(
+    socket: WebSocket,
+    state: &AppState,
+) -> Option<(WebSocket, VoiceWsPermit)> {
     if state
         .voice
         .voice_ws_active
@@ -64,7 +63,6 @@ async fn acquire_permit(socket: WebSocket, state: &AppState) -> Option<(WebSocke
     ))
 }
 
-/// Bag passed to `teardown_session` so cleanup drop-order is centralized.
 struct SessionTeardown {
     keepalive: tokio::task::JoinHandle<()>,
     session: Option<VoiceSession>,
@@ -73,8 +71,6 @@ struct SessionTeardown {
     output: VoiceOutput,
 }
 
-/// Bounded drain; kokoro_task isn't cancellation-aware until synth returns,
-/// so without this the ws_permit leaks for 5-15s. Clean drains take <10ms.
 const WRITER_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 async fn teardown_session(td: SessionTeardown) {
@@ -86,7 +82,6 @@ async fn teardown_session(td: SessionTeardown) {
         output,
     } = td;
 
-    // Abort eagerly to suppress a final stray Ping post-disconnect.
     keepalive.abort();
 
     if let Some(s) = session.as_mut() {
@@ -98,7 +93,6 @@ async fn teardown_session(td: SessionTeardown) {
         info!(session = %s.session_id, "voice.disconnect");
     }
 
-    // Order matters: ctx holds an output clone; drop it first or writer hangs.
     drop(ctx);
     drop(output);
 
@@ -122,8 +116,7 @@ async fn teardown_session(td: SessionTeardown) {
     }
 }
 
-/// Sole owner of `ws_tx`; everyone else posts via cloned `out_tx`. Exits on all-senders-dropped.
-fn spawn_writer(
+pub(super) fn spawn_writer(
     mut ws_tx: futures::stream::SplitSink<WebSocket, Message>,
     mut out_rx: mpsc::Receiver<VoiceOutputFrame>,
 ) -> tokio::task::JoinHandle<()> {
@@ -151,12 +144,11 @@ fn spawn_writer(
     })
 }
 
-/// 25s Pings; recv `KEEPALIVE_STALE_TIMEOUT` catches dead clients via missing Pongs.
-fn spawn_keepalive(output: VoiceOutput) -> tokio::task::JoinHandle<()> {
+pub(super) fn spawn_keepalive(output: VoiceOutput) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut ticker = tokio::time::interval(KEEPALIVE_PING_INTERVAL);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        ticker.tick().await; // skip the immediate first tick
+        ticker.tick().await;
         loop {
             ticker.tick().await;
             if !output.ping().await {
@@ -167,13 +159,23 @@ fn spawn_keepalive(output: VoiceOutput) -> tokio::task::JoinHandle<()> {
 }
 
 pub(crate) async fn voice_stream(
-    mut ws: WebSocketUpgrade,
+    ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
     Extension(allowed_origins): Extension<AllowedOrigins>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
 ) -> Response {
-    // Native URLSession WebSocket requests omit Origin. Browser requests must
-    // match the explicit CORS allowlist to prevent cross-site WS hijacking.
+    upgrade_voice(ws, state, allowed_origins, principal, headers, false)
+}
+
+pub(super) fn upgrade_voice(
+    mut ws: WebSocketUpgrade,
+    state: Arc<AppState>,
+    allowed_origins: AllowedOrigins,
+    principal: Principal,
+    headers: HeaderMap,
+    preview: bool,
+) -> Response {
     if let Some(origin) = headers.get(header::ORIGIN)
         && !allowed_origins.contains(origin)
     {
@@ -181,15 +183,24 @@ pub(crate) async fn voice_stream(
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    // Echo the chosen subprotocol per RFC 6455; unversioned clients still work.
-    let selected = ws
+    if !ws
         .requested_protocols()
-        .find(|p| p.as_bytes() == crate::constants::voice_wire::SUBPROTOCOL_V1.as_bytes())
-        .cloned();
-    if let Some(p) = selected {
-        ws.set_selected_protocol(p);
+        .any(|protocol| protocol == crate::constants::voice_wire::SUBPROTOCOL_V2)
+    {
+        return StatusCode::BAD_REQUEST.into_response();
     }
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    ws.set_selected_protocol(HeaderValue::from_static(
+        crate::constants::voice_wire::SUBPROTOCOL_V2,
+    ));
+    ws.max_message_size(32_768)
+        .max_frame_size(32_768)
+        .on_upgrade(move |socket| async move {
+            if preview {
+                super::voice_preview::handle_socket(socket, state, principal).await;
+            } else {
+                handle_socket(socket, state, principal).await;
+            }
+        })
         .into_response()
 }
 
@@ -198,10 +209,9 @@ pub(crate) async fn voice_stream(
     reason = "outer match has Binary/Close arms that prevent if-let collapse; \
               async call also disallows match guards"
 )]
-async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
+async fn handle_socket(socket: WebSocket, state: Arc<AppState>, principal: Principal) {
     let engines = VoiceEngines::from_state(&state);
 
-    // Snapshot at accept-time so a mid-session settings hot-swap doesn't retro-change Hello.
     let voice_defaults = VoiceDefaults::from_state(&state);
     if !voice_defaults.enabled {
         warn!("voice.disabled_by_settings");
@@ -212,6 +222,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let Some((socket, _ws_permit)) = acquire_permit(socket, &state).await else {
         return;
     };
+    let connection_lease = state.infra.connection_manager.connect_voice(&principal);
 
     let (ws_tx, mut rx) = socket.split();
     let (output, out_rx) = VoiceOutput::channel(OUTBOUND_CHANNEL_CAPACITY);
@@ -222,48 +233,46 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     let mut session: Option<VoiceSession> = None;
     let runtime_session = Arc::clone(&state.runtime.runtime_session);
 
-    // CRITICAL: reset shared engines on WS-accept so prior session state
-    // doesn't leak forward. The streaming Zipformer + Silero engines are
-    // Arc-shared across all WS handlers via AppState.voice_engines, so a
-    // disconnect that happened mid-utterance leaves accumulated decoder
-    // state that the next connection's commit_final would surface as
-    // Bundle per-WS deps so subsystem fns don't drill 5 args each.
-    // Completion back-channel: spawned per-turn tasks signal here on exit
-    // so the recv loop clears `session.current_turn`. Capacity > 1 lets a
-    // double-Hello rehello's aborted task and the new turn both signal
-    // without blocking. See `voice/modes/transcript_in.rs::spawn_text_turn`.
-    let (turn_completion_tx, mut turn_completion_rx) = mpsc::channel::<()>(8);
+    let (turn_completion_tx, mut turn_completion_rx) = mpsc::channel::<String>(8);
 
+    let networked_runtime = state.config().server.is_networked();
     let ctx = VoiceContext {
+        conversation_channel: principal.conversation_channel(),
+        networked_runtime,
         output: output.clone(),
         runtime_session: Arc::clone(&runtime_session),
         engines: engines.clone(),
         voice_defaults: voice_defaults.clone(),
-        voice_turn_active: Arc::clone(&state.voice.voice_turn_active),
         voice_sink: Arc::clone(&state.voice.voice_sink),
-        delivery: StreamDelivery::LegacySseWithLiveObserver,
-        send_server_tts_text: false,
+        delivery: StreamDelivery::SseWithLiveObserver,
         turn_completion_tx,
     };
 
     loop {
         tokio::select! {
             biased;
-            // Reap any naturally-completed turn so the next TranscriptFinal
-            // isn't dropped at the single-flight gate. `take()` may return
-            // None if abort_active_turn already cleared the slot — safe.
-            Some(()) = turn_completion_rx.recv() => {
-                if let Some(s) = session.as_mut()
-                    && let Some(turn) = s.current_turn.take() {
+            () = connection_lease.cancelled() => {
+                info!(connection_id = connection_lease.id(), "voice.revoked");
+                break;
+            }
+            Some(completed_turn_id) = turn_completion_rx.recv() => {
+                let current_turn_id = session
+                    .as_ref()
+                    .and_then(|session| session.current_turn.as_ref())
+                    .map(|turn| turn.turn_id.as_str());
+                if completion_matches_current_turn(current_turn_id, &completed_turn_id)
+                    && let Some(s) = session.as_mut()
+                    && let Some(turn) = s.finish_turn() {
                     debug!(turn_id = %turn.turn_id, "voice.turn_completed_slot_cleared");
-                    // join is already finished; await is instant.
                     drop(turn.join.await);
+                } else {
+                    debug!(turn_id = %completed_turn_id, "voice.stale_turn_completion_ignored");
                 }
             }
             next = tokio::time::timeout(KEEPALIVE_STALE_TIMEOUT, rx.next()) => {
                 let next = match next {
                     Ok(Some(m)) => m,
-                    Ok(None) => break, // stream ended
+                    Ok(None) => break,
                     Err(_) => {
                         warn!("voice.keepalive_recv_timeout_closing");
                         break;
@@ -283,19 +292,26 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                             break;
                         }
                     }
-                    Message::Binary(_) => {
-                        // Mode B: client never sends audio over the wire. Drop the
-                        // frame defensively; well-behaved clients won't trigger this.
-                        warn!("voice.unexpected_binary_dropped");
+                    Message::Binary(bytes) => {
+                        let Some(frame) = crate::speech::protocol::decode_voice_capture_frame(&bytes) else {
+                            warn!("voice.invalid_capture_frame");
+                            break;
+                        };
+                        if !crate::voice::capture_in::handle_capture_frame(
+                            frame,
+                            &ctx,
+                            &mut session,
+                        )
+                        .await
+                        {
+                            break;
+                        }
                     }
                     Message::Close(_) => {
                         info!("voice.close_received");
                         break;
                     }
                     Message::Pong(_) | Message::Ping(_) => {
-                        // Pong arrives in response to our keepalive Pings (auto-echoed
-                        // by the WS layer on the client). Pong receipt is implicit
-                        // keepalive — rx.next() returning at all resets the timeout.
                     }
                 }
             }
@@ -310,4 +326,16 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
         output,
     })
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_completion_cannot_clear_replacement_turn() {
+        assert!(completion_matches_current_turn(Some("turn-a"), "turn-a"));
+        assert!(!completion_matches_current_turn(Some("turn-b"), "turn-a"));
+        assert!(!completion_matches_current_turn(None, "turn-a"));
+    }
 }

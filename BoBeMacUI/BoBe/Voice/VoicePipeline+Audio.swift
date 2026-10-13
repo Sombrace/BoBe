@@ -5,25 +5,9 @@ import OSLog
 
 private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline.Audio")
 
-/// AVAudioEngine setup + per-frame input handling.
-///
-/// **Why this lives in an extension.** `VoicePipeline.swift` would
-/// otherwise blow past SwiftLint's 800-line file cap (and reading it
-/// front-to-back would mean swimming through audio engine internals before
-/// reaching the WS lifecycle). The audio chain is self-contained — engine
-/// configure / teardown, the input tap, RMS publishing, barge-in
-/// detection. All called from the same realtime audio dispatch queue and
-/// hopped to MainActor at the tap boundary.
-///
-/// Mirror of the `+WebSocket` and `+AudioDevice` extensions: same
-/// `@MainActor` isolation, same conventions, same access surface.
 @MainActor
 extension VoicePipeline {
-    // MARK: - Engine setup
 
-    /// Reverses `configureEngine`. Idempotent — safe to call when not
-    /// warm. `internal` so the audio-device hot-swap path in
-    /// `+AudioDevice` can drive the rebuild cycle.
     func tearDownAudio() {
         if self.inputTapInstalled {
             self.audioEngine.inputNode.removeTap(onBus: 0)
@@ -36,15 +20,6 @@ extension VoicePipeline {
         self.playerNode.stop()
         self.cancelClientTtsTurn()
         self.audioEngine.stop()
-        // Explicitly disable VPIO on both nodes AFTER stopping the engine
-        // (Apple requires a stopped engine to toggle this). Without these
-        // calls macOS keeps the VPIO AudioUnit's "duck other audio"
-        // behaviour active across the engine's stopped state, so
-        // Spotify/etc. stay quiet even though the mic is off. Toggling
-        // it off is what actually releases the system-wide duck.
-        // Wrapped in try? — these can't fail in practice (the engine is
-        // stopped, we never touched audio session state on macOS), but
-        // throwing here would leak isWarm=true and break re-connect.
         if self.inputVoiceProcessingEnabled {
             try? self.audioEngine.inputNode.setVoiceProcessingEnabled(false)
             self.inputVoiceProcessingEnabled = false
@@ -62,7 +37,6 @@ extension VoicePipeline {
         self.partialSendTask?.cancel()
         self.partialSendTask = nil
         self.pendingPartialForServer = nil
-        // STT model itself stays loaded across reconnects; just clear state.
         let engine = self.activeStt
         Task { try? await engine.reset() }
         self.bargeInCount = 0
@@ -70,8 +44,6 @@ extension VoicePipeline {
         self.isWarm = false
     }
 
-    /// `internal` so the audio-device hot-swap extension can rebuild the
-    /// engine after a default-input change.
     func configureEngine() throws {
         do {
             try self.configureEngineTransaction()
@@ -85,10 +57,6 @@ extension VoicePipeline {
         let inputNode = self.audioEngine.inputNode
         try inputNode.setVoiceProcessingEnabled(true)
         self.inputVoiceProcessingEnabled = true
-        // VPIO on the output node too — gives Apple's AEC a reference
-        // signal for AEC during full-duplex (barge-in path). Required by
-        // the architecture doc; on macOS it's idempotent if already
-        // enabled.
         try self.audioEngine.outputNode.setVoiceProcessingEnabled(true)
         self.outputVoiceProcessingEnabled = true
 
@@ -121,11 +89,6 @@ extension VoicePipeline {
             }
         }
 
-        // installTap's block runs on the realtime audio dispatch queue.
-        // Marked @Sendable so it doesn't inherit @MainActor isolation
-        // from the enclosing class — without this, Swift 6's runtime
-        // isolation check crashes the realtime queue the moment audio
-        // flows.
         let tapBlock: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { [weak self] buffer, _ in
             guard let captured = CapturedVoiceAudio(buffer: buffer) else { return }
             if case .dropped = continuation.yield(captured) {
@@ -135,19 +98,17 @@ extension VoicePipeline {
                     logger.warning(
                         "voice.input_queue_drop total=\(self.droppedAudioInputChunks)"
                     )
+                    if self.sessionSpeechPlan?.sttSite == .daemon {
+                        let reason = "Microphone audio could not be streamed continuously"
+                        self.lastError = reason
+                        self.tearDownConnection(finalState: .failed(reason), sendAbort: false)
+                    }
                 }
             }
         }
         inputNode.installTap(onBus: 0, bufferSize: 2048, format: inputFormat, block: tapBlock)
         self.inputTapInstalled = true
 
-        // TTS playback envelope tap. Decoding all incoming Opus frames
-        // takes ~200ms while the actual playback through the speakers
-        // takes seconds. Without a real-time tap, ttsOutputLevel would
-        // peak briefly at decode time and immediately decay to 0 while
-        // the avatar's mouth still needs to be moving. Tap the player
-        // node directly so we sample what is actually leaving the
-        // speakers — full duration, in sync with what the user hears.
         let playerFormat = self.playerNode.outputFormat(forBus: 0)
         if playerFormat.sampleRate > 0 {
             let playerTapBlock: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { [weak self] buffer, _ in
@@ -169,15 +130,10 @@ extension VoicePipeline {
         self.audioEngine.prepare()
         try self.audioEngine.start()
         self.playerNode.play()
-        // Now that the engine is alive, ensure the CoreAudio default-
-        // input/output listeners are wired so we react to mid-session
-        // device changes (AirPods plug-in, USB mic swap, System Settings
-        // input/output flip). Idempotent — registers once per process.
         self.registerInputDeviceObserverIfNeeded()
         logger.info("voice engine configured; input \(describe(inputFormat), privacy: .public)")
     }
 
-    // MARK: - Tap handling
 
     func handleProcessedInput(
         _ processed: ProcessedVoiceAudio,
@@ -191,12 +147,20 @@ extension VoicePipeline {
             break
         }
 
+        guard !self.muted else {
+            self.inputLevel = 0
+            return
+        }
+
         for frameRms in processed.rmsFramesDbfs {
             self.publishInputLevel(frameRms: frameRms)
             self.checkBargeIn(frameRms: frameRms)
         }
 
-        guard !self.muted else { return }
+        if self.sessionSpeechPlan?.sttSite == .daemon {
+            await self.sendCaptureSamples(processed.samples16k)
+            return
+        }
         guard self.sttStatus == .ready, self.sttLoaded else { return }
         do {
             try await engine.acceptSamples(processed.samples16k)
@@ -211,70 +175,123 @@ extension VoicePipeline {
         }
     }
 
-    // MARK: - RMS, level publishing, barge-in
+    private func sendCaptureSamples(_ samples: [Float]) async {
+        self.captureSamples.append(contentsOf: samples)
+        while self.captureSamples.count >= 320 {
+            guard let streamId = self.captureStreamId,
+                  self.captureCreditFrames > 0,
+                  let task = self.task
+            else {
+                if self.captureSamples.count > 16_000 {
+                    let reason = "Speech server stopped accepting microphone audio"
+                    self.lastError = reason
+                    self.tearDownConnection(finalState: .failed(reason), sendAbort: false)
+                }
+                return
+            }
+            guard let frameSamples = self.captureSamples.firstFrame(count: 320),
+                  let frame = VoiceCaptureFrameEncoder.encode(
+                      streamId: streamId,
+                      sequence: self.captureSequence,
+                      samples: frameSamples
+                  )
+            else { return }
+            do {
+                try await task.send(.data(frame))
+            } catch {
+                let reason = "microphone uplink: \(error.localizedDescription)"
+                self.lastError = reason
+                self.tearDownConnection(finalState: .failed(reason), sendAbort: false)
+                return
+            }
+            guard self.task === task,
+                  self.captureStreamId == streamId,
+                  self.captureCreditFrames > 0,
+                  self.captureSamples.consumeFirst(320)
+            else { return }
+            self.captureSequence &+= 1
+            self.captureCreditFrames -= 1
+        }
+    }
 
-    /// Map dBFS (-60..0) → 0...1 with a soft floor so quiet background
-    /// hum reads as ~0 and only deliberate speech moves the ring.
+
     private func publishInputLevel(frameRms: Float) {
         let floor: Float = -50
         let normalized = max(0, min(1, (frameRms - floor) / -floor))
-        // Light EMA smoothing — 60Hz updates of raw RMS look jittery.
         let smoothed = (self.inputLevel * 0.6) + (normalized * 0.4)
-        // Suppress sub-perceptual writes so @Observable doesn't
-        // invalidate the avatar ring on every 20 ms frame; the ring
-        // stroke costs 96 sin/cos per render so spurious writes are not
-        // free.
         if abs(smoothed - self.inputLevel) > 0.005 {
             self.inputLevel = smoothed
         }
     }
 
-    /// Per-frame barge-in detector. Only fires during `.speaking`;
-    /// resets in every other state so we don't carry stale counts
-    /// between turns. Sends `barge_in` with the current playback
-    /// position so the daemon can truncate the persisted assistant turn
-    /// to what the user actually heard.
     private func checkBargeIn(frameRms: Float) {
         guard self.state == .speaking else {
             self.bargeInCount = 0
             self.bargeInSent = false
+            self.setPlaybackDucked(false)
             return
         }
-        if frameRms > self.bargeInRmsDbfs {
-            self.bargeInCount += 1
-            if self.bargeInCount >= self.bargeInFramesNeeded, !self.bargeInSent {
-                self.bargeInSent = true
-                let playedMs = self.currentPlaybackMs()
-                if self.clientTtsActive,
-                   self.partialTranscript.split(whereSeparator: \.isWhitespace).count >= 3 {
-                    self.cancelClientTtsTurn()
-                }
-                let tsMs = UInt64(Date.now.timeIntervalSince1970 * 1_000)
-                logger.info("voice.barge_in_sending playedMs=\(playedMs)")
-                let evidence = self.partialTranscript
-                Task { [weak self] in
-                    guard let self else { return }
-                    await self.sendClient(.bargeIn(
-                        tsMs: tsMs,
-                        playbackMsPlayed: playedMs,
-                        partialText: evidence.isEmpty ? nil : evidence
-                    ))
-                    // A MinWords rejection has no acknowledgement. Permit a
-                    // later candidate once STT has accumulated more evidence.
-                    try? await Task.sleep(for: .milliseconds(250))
-                    guard self.state == .speaking else { return }
-                    self.bargeInSent = false
-                    self.bargeInCount = 0
-                }
+        let playedMs = self.currentPlaybackMs()
+        if let audibleMs = Playhead.audibleMilliseconds(
+            played: self.playedFramesThisTurn(),
+            audioStart: self.turnAudioStartFrame,
+            sampleRate: self.playbackSampleRate
+        ), audibleMs < BargeInPolicy.echoGuardMilliseconds {
+            self.bargeInCount = 0
+            return
+        }
+        guard frameRms > self.bargeInRmsDbfs else {
+            self.bargeInCount = 0
+            if self.playbackDucked,
+               Date.now.timeIntervalSince(self.lastOverlapAt) > BargeInPolicy.unduckAfterSeconds {
+                self.setPlaybackDucked(false)
             }
-        } else {
+            return
+        }
+        self.bargeInCount += 1
+        guard self.bargeInCount >= self.bargeInFramesNeeded else { return }
+        self.lastOverlapAt = .now
+        self.setPlaybackDucked(true)
+        guard !self.bargeInSent else { return }
+        self.bargeInSent = true
+        let playheadChunk = self.overlapPlayheadChunk ?? self.playheadChunk()
+        if self.clientTtsActive, BargeInPolicy.judge(self.partialTranscript) == .interrupt {
+            self.cancelClientTtsTurn()
+        }
+        let tsMs = UInt64(Date.now.timeIntervalSince1970 * 1_000)
+        logger.info("voice.barge_in_sending playedMs=\(playedMs)")
+        let evidence = self.partialTranscript
+        Task { [weak self] in
+            guard let self else { return }
+            await self.sendClient(.bargeIn(
+                tsMs: tsMs,
+                playbackMsPlayed: playedMs,
+                partialText: evidence.isEmpty ? nil : evidence,
+                playheadChunk: playheadChunk
+            ))
+            try? await Task.sleep(for: .milliseconds(250))
+            guard self.state == .speaking else { return }
+            self.bargeInSent = false
             self.bargeInCount = 0
         }
     }
 
-    /// Best-effort current playback position in ms, derived from the
-    /// player node's render clock. ~100ms staleness is fine for the
-    /// truncation math the daemon uses to persist the partial turn.
+    func setPlaybackDucked(_ ducked: Bool) {
+        guard ducked != self.playbackDucked else { return }
+        self.playbackDucked = ducked
+        self.overlapPlayheadChunk = ducked ? self.playheadChunk() : nil
+        self.duckTask?.cancel()
+        let target: Float = ducked ? BargeInPolicy.duckedVolume : 1
+        let start = self.playerNode.volume
+        self.duckTask = Task { @MainActor [weak self] in
+            for step in 1 ... 5 {
+                guard let self, !Task.isCancelled else { return }
+                self.playerNode.volume = start + (target - start) * Float(step) / 5
+                try? await Task.sleep(for: .milliseconds(12))
+            }
+        }
+    }
+
     private func currentPlaybackMs() -> UInt64 {
         let frames = self.playedFramesThisTurn()
         let ms = Double(frames) * 1_000.0 / self.playbackSampleRate

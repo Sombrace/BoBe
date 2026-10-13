@@ -1,109 +1,244 @@
-//! Decide worker reads goals dir via its skill; we pass only the title as a hint.
-
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::config::Config;
-use crate::db::SqliteCooldownRepo;
-use crate::runtime::proactive_generator::ProactiveGenerator;
+use crate::db::agent_job_repo::{AgentJobRepo, JobInput};
+use crate::db::goal_review_repo::GoalReviewWork;
+use crate::provider::WorkloadRoute;
 use crate::runtime::state::Decision;
-use crate::runtime::turn_admission::{TurnAdmission, TurnSource};
 use crate::services::goals::goals_service::GoalsService;
-use crate::util::sse::event_queue::EventQueue;
-use crate::util::sse::indicator_guard::IndicatorGuard;
-use crate::util::sse::types::IndicatorType;
+
+const IDLE_REVIEW_LIMIT: u32 = 3;
 
 pub(crate) struct GoalTrigger {
     goals_service: Arc<GoalsService>,
-    generator: Arc<ProactiveGenerator>,
-    cooldown_repo: Arc<SqliteCooldownRepo>,
-    event_queue: Arc<EventQueue>,
+    jobs: Arc<AgentJobRepo>,
+    route: WorkloadRoute,
     config: Arc<ArcSwap<Config>>,
-    turn_admission: Arc<TurnAdmission>,
+    personal_data_lifecycle: Arc<tokio::sync::RwLock<()>>,
 }
 
 impl GoalTrigger {
     pub(crate) fn new(
         goals_service: Arc<GoalsService>,
-        generator: Arc<ProactiveGenerator>,
-        cooldown_repo: Arc<SqliteCooldownRepo>,
-        event_queue: Arc<EventQueue>,
+        jobs: Arc<AgentJobRepo>,
+        route: WorkloadRoute,
         config: Arc<ArcSwap<Config>>,
-        turn_admission: Arc<TurnAdmission>,
+        personal_data_lifecycle: Arc<tokio::sync::RwLock<()>>,
     ) -> Self {
         Self {
             goals_service,
-            generator,
-            cooldown_repo,
-            event_queue,
+            jobs,
+            route,
             config,
-            turn_admission,
+            personal_data_lifecycle,
         }
     }
 
     pub(crate) async fn fire(&self) -> Decision {
-        let Some(_turn) = self.turn_admission.try_admit(TurnSource::Goal) else {
-            debug!("goal_trigger.turn_busy");
-            return Decision::Idle;
-        };
-        let cfg = self.config.load();
+        self.fire_at(chrono::Utc::now()).await
+    }
 
-        if let Some(cooldown) = self.cooldown_repo.check_cooldown(
-            cfg.decision.cooldown_minutes,
-            cfg.decision.extended_cooldown_minutes,
-        ) {
-            debug!(
-                remaining_s = cooldown.remaining.num_seconds(),
-                "goal_trigger.cooldown_active"
-            );
+    async fn fire_at(&self, now: chrono::DateTime<chrono::Utc>) -> Decision {
+        let _personal_data = self.personal_data_lifecycle.read().await;
+        let cfg = self.config.load_full();
+
+        if !cfg.goals.enabled
+            || !cfg
+                .agent
+                .enabled_tools
+                .contains(&crate::config::AgentTool::BackgroundJobs)
+        {
             return Decision::Idle;
         }
 
+        if !cfg.goals.check_interval_seconds.is_finite()
+            || !(1.0..=31_536_000.0).contains(&cfg.goals.check_interval_seconds)
+        {
+            warn!("goal_trigger.invalid_review_interval");
+            return Decision::Idle;
+        }
+        let interval = cfg.goals.check_interval_seconds.ceil() as u32;
+        match self.jobs.goal_review_due(now, interval).await {
+            Ok(false) => return Decision::Idle,
+            Ok(true) => {}
+            Err(error) => {
+                warn!(%error,"goal_trigger.clock_failed");
+                return Decision::Idle;
+            }
+        }
         let goals = match self.goals_service.list_active().await {
-            Ok(g) => g,
-            Err(e) => {
-                warn!(error = %e, "goal_trigger.fetch_failed");
+            Ok(goals) => goals,
+            Err(error) => {
+                warn!(%error,"goal_trigger.fetch_failed");
                 return Decision::Idle;
             }
         };
-
-        if goals.is_empty() {
-            debug!("goal_trigger.no_active_goals");
-            return Decision::Idle;
+        let mut work = Vec::with_capacity(goals.len());
+        for goal in goals {
+            match self.jobs.idle_goal_reviews(goal.id, goal.updated_at).await {
+                Ok(idle) if idle >= IDLE_REVIEW_LIMIT => {
+                    info!(goal_id = %goal.id, idle, "goal_trigger.resting");
+                    continue;
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    warn!(%error, goal_id = %goal.id, "goal_trigger.idle_count_failed");
+                    continue;
+                }
+            }
+            work.push(GoalReviewWork {
+                priority: goal.priority,
+                input: JobInput {
+                    title: format!("Goal: {}", crate::util::text::truncate_str(&goal.title, 140)),
+                    task: format!(
+                        "[bobe.goal_work]\nReview goal {} using bobe_goal_list. Choose and complete useful work within its current guidance. If the goal has reached its ending point, set it to completed. If it cannot be achieved, or nothing useful can be done until the owner acts, set it to paused and record why. This is quiet goal work, not a request to message the owner. Keep progress, pending questions and next steps in the goal's living document, and leave the document untouched when nothing changed. Report only verified outcomes.\n[/bobe.goal_work]",
+                        goal.id,
+                    ),
+                    goal_id: Some(goal.id),
+                    channel_id: None,
+                    ..JobInput::default()
+                },
+            });
         }
+        match self
+            .jobs
+            .review_goals(work, &self.route, interval, now)
+            .await
+        {
+            Ok(queued) if queued > 0 => info!(queued, "goal_trigger.work_queued"),
+            Ok(_) => {}
+            Err(error) => warn!(%error,"goal_trigger.queue_failed"),
+        }
+        Decision::Idle
+    }
+}
 
-        info!(goal_count = goals.len(), "goal_trigger.checking_goals");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::agent_job_repo::JobStatus;
+    use crate::services::goals::{file_store::GoalFileStore, goal_md::GoalDoc};
 
-        // RAII: one Thinking → Idle bracket for the whole goal scan. Without
-        // hoisting, N goals produced 2N indicator events. EventQueue's
-        // set_indicator short-circuits no-ops so iteration is silent.
-        let indicator_guard = IndicatorGuard::new(Arc::clone(&self.event_queue));
-        self.event_queue.set_indicator(IndicatorType::Thinking);
-
-        let goal_summary = goals
-            .iter()
-            .take(12)
-            .map(|goal| format!("- {}", goal.title))
-            .collect::<Vec<_>>()
-            .join("\n");
-        drop(indicator_guard);
-        let decision = self
-            .generator
-            .generate_proactive_response(
-                cfg.conversation.auto_close_minutes as i64,
-                Some(format!("Active user goals:\n{goal_summary}")),
+    #[tokio::test]
+    async fn a_goal_rests_after_reviews_that_change_nothing_and_wakes_when_it_changes() {
+        let root = std::env::temp_dir().join(format!("bobe-idle-goal-{}", uuid::Uuid::new_v4()));
+        let pool = crate::db::test_helpers::in_memory_pool().await;
+        let jobs = AgentJobRepo::new(pool.clone());
+        let goals = Arc::new(GoalsService::new(GoalFileStore::new(root.clone())));
+        let goal = goals
+            .create(GoalDoc::new("Example", "Nothing to do here"))
+            .await
+            .unwrap();
+        let config = Arc::new(ArcSwap::from_pointee(Config::default()));
+        let trigger = GoalTrigger::new(
+            Arc::clone(&goals),
+            Arc::clone(&jobs),
+            config.load().routes.goals.clone(),
+            Arc::clone(&config),
+            Arc::new(tokio::sync::RwLock::new(())),
+        );
+        let start = chrono::Utc::now();
+        for hour in 0..IDLE_REVIEW_LIMIT {
+            trigger
+                .fire_at(start + chrono::Duration::hours(i64::from(hour)))
+                .await;
+            let queued = jobs
+                .list()
+                .await
+                .unwrap()
+                .into_iter()
+                .find(|job| job.status == JobStatus::Queued)
+                .expect("an unchanged goal is still reviewed up to the limit");
+            jobs.claim(queued.id).await.unwrap();
+            jobs.finish(
+                queued.id,
+                JobStatus::Completed,
+                Some("No update was needed."),
+                None,
+                None,
             )
-            .await;
-        if decision == Decision::Engage {
-            info!(
-                goal_count = goals.len(),
-                "goal_trigger.engagement_triggered"
-            );
-        } else {
-            debug!("goal_trigger.no_engagement");
+            .await
+            .unwrap();
         }
-        decision
+        let reviewed = jobs.list().await.unwrap().len();
+        assert_eq!(reviewed, IDLE_REVIEW_LIMIT as usize);
+
+        for hour in IDLE_REVIEW_LIMIT..IDLE_REVIEW_LIMIT + 5 {
+            trigger
+                .fire_at(start + chrono::Duration::hours(i64::from(hour)))
+                .await;
+        }
+        assert_eq!(jobs.list().await.unwrap().len(), reviewed);
+        assert_eq!(
+            goals.get(goal.id).await.unwrap().unwrap().status,
+            crate::models::types::GoalStatus::Active
+        );
+
+        sqlx::query("UPDATE agent_jobs SET created_at='2020-01-01T00:00:00.000Z'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        trigger.fire_at(start + chrono::Duration::hours(24)).await;
+        assert_eq!(jobs.list().await.unwrap().len(), reviewed + 1);
+        pool.close().await;
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn active_goals_queue_quiet_work_without_a_surface_or_reachout_permit() {
+        let root = std::env::temp_dir().join(format!("bobe-auto-goal-{}", uuid::Uuid::new_v4()));
+        let pool = crate::db::test_helpers::in_memory_pool().await;
+        let jobs = AgentJobRepo::new(pool.clone());
+        let goals = Arc::new(GoalsService::new(GoalFileStore::new(root.clone())));
+        let goal = goals
+            .create(GoalDoc::new("Learn", "Prepare an exercise"))
+            .await
+            .unwrap();
+        let config = Arc::new(ArcSwap::from_pointee(Config::default()));
+        let trigger = GoalTrigger::new(
+            Arc::clone(&goals),
+            Arc::clone(&jobs),
+            config.load().routes.goals.clone(),
+            Arc::clone(&config),
+            Arc::new(tokio::sync::RwLock::new(())),
+        );
+        assert_eq!(trigger.fire().await, Decision::Idle);
+        assert_eq!(trigger.fire().await, Decision::Idle);
+        let queued = jobs.list().await.unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].goal_id, Some(goal.id));
+        assert_eq!(queued[0].channel_id, None);
+        assert_eq!(queued[0].status, JobStatus::Queued);
+        jobs.claim(queued[0].id).await.unwrap();
+        jobs.finish(
+            queued[0].id,
+            JobStatus::Interrupted,
+            None,
+            None,
+            Some("uncertain"),
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE agent_jobs SET source_key='previous-review' WHERE id=?1")
+            .bind(queued[0].id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        trigger
+            .fire_at(chrono::Utc::now() + chrono::Duration::hours(1))
+            .await;
+        assert_eq!(jobs.get(queued[0].id).await.unwrap().attempt, 2);
+        jobs.cancel(queued[0].id).await.unwrap();
+        goals
+            .set_status(goal.id, crate::models::types::GoalStatus::Paused)
+            .await
+            .unwrap();
+        trigger.fire().await;
+        assert_eq!(jobs.list().await.unwrap().len(), 1);
+        pool.close().await;
+        tokio::fs::remove_dir_all(root).await.unwrap();
     }
 }

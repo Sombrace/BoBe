@@ -1,0 +1,12 @@
+version: "0.2.0"
+files:
+  exclude: ["**/*"]
+  include: ["CMakeLists.txt", "README.md", "idf_component.yml", "*.c", "*.h", "include/**/*.h"]
+description: "BoBe client for ESP32 keyboards, text displays, buttons, and sensors"
+dependencies:
+  idf: ">=6.0.2,<6.2"
+  bobe_protocol:
+    path: ../bobe_protocol
+    require: public
+  bobe_transport:
+    path: ../bobe_transport
