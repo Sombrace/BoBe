@@ -281,7 +281,7 @@ hil = [
 [package.metadata]
 requires-dist = [
     { name = "cryptography", specifier = ">=50.0.2,<51" },
-    { name = "esptool", specifier = "==5.4.0" },
+    { name = "esptool", specifier = "==5.5.0" },
     { name = "pyserial", specifier = ">=3.5,<4" },
 ]
 
@@ -320,7 +320,7 @@ serial = [
 
 [[package]]
 name = "esptool"
-version = "5.4.0"
+version = "5.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "bitstring" },
@@ -333,7 +333,7 @@ dependencies = [
     { name = "reedsolo" },
     { name = "rich-click" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2c/43/1a2ae2dd8ae97bf1ec9991db097e52626d35b57d242f9687c9314eac5b57/esptool-5.4.0.tar.gz", hash = "sha256:fd756598db0a26c9975fa18511b08687c54bf2ce7322ede80cf1f5117dad1f50", size = 513549, upload-time = "2026-09-02T10:32:32.76Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6a/c8/15a0d5a80a81d7a33d1bdf4a75db4c3b4334e53ef81f178cd52567acde80/esptool-5.5.0.tar.gz", hash = "sha256:cfc1d1c6d1699427451af1be7335efa835b7974c61ed86d77927d9553c443d57", size = 521828, upload-time = "2026-10-08T08:55:50.746Z" }
 
 [[package]]
 name = "intelhex"

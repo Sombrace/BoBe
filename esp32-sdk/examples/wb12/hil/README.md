@@ -125,7 +125,7 @@ Calibration is reference data. Expiry is reported; it never blocks a tool.
 
 ## Toolchain
 
-- ESP-IDF 6.0.2, esptool 5.4.0, LVGL 9.5.0.
+- ESP-IDF 6.0.2, esptool 5.5.0, LVGL 9.5.0.
 - Python host tests use the standard-library `unittest` runner; no ESP auto-flash
   test plugin is installed.
 - Pillow 12.3.0 and NumPy 2.4.2 for deterministic metrics.

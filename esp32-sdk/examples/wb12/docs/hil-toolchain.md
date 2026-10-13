@@ -8,7 +8,7 @@ project-local installation.
 | Tool | Pinned version | Authority and role |
 |---|---:|---|
 | [ESP-IDF](https://github.com/espressif/esp-idf/releases/tag/v6.0.2) | 6.0.2 | Espressif SDK, build, USB/JTAG support and target runtime |
-| [esptool](https://github.com/espressif/esptool/releases/tag/v5.4.0) | 5.4.0 | Espressif ROM/image transport behind the project safety wrapper |
+| [esptool](https://github.com/espressif/esptool/releases/tag/v5.5.0) | 5.5.0 | Espressif ROM/image transport behind the project safety wrapper |
 | Python `unittest` | standard library | Dynamically discovered host tests without an auto-flash plugin |
 | [LVGL](https://github.com/lvgl/lvgl/releases/tag/v9.5.0) | 9.5.0 | Shared production renderer and canonical RGB565 visual oracle |
 | [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk/releases/tag/2.3.0) | 2.3.0 | Official Pico 2 fixture firmware SDK |
