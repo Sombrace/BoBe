@@ -1,6 +1,6 @@
 [package]
 name = "bobe-pairing-ffi"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2024"
 rust-version = "1.98.1"
 license = "MIT"
@@ -10,7 +10,7 @@ publish = false
 crate-type = ["staticlib"]
 
 [dependencies]
-bobe-pairing-core = { path = "../PairingCore", version = "=0.8.0" }
+bobe-pairing-core = { path = "../PairingCore", version = "=0.8.1" }
 zeroize = "1.9.0"
 sha2 = "0.11.0"
 x509-parser = "0.18.1"
