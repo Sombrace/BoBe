@@ -20,13 +20,19 @@ tool_matches() {
     [[ -x "$binary" ]] && [[ "$("$binary" "$@" 2>/dev/null)" == "$expected" ]]
 }
 
+on_macos() {
+    [[ "$(uname -s)" == Darwin ]]
+}
+
 check_tools() {
     local failed=0
     tool_matches "$BIN_DIR/cargo-about" "cargo-about $CARGO_ABOUT_VERSION" --version || failed=1
     tool_matches "$BIN_DIR/cargo-deny" "cargo-deny $CARGO_DENY_VERSION" --version || failed=1
     tool_matches "$BIN_DIR/cargo-machete" "$CARGO_MACHETE_VERSION" --version || failed=1
-    tool_matches "$BIN_DIR/swiftlint" "$SWIFTLINT_VERSION" version || failed=1
-    tool_matches "$BIN_DIR/xcodegen" "Version: $XCODEGEN_VERSION" --version || failed=1
+    if on_macos; then
+        tool_matches "$BIN_DIR/swiftlint" "$SWIFTLINT_VERSION" version || failed=1
+        tool_matches "$BIN_DIR/xcodegen" "Version: $XCODEGEN_VERSION" --version || failed=1
+    fi
     if [[ "$failed" -ne 0 ]]; then
         echo "Project developer tools are missing or have the wrong version." >&2
         echo "Run: scripts/tasks/bootstrap-tools.sh" >&2
@@ -105,14 +111,14 @@ if ! tool_matches "$BIN_DIR/cargo-machete" "$CARGO_MACHETE_VERSION" --version; t
     cargo install --locked --force --root "$TOOLS_DIR" \
         cargo-machete --version "$CARGO_MACHETE_VERSION"
 fi
-if ! tool_matches "$BIN_DIR/swiftlint" "$SWIFTLINT_VERSION" version; then
+if on_macos && ! tool_matches "$BIN_DIR/swiftlint" "$SWIFTLINT_VERSION" version; then
     install_single_binary_zip \
         swiftlint "$SWIFTLINT_VERSION" \
         "https://github.com/realm/SwiftLint/releases/download/$SWIFTLINT_VERSION/portable_swiftlint.zip" \
         d6cb0aa7a2f5f1ef306fc9e37bcb54dc9a26facc8f7784ac0c3dd3eccf5c6ba6 \
         swiftlint
 fi
-if ! tool_matches "$BIN_DIR/xcodegen" "Version: $XCODEGEN_VERSION" --version; then
+if on_macos && ! tool_matches "$BIN_DIR/xcodegen" "Version: $XCODEGEN_VERSION" --version; then
     archive="$(verified_archive \
         xcodegen "$XCODEGEN_VERSION" \
         "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip" \
