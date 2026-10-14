@@ -15,8 +15,9 @@ xcodebuild \
     -destination 'platform=macOS,arch=arm64' \
     -derivedDataPath .build/xcode-derived \
     -onlyUsePackageVersionsFromResolvedFile \
+    ARCHS=arm64 \
     DEVELOPMENT_TEAM="$BOBE_DEVELOPMENT_TEAM" \
-    PROVISIONING_PROFILE_SPECIFIER="$BOBE_PROVISIONING_PROFILE_SPECIFIER" \
+    BOBE_PROVISIONING_PROFILE_SPECIFIER="$BOBE_PROVISIONING_PROFILE_SPECIFIER" \
     CODE_SIGN_STYLE=Manual \
     CODE_SIGN_IDENTITY="${BOBE_CODE_SIGN_IDENTITY:-Developer ID Application}" \
     OTHER_CODE_SIGN_FLAGS="--timestamp --options runtime" \
