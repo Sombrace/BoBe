@@ -562,6 +562,8 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             log_level,
             managed_bootstrap_stdin,
         } => {
+            let purged_release_0_2 =
+                bootstrap::release_0_2::purge(&util::paths::bobe_data_dir()?).await?;
             let config::LoadedConfig {
                 mut config,
                 paths,
@@ -600,6 +602,9 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 );
             }
             util::logging::init_tracing(&config);
+            if purged_release_0_2 {
+                tracing::info!("data_root.release_0_2_purged");
+            }
 
             tracing::info!(
                 "Starting BoBe on {}:{}",

@@ -161,6 +161,9 @@ in `~/.bobe/` was written by a different build. BoBe has no database
 migrations, so a build with a changed schema cannot open older data. Run
 the build that wrote it, or move `~/.bobe/` aside and set BoBe up again.
 
+Data from BoBe 0.2.0 is not refused. The first `bobe serve` of a newer build
+deletes the 0.2.0 database and `config.toml`, and BoBe starts setup again.
+
 ### A second daemon refuses to start
 
 Only one daemon can use a data root. Stop the first one, or give the second
