@@ -19,5 +19,12 @@ else
     credentials=(--keychain-profile "$NOTARIZE_KEYCHAIN_PROFILE")
 fi
 
-xcrun notarytool submit "build/BoBe-${version}.dmg" "${credentials[@]}" --wait
-echo "Notarization complete"
+result="$(xcrun notarytool submit "build/BoBe-${version}.dmg" "${credentials[@]}" --wait --output-format json)"
+status="$(plutil -extract status raw -o - - <<<"$result")"
+submission="$(plutil -extract id raw -o - - <<<"$result")"
+if [[ "$status" != "Accepted" ]]; then
+    echo "Notarization of build/BoBe-${version}.dmg is $status (submission $submission)." >&2
+    echo "Read the reasons with: xcrun notarytool log $submission and the same credentials" >&2
+    exit 1
+fi
+echo "Notarization accepted (submission $submission)"
