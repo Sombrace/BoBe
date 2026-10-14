@@ -79,6 +79,7 @@ targets:
         PRODUCT_NAME: BoBe
         INFOPLIST_FILE: BoBe/Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: entitlements.plist
+        PROVISIONING_PROFILE_SPECIFIER: "$(BOBE_PROVISIONING_PROFILE_SPECIFIER)"
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
         LIBRARY_SEARCH_PATHS: "$(inherited) $(PROJECT_DIR)/../PairingFFI/target/release"
         OTHER_LDFLAGS: "$(inherited) -lbobe_pairing_ffi -framework Security -framework SystemConfiguration"
