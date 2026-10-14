@@ -562,13 +562,14 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             log_level,
             managed_bootstrap_stdin,
         } => {
-            let purged_release_0_2 =
-                bootstrap::release_0_2::purge(&util::paths::bobe_data_dir()?).await?;
-            let config::LoadedConfig {
-                mut config,
-                paths,
-                config_file,
-            } = config::Config::load_operational()?;
+            let (
+                config::LoadedConfig {
+                    mut config,
+                    paths,
+                    config_file,
+                },
+                purged_release_0_2,
+            ) = config::Config::load_for_serve().await?;
             if let Some(host) = host {
                 config.server.host = host;
             }
