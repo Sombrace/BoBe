@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "bobe"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -495,7 +495,7 @@ dependencies = [
 
 [[package]]
 name = "bobe-pairing-core"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "opaque-ke",
  "rand 0.8.7",

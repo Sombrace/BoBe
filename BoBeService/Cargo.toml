@@ -1,6 +1,6 @@
 [package]
 name = "bobe"
-version = "0.1.0"
+version = "0.8.0"
 edition = "2024"
 rust-version = "1.98.1"
 license = "MIT"
@@ -149,7 +149,7 @@ opusic-c = "1.6.1"
 regex = "1.13"
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring", "zeroize"] }
 x509-parser = "0.18.1"
-bobe-pairing-core = { path = "../PairingCore", version = "=0.1.0" }
+bobe-pairing-core = { path = "../PairingCore", version = "=0.8.0" }
 chacha20poly1305 = { version = "0.11.0", features = ["zeroize"] }
 hkdf = "0.13.0"
 zeroize = "1.9.0"
