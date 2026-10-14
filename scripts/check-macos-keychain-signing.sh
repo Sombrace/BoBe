@@ -60,6 +60,10 @@ expected_group="${application_id%"$bundle_id"}$EXPECTED_SUFFIX"
         echo "App lacks the exact endpoint credential access group" >&2
         exit 1
     }
+[[ "$(read_plist com.apple.security.get-task-allow "$APP_ENTITLEMENTS")" != true ]] || {
+    echo "App requests com.apple.security.get-task-allow, which notarization rejects" >&2
+    exit 1
+}
 profile_allows_expected_group() {
     local group
     while IFS= read -r group; do
