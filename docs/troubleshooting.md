@@ -89,7 +89,7 @@ stop is to quit the app, or `bobe service uninstall` for a service.
 
 ### The speech models did not install
 
-Retry from **Settings → Voice**. The download is about 940 MB for English and
+Retry from **Settings → Voice**. The download is about 600 MB for English and
 needs a steady connection. If it fails again, the reason is in
 `~/.bobe/logs/`. A download whose checksum does not match is refused.
 

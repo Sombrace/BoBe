@@ -1,56 +1,43 @@
 # Developer tools
 
-All Python tools run in the project environment with `uv`; nothing needs to be
-installed globally.
+Every tool runs unprivileged inside the repository through `uv`; nothing installs
+globally or needs `sudo`.
 
 | Tool | Purpose |
 |---|---|
-| `capture_serial.py` | Write timestamped live ESP serial output to a durable log |
-| `bobe_image.py` | Validate ESP32-S3 app descriptors, manifests, and OTA selection |
-| `flash_app_verified.sh` | Manifest-gated `ota_0` app flash with read-back verification |
-
-`flash_app_verified.sh` flashes the board on the serial port that you give. It
-uses the ESP32-S3 native USB-Serial/JTAG reset sequence to enter the ROM loader
-and prints the board's MAC. It verifies the active `ota_0` selection, security
-state, app descriptor and signed clean-source manifest. It writes only the
-application partition at `0x20000` and verifies the written bytes before
-restarting. `bobe_hil.sh device flash` is the parameterized
-equivalent: it takes the image, optional manifest, offset, rollback image and
-boot observation window from the caller. Manual BOOT-button timing is not
-required when the native reset path is responsive; the EN fixture remains the
-recovery path.
-
-## Firmware development
-
-| Tool | Purpose |
-|---|---|
-| `bootstrap_idf.sh` | Prepare ESP-IDF in the SDK checkout; default baseline 6.0.2 |
-| `idf.sh` | Run the project-local ESP-IDF CLI environment |
-| `check.sh` | Run host tests and build the ESP32-S3 firmware without flashing |
-| `build_bobe_snapshot.sh` | Build normal BoBe firmware from the committed Git snapshot and emit provenance hashes |
-| `bobe_hil.sh` | External lab tool: drive the WB-12 running normal firmware, Pico fixture, router impairment, observer, scenarios, and UI/media evidence |
-| `bobe_capture.sh` | Build/sign/run the camera CLI; use this TCC-owning wrapper, not its ignored `.tmp` binary |
-| `bootstrap_sigrok_cli.sh` | Build a hash-pinned native arm64 `sigrok-cli` runtime without Rosetta |
-| `sigrok.sh` | Discover FX2 analyzers and perform bounded capture/inspection/conversion |
-| `bootstrap_pico_fixture.sh` | Fetch the pinned official Pico 2 SDK/toolchain |
-| `build_pico_fixture.sh` | Build the semantic open-drain fixture firmware |
-| `generate_provisioning_credentials.sh` | Atomically create or explicitly rotate a versioned private Security-2 credential bundle |
-| `generate_bodylink_pki.sh` | Create development BodyLink CA, server/device certificates and claim payload |
-| `provision_bobe.sh` | Validate a matching private claim and provision through the Security-2 SoftAP |
-
-Typical workflow:
+| `bootstrap_idf.sh` | Prepare ESP-IDF in the SDK checkout (default 6.0.2) |
+| `idf.sh` | Run the project-local ESP-IDF environment |
+| `check.sh` | Host tests and compile-only firmware builds |
+| `build_bobe_snapshot.sh` | Build normal firmware from the committed Git snapshot with provenance hashes |
+| `bobe_hil.sh` | External lab tool for the device, Pico fixture, router impairment, observer, scenarios and UI and media evidence ([HIL](../hil/README.md)) |
+| `bobe_capture.sh` | Build, sign and run the camera CLI; always use this TCC-owning wrapper |
+| `flash_app_verified.sh` | Manifest-gated `ota_0` flash with read-back verification |
+| `bobe_image.py` | Validate ESP32-S3 app descriptors, manifests and OTA selection |
+| `capture_serial.py` | Write timestamped serial output to a durable log |
+| `bootstrap_sigrok_cli.sh`, `sigrok.sh` | Build a hash-pinned native `sigrok-cli`; discover FX2 analyzers and run bounded captures |
+| `bootstrap_pico_fixture.sh`, `build_pico_fixture.sh` | Fetch the pinned Pico 2 SDK and build the fixture firmware |
+| `generate_provisioning_credentials.sh` | Create or explicitly rotate a private Security 2 credential bundle |
+| `generate_bodylink_pki.sh` | Create a development BodyLink CA, server and device certificates and claim |
+| `provision_bobe.sh` | Validate a matching private claim and provision through the Security 2 SoftAP |
 
 ```bash
 tools/bootstrap_idf.sh
 tools/check.sh
 ```
 
-The BoBe snapshot build archives only the committed `esp32-sdk` subtree and
-builds a normal product profile (`fallback`, `ptt` or `edge`; default `edge`).
-Its lock records the combined repository's source commit, image size/hash, and both ELF hashes in
-`build-bobe-snapshot/bobe-snapshot.lock`. The lock and adjacent application
-manifest travel with the build. `device flash` uses the application manifest
-to bind boot identity:
+`check.sh` starts from fresh build configuration and runs host tests, sanitizers,
+logical UI references, the Pico fixture firmware, macOS capture tooling, and the
+fallback, Security 2 push-to-talk and Security 2 plus ESP-SR edge firmware
+profiles. Every profile is compile-only and must keep the production button
+event log that scenarios observe. Narrow gates are `core-policy`, `ui`, `fixture`
+and `capture`, for example `tools/check.sh ui`.
+
+## Snapshot builds and flashing
+
+The snapshot build archives only the committed `esp32-sdk` subtree and builds a
+product profile (`fallback`, `ptt` or `edge`, default `edge`). It writes
+`build-bobe-snapshot/bobe-snapshot.lock` with the source commit, image size and
+hash and both ELF hashes; the lock and application manifest travel with the build.
 
 ```bash
 tools/build_bobe_snapshot.sh --profile edge
@@ -59,63 +46,28 @@ tools/bobe_hil.sh device flash \
     --rollback-image build-ondevice-reviewed/bobe_wb12.bin
 ```
 
-The lock is provenance data; `device flash` reports whether a supplied/adjacent
-manifest and the selected OTA slot allowed the observed boot to be bound to the
-written image.
+`device flash` reports whether the manifest and selected OTA slot bound the
+observed boot to the written image. `flash_app_verified.sh` is the fixed-path
+equivalent for a serial port you name: it enters the ROM loader through the native
+USB reset sequence, prints the MAC, verifies the `ota_0` selection, security state,
+app descriptor and signed clean-source manifest, writes only `0x20000`, and
+verifies the bytes before restarting. The EN fixture is the recovery path when the
+native reset does not respond.
 
-Every tool here runs unprivileged in the repository. Nothing installs into the
-system, and no tool needs `sudo`.
-
-## Generic logic analysis
-
-The sigrok wrapper is a reusable analyzer tool. The current toy is sealed and
-its 40 MHz display bus exceeds the connected
-24 MS/s analyzer.
-
-Bootstrap and read-only discovery do not touch analyzer firmware:
-
-```bash
-tools/bootstrap_sigrok_cli.sh
-tools/sigrok.sh runtime-status
-tools/sigrok.sh discover --vid 0925 --pid 3881
-```
-
-Set `ANALYZER_LOCATION` to the selected analyzer's IOKit location from discovery,
-then check its identity:
-
-```bash
-tools/sigrok.sh doctor \
-  --vid 0925 --pid 3881 \
-  --location "$ANALYZER_LOCATION" \
-  --expected-bcd 0001 \
-  --expected-state original
-```
-
-`probe` and `capture` are separate hardware operations. When the analyzer is in
-its original state, libsigrok uploads `fx2lafw` into RAM and re-enumerates USB.
-No EEPROM is written; power cycling restores the original state. Read
-`.claude/skills/sigrok-cli/SKILL.md` for setup references.
-
-BodyLink PKI generation requires the intended stable device UUID explicitly:
+## Credentials and Wi-Fi
 
 ```bash
 tools/generate_bodylink_pki.sh private/bodylink-pki <device-uuid>
-```
-
-Security-2 credentials never rotate implicitly:
-
-```bash
 tools/generate_provisioning_credentials.sh --create --device-id <device-uuid>
 tools/generate_provisioning_credentials.sh --rotate --device-id <device-uuid>
 ```
 
-Rotation archives the complete prior C/private-manifest pair before publishing
-the replacement directory. Live provisioning writes a private JSON receipt
-after device preflight, claim commit, Wi-Fi configuration and Wi-Fi apply, so a
-late failure is resumable and never reported as an all-or-nothing unknown.
+Credentials never rotate implicitly. Rotation archives the previous C and private
+manifest pair before publishing the replacement. Live provisioning writes a
+private receipt after device preflight, claim commit, Wi-Fi configuration and
+Wi-Fi apply, so a late failure can resume.
 
-For a local test device, put the test network in the ignored
-`private/dev-wifi.env`:
+A development image can carry test Wi-Fi from the ignored `private/dev-wifi.env`:
 
 ```bash
 BOBE_WIFI_SSID='<network>'
@@ -123,85 +75,52 @@ BOBE_WIFI_PASSWORD='<password>'
 tools/build_dev_wifi.sh
 ```
 
-The generated SDKCONFIG, ELF, and application image remain ignored and contain
-the credential. Flash the development image only long enough to confirm the
-NVS-backed connection, then overwrite the application slot with a normal
-product image without erasing NVS.
-
-Normal production firmware can change Wi-Fi directly over its USB-C cable,
-without reflashing:
+Its ignored `sdkconfig`, ELF and image contain the credential. Flash it only long
+enough to confirm the NVS-backed connection, then overwrite the application slot
+with a product image without erasing NVS. Product firmware can instead change
+Wi-Fi over USB-C without reflashing:
 
 ```bash
 uv run --group hil --locked python tools/configure_bobe_usb.py
 ```
 
-The client reads `private/dev-wifi.env`, probes every attached Espressif USB
-Serial/JTAG candidate with a nonce, and sends credentials only to the firmware
-that identifies itself as the WB-12 body. Firmware tests the network in RAM,
-reports success only after DHCP, commits once, and restores the prior network
-after authentication, AP, or timeout failure.
+It reads `private/dev-wifi.env`, probes each Espressif USB Serial/JTAG device with
+a nonce, and sends credentials only to firmware that identifies as the WB-12 body.
+The firmware tests the network in RAM, reports success only after DHCP, commits
+once, and restores the previous network on failure. Join the device's
+provisioning SoftAP from a phone or a second interface, not from a Mac's only
+internet connection.
 
-Do not switch the development Mac away from its internet connection to join
-the isolated device SoftAP. Use a phone, secondary network interface, or a
-separate provisioning client.
-
-The generated `sdkconfig`, `build/`, `.deps/`, `.venv/`, and
-`managed_components/` directories are local artifacts. Exact ESP component
-versions and Python tooling dependencies are retained in `dependencies.lock`
-and `uv.lock`.
-
-Set `SERIAL_PORT` to the connected board's serial port, then capture live
-firmware output with host timestamps:
+## Serial capture
 
 ```bash
 uv run --locked python tools/capture_serial.py \
-  "$SERIAL_PORT" \
-  private/device-logs/runtime.log \
-  --duration 60
+  "$SERIAL_PORT" private/device-logs/runtime.log --duration 60
 ```
 
-Omit `--duration` for a continuous writer and stop it with `Ctrl-C`. Existing
-logs are protected by default; pass `--append` only when continuing the same
-capture. The writer reconnects to the same serial path after USB resets by
-default, keeping panic and reboot loops in one log. Use `--no-reconnect` for a
-single connection.
+Omit `--duration` to run until `Ctrl-C`. Existing logs are protected unless you
+pass `--append`. The writer reconnects to the same path after USB resets so panic
+and reboot loops stay in one log; `--no-reconnect` keeps a single connection.
 
-`check.sh` always starts from fresh build-local configuration and validates
-host tests, sanitizers, logical UI references, Pico fixture firmware, macOS
-capture tooling, fallback firmware, a Security-2 push-to-talk profile, and the
-Security-2 plus ESP-SR edge profile. Every firmware profile is compile-only,
-and each one must retain the production physical button event log that external
-scenarios observe.
-
-Named narrow gates:
+## Logic analysis
 
 ```bash
-tools/check.sh core-policy
-tools/check.sh ui
-tools/check.sh fixture
-tools/check.sh capture
+tools/bootstrap_sigrok_cli.sh
+tools/sigrok.sh runtime-status
+tools/sigrok.sh discover --vid 0925 --pid 3881
+tools/sigrok.sh doctor --vid 0925 --pid 3881 --location "$ANALYZER_LOCATION" \
+  --expected-bcd 0001 --expected-state original
 ```
 
-Inspect current hardware availability without touching hardware:
+Bootstrap and discovery never touch analyzer firmware. `probe` and `capture` are
+separate hardware operations: libsigrok uploads `fx2lafw` to RAM and re-enumerates,
+writing no EEPROM, so a power cycle restores the analyzer. A 24 MS/s FX2 analyzer
+cannot capture the 40 MHz display bus. See `.claude/skills/sigrok-cli/SKILL.md`.
 
-```bash
-tools/bobe_hil.sh doctor
-tools/bobe_hil.sh device status
-tools/bobe_hil.sh scenario list
-tools/bobe_hil.sh scenario run physical-controls --dry-run
-tools/bobe_hil.sh scenario run voice-roundtrip --mock --junit .tmp/mock.xml
-tools/bobe_hil.sh scenario run ui-golden --live --junit .tmp/ui.xml
-```
+## Local artifacts
 
-The scenario runner dispatches the steps declared in `hil/scenarios/*.toml`
-directly to the local device, fixture, network, media, camera and BodyLink
-implementations. `--dry-run` prints the plan and exits `0` with status
-`planned`; failures exit `1`; scenarios needing absent hardware exit `3` with
-status `blocked`. Mock mode exercises all physical steps and cleanup with a
-`simulation` claim and cannot satisfy a physical requirement. Physical
-controls, network faults, calibrated screen capture and acoustic evidence stay
-unavailable until the fixtures described in `hil/README.md` are connected.
-
-The ESP-IDF bootstrap uses `uv` and installs its Python environment under
-`../../.deps/espressif/python_env/bobe-<version>`. The wrapper selects this environment
-regardless of the shell’s default Python version; no global packages are needed.
+`sdkconfig`, `build/`, `.deps/`, `.venv/` and `managed_components/` are local.
+`dependencies.lock` and `uv.lock` pin ESP components and Python tools. The
+ESP-IDF Python environment lives in
+`../../.deps/espressif/python_env/bobe-<version>` and is selected regardless of
+the shell's Python.

@@ -60,8 +60,8 @@ voice runs wherever her daemon runs, or on the Mac if you choose the
 experimental in-app voice. Neither uses a cloud speech service, and raw audio
 is not stored. The words you say are sent to your model like anything you type.
 
-**Speech models.** English needs about 940 MB. Other languages add about
-1.75 GB. Install them during setup or from **Settings → Voice**.
+**Speech models.** English needs about 600 MB. Another language adds about
+0.7 GB. Install them during setup or from **Settings → Voice**.
 
 **Interrupting.** Just talk over her.
 

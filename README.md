@@ -126,7 +126,7 @@ schedule, and save an important question for you instead of guessing.
       <ul>
         <li>Pick her voice, speed and how long she waits for you to finish.</li>
         <li>Trail off on "and…" and she waits for the rest.</li>
-        <li>English speech models are about 940 MB, downloaded once.</li>
+        <li>English speech models are about 600 MB, downloaded once.</li>
         <li>English is the most reliable; other languages are still maturing.</li>
       </ul>
       <p><a href="docs/using-bobe.md#talking-to-bobe">More about voice</a></p>
@@ -191,7 +191,7 @@ release notes for platform and feature availability.
 |---|---|
 | **A Mac** | Apple Silicon, macOS 26 or later |
 | **A model** | One of: an API key (OpenAI, Anthropic, DeepSeek, OpenRouter), a Rail Relay token, a supported provider sign-in (OpenAI, GitHub Copilot), or [Ollama](https://ollama.com) on your own machine |
-| **Disk space** | About 940 MB for the English speech models; more for other languages and local models |
+| **Disk space** | About 600 MB for the English speech models; more for other languages and local models |
 | **Permissions** | Microphone for voice. Screen Recording only if you turn on screen awareness |
 
 To build from source you also need Xcode 26 or later and
@@ -342,10 +342,12 @@ This project follows the [Contributor Covenant Code of Conduct](CODE_OF_CONDUCT.
 
 ## License
 
-[MIT License](LICENSE)
+The source code is under the [MIT License](LICENSE). The BoBe name, logo, character
+and promotional media are not; see [Trademarks](TRADEMARKS.md).
 
-Downloaded speech models and voice presets have separate licenses and attribution
-requirements. See the [Pocket TTS integration notes](docs/pocket-tts.md).
+Downloaded speech models have their own licenses and attribution; see
+[Speech](docs/speech.md#models-and-licenses). Released apps include the licenses of
+the open-source software they contain.
 
 <p align="center">
   <br>

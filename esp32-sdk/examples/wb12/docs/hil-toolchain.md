@@ -35,16 +35,13 @@ world read/write, so `tools/bobe_hil.sh` needs no privilege.
 `build-bobe-snapshot/bobe-snapshot.lock`. The tracked `hil/bobe-snapshot.lock`
 records an earlier build; new builds do not overwrite it.
 
-## Planned independent observer
+## Independent observer
 
-Physical acoustic evidence is planned to come from one physically trusted
-Raspberry Pi observer instead of the macOS user session.
-[`hil/observer/README.md`](../hil/observer/README.md) gives its threat model and
-platform tools. OpenWrt is a separate network-fault authority.
-
-Pi OS and package versions are chosen when the hardware is selected. The exact
-dated image, package inventory, deployment hash and operator-signed
-qualification are then pinned together.
+Physical acoustic evidence is to come from a physically trusted Raspberry Pi
+observer instead of the macOS user session; [its README](../hil/observer/README.md)
+gives the trust model and evidence contract. OpenWrt is a separate network-fault
+authority. Pi OS and package versions are pinned with the deployment hash and
+signed qualification when that hardware is built.
 
 ## Adopted references, not runtime dependencies
 

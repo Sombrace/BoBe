@@ -401,7 +401,7 @@
 "settings.voice.model.stt_en.name" = "Listener — English";
 "settings.voice.model.stt_en.name_expert" = "FluidAudio Parakeet EOU (English)";
 "settings.voice.model.stt_en.purpose" = "Hears you when language is set to English.";
-"settings.voice.model.stt_en.size" = "~600 MB";
+"settings.voice.model.stt_en.size" = "~450 MB";
 "settings.voice.model.stt_multi.name" = "Listener — other languages";
 "settings.voice.model.stt_multi.name_expert" = "FluidAudio Nemotron 3.5 Streaming Multilingual + Silero VAD";
 "settings.voice.model.stt_multi.purpose" = "Hears you when language isn't English.";

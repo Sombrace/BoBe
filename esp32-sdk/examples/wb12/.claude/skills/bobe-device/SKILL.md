@@ -3,7 +3,7 @@ name: bobe-device
 description: Build, flash, identify, or observe the real WB-12 device. Explicit invocation only; never use this skill to choose product work or implementation priorities.
 argument-hint: "[build|status|identify|observe|flash] [arguments]"
 disable-model-invocation: true
-compatibility: ESP-IDF project with the retained WB-12 connected over USB.
+compatibility: ESP-IDF project with a WB-12 connected over USB.
 ---
 
 # BoBe device operations
