@@ -39,8 +39,9 @@ named by the local `vX.Y.Z` tag. Push that tag before creating the GitHub
 Release.
 
 Confirm that the Developer ID identity is available and that the Apple Developer
-team has issued a Developer ID provisioning profile for `com.bobe.app` with the
-endpoint Keychain Sharing group. Supply its external build settings for every app
+team has issued a Developer ID provisioning profile for `com.bobe.app`. Apple
+grants its keychain access as the team wildcard (`TEAMID.*`), which covers the
+endpoint credential group. Supply its external build settings for every app
 release:
 
 ```bash
