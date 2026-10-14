@@ -60,11 +60,19 @@ expected_group="${application_id%"$bundle_id"}$EXPECTED_SUFFIX"
         echo "App lacks the exact endpoint credential access group" >&2
         exit 1
     }
-/usr/libexec/PlistBuddy -c 'Print :Entitlements:keychain-access-groups' "$PROFILE_PLIST" \
-    | grep -Fxq "    $expected_group" || {
-        echo "Provisioning profile lacks the exact endpoint credential access group" >&2
-        exit 1
-    }
+profile_allows_expected_group() {
+    local group
+    while IFS= read -r group; do
+        group="${group#"${group%%[![:space:]]*}"}"
+        [[ "$group" == "$expected_group" ]] && return 0
+        [[ "$group" == *'*' && "$expected_group" == "${group%'*'}"* ]] && return 0
+    done < <(/usr/libexec/PlistBuddy -c 'Print :Entitlements:keychain-access-groups' "$PROFILE_PLIST")
+    return 1
+}
+profile_allows_expected_group || {
+    echo "Provisioning profile does not allow the endpoint credential access group" >&2
+    exit 1
+}
 
 signature="$(codesign -d --verbose=4 "$APP" 2>&1)"
 grep -q '^Authority=Developer ID Application:' <<<"$signature" || {
