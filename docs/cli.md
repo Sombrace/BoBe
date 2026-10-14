@@ -355,7 +355,7 @@ Use `--voice marius`, `--speed 1.5`, or `--cancel-after 100ms` to exercise voice
 selection, tempo and cancellation. Omit `--play` to save audio without playing it.
 The output path must be new. Preview uses the daemon's real sentence processing,
 speech engine and Opus stream, and does not create a conversation or call an LLM.
-See [Pocket TTS](pocket-tts.md#preview-speech-without-a-provider-account) for setup
+See [Speech](speech.md#preview-speech-without-a-provider-account) for setup
 and the measurements reported by the command.
 
 ## Configuration

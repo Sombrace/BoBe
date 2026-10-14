@@ -562,11 +562,14 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             log_level,
             managed_bootstrap_stdin,
         } => {
-            let config::LoadedConfig {
-                mut config,
-                paths,
-                config_file,
-            } = config::Config::load_operational()?;
+            let (
+                config::LoadedConfig {
+                    mut config,
+                    paths,
+                    config_file,
+                },
+                purged_release_0_2,
+            ) = config::Config::load_for_serve().await?;
             if let Some(host) = host {
                 config.server.host = host;
             }
@@ -600,6 +603,9 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 );
             }
             util::logging::init_tracing(&config);
+            if purged_release_0_2 {
+                tracing::info!("data_root.release_0_2_purged");
+            }
 
             tracing::info!(
                 "Starting BoBe on {}:{}",

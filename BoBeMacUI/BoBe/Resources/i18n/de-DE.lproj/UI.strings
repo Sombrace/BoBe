@@ -361,7 +361,7 @@
 "setup.physical.error.rejected" = "BoBe konnte diese Netzwerkeinstellungen nicht übernehmen.";
 "setup.physical.error.timed_out" = "BoBe hat zu lange für die Verbindung gebraucht. Versuch es noch mal.";
 
-"setup.voice.body" = "Ein einmaliger Download von rund 1 GB, für andere Sprachen mehr.";
+"setup.voice.body" = "Ein einmaliger Download von rund 600 MB, für andere Sprachen mehr.";
 "setup.voice.complete" = "Sie ist bereit zum Sprechen.";
 "setup.voice.failed" = "Die Spracheinrichtung wurde nicht abgeschlossen.";
 "setup.voice.poll_failure" = "Der Download wurde unterbrochen. Versuch es jetzt noch mal oder später in den Einstellungen.";

@@ -89,7 +89,7 @@ stop is to quit the app, or `bobe service uninstall` for a service.
 
 ### The speech models did not install
 
-Retry from **Settings → Voice**. The download is about 940 MB for English and
+Retry from **Settings → Voice**. The download is about 600 MB for English and
 needs a steady connection. If it fails again, the reason is in
 `~/.bobe/logs/`. A download whose checksum does not match is refused.
 
@@ -160,6 +160,9 @@ which sets both.
 in `~/.bobe/` was written by a different build. BoBe has no database
 migrations, so a build with a changed schema cannot open older data. Run
 the build that wrote it, or move `~/.bobe/` aside and set BoBe up again.
+
+Data from BoBe 0.2.0 is not refused. The first `bobe serve` of a newer build
+deletes the 0.2.0 database and `config.toml`, and BoBe starts setup again.
 
 ### A second daemon refuses to start
 

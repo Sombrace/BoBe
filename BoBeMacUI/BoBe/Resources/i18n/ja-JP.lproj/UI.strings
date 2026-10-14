@@ -305,7 +305,7 @@
 "setup.voice.stt_label.progress_format" = "聞き取り：ダウンロード中 %d%%…";
 "setup.voice.stt_label.ready" = "聞き取り：準備完了";
 "setup.voice.stt_label.failed_format" = "聞き取り：読み込めませんでした。%@";
-"setup.voice.body" = "約1 GBのダウンロードが1回だけ必要です。他の言語ではさらに増えます。";
+"setup.voice.body" = "約600 MBのダウンロードが1回だけ必要です。他の言語ではさらに増えます。";
 "setup.voice.complete" = "話す準備ができました。";
 "setup.voice.failed" = "音声の準備が完了しませんでした。";
 "setup.voice.poll_failure" = "ダウンロードが止まりました。今すぐ、またはあとで設定からもう一度お試しください。";

@@ -75,6 +75,10 @@ licenses, provider catalogs, templates, themes, and WebAssembly assets. Its
 private `bin/` includes ripgrep 15.1.0 and fd 10.3.0, verified against pinned
 upstream release archive digests. Search never depends on a user's global
 tools or unpinned first-use downloads.
+`scripts/tasks/notices.sh` writes BoBe's license, `TRADEMARKS.md`, the Rust crate
+notices from `cargo-about`, the speech and app license files in `third_party/` and,
+for the app, each Swift package's license into `Contents/Resources/licenses/`, or
+`bin/licenses/` in a standalone archive.
 Worker regression tests run before staging; test executables are not shipped.
 Production npm executable links are not generated; signed standalone archives
 contain only regular files and directories.

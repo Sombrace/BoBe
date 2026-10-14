@@ -437,7 +437,7 @@
 
 "setup.voice.try_again" = "Tentar de novo";
 "setup.voice.continue_without" = "Continuar sem voz";
-"setup.voice.body" = "Um download único de cerca de 1 GB, mais para outros idiomas.";
+"setup.voice.body" = "Um download único de cerca de 600 MB, mais para outros idiomas.";
 "setup.voice.complete" = "Ela está pronta para conversar.";
 "setup.voice.failed" = "A configuração de voz não terminou.";
 "setup.voice.poll_failure" = "O download parou. Tente de novo agora ou depois nos Ajustes.";

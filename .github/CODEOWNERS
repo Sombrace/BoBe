@@ -2,6 +2,7 @@
 * @athatheo @johnkozaris
 
 # Release control plane — extra scrutiny
+.github/workflows/** @athatheo @johnkozaris
 .gitignore @athatheo @johnkozaris
 scripts/tasks/** @athatheo @johnkozaris
 scripts/check-* @athatheo @johnkozaris
@@ -17,7 +18,8 @@ BoBeMacUI/Package.swift @athatheo @johnkozaris
 BoBeMacUI/Package.resolved @athatheo @johnkozaris
 
 # Dependency policy
-BoBeService/deny.toml @athatheo @johnkozaris
+deny.toml @athatheo @johnkozaris
+scripts/notices/** @athatheo @johnkozaris
 BoBeService/Cargo.lock @athatheo @johnkozaris
 PairingCore/Cargo.lock @athatheo @johnkozaris
 PairingFFI/Cargo.lock @athatheo @johnkozaris
@@ -26,3 +28,7 @@ PairingFFI/Cargo.lock @athatheo @johnkozaris
 BoBeService/src/secrets.rs @athatheo @johnkozaris
 BoBeService/src/mcp/security.rs @athatheo @johnkozaris
 SECURITY.md @athatheo @johnkozaris
+
+# License and brand
+LICENSE @athatheo @johnkozaris
+TRADEMARKS.md @athatheo @johnkozaris

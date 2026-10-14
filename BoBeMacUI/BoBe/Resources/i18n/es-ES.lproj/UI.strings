@@ -361,7 +361,7 @@
 "setup.physical.error.rejected" = "BoBe no pudo usar esa configuración de red.";
 "setup.physical.error.timed_out" = "BoBe tardó demasiado en conectarse. Inténtalo de nuevo.";
 
-"setup.voice.body" = "Una única descarga de alrededor de 1 GB, más para otros idiomas.";
+"setup.voice.body" = "Una única descarga de alrededor de 600 MB, más para otros idiomas.";
 "setup.voice.complete" = "Ya está lista para hablar.";
 "setup.voice.failed" = "La configuración de voz no terminó.";
 "setup.voice.poll_failure" = "La descarga se detuvo. Vuelve a intentarlo ahora o más tarde en Ajustes.";

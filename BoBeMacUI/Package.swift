@@ -1,6 +1,8 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
+let packageDirectory = Context.packageDirectory
+
 let package = Package(
     name: "BoBe",
     defaultLocalization: "en",
@@ -19,12 +21,12 @@ let package = Package(
             exclude: ["PairingClient-Bridging-Header.h"],
             swiftSettings: [
                 .unsafeFlags([
-                    "-import-objc-header", "PairingClient/PairingClient-Bridging-Header.h",
+                    "-import-objc-header", "\(packageDirectory)/PairingClient/PairingClient-Bridging-Header.h",
                 ])
             ],
             linkerSettings: [
                 .unsafeFlags([
-                    "-L", "../PairingFFI/target/release",
+                    "-L", "\(packageDirectory)/../PairingFFI/target/release",
                     "-lbobe_pairing_ffi",
                 ])
             ]

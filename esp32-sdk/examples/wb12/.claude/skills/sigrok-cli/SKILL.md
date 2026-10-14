@@ -16,6 +16,5 @@ Read `tools/sigrok.sh --help` and the selected subcommand help. Runtime,
 identity, firmware state, capture bounds, and operation side effects are
 reported by the tool.
 
-Read `references/runtime.md` when the native runtime is missing or stale,
-`references/electrical.md` before connecting an unverified clone, and
-`references/tn077-te001.md` only for the observed TN077/TE001.
+Read `references/runtime.md` when the native runtime is missing or stale and
+`references/electrical.md` before connecting an unverified clone.

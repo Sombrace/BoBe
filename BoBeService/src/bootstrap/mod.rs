@@ -1,6 +1,7 @@
 pub(crate) mod database;
 mod infra;
 pub(crate) mod mcp_loader;
+pub(crate) mod release_0_2;
 mod repos;
 mod voice_loader;
 mod wiring;

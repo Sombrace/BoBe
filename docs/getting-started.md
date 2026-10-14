@@ -13,7 +13,7 @@ To run BoBe without the Mac app, see the [command line guide](cli.md).
 |---|---|
 | **A Mac** | Apple Silicon, macOS 26 or later |
 | **A model** | One of the options in [Choosing a model](#choosing-a-model) |
-| **Disk space** | About 940 MB for the English speech models. Other languages add about 1.75 GB. Local models need several more gigabytes |
+| **Disk space** | About 600 MB for the English speech models. Another language adds about 0.7 GB. Local models need several more gigabytes |
 | **Network** | To download speech models and to reach a cloud provider, if you use one |
 
 ### To build BoBe from source

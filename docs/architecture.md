@@ -70,7 +70,10 @@ authority/database locks, loads configuration and credentials, applies the
 SQLite schema and constructs services in `bootstrap`. There are no schema
 migrations: an existing database must carry exactly the schema version this
 daemon uses, or startup refuses it untouched and a new data root is needed. Any
-change to `schema.sql` raises that version. It recovers job and
+change to `schema.sql` raises that version. The one exception is data from the
+0.2.0 release: before loading configuration, `bobe serve` deletes a database
+whose tables are exactly those of 0.2.0 and the `config.toml` beside it, so
+updated 0.2.0 installs start setup instead of failing. It recovers job and
 message journals before serving. Optional speech-model loading runs separately;
 installed models are not advertised as ready until their engine checks pass.
 
@@ -445,7 +448,7 @@ per voice session. The socket speaks `bobe.voice.v2` only: the surface sends a
 speech offer, transcripts by default, or credit-bounded 20 ms PCM frames to a
 readiness-qualified daemon STT engine. Raw audio is not stored.
 Daemon synthesis uses native Pocket TTS with an English pack, bounded streaming
-PCM and a persistent Opus packetizer. See [Pocket TTS](pocket-tts.md) for the
+PCM and a persistent Opus packetizer. See [Speech](speech.md) for the
 runtime, pack provenance, language scope and licensing.
 Tool-activity filler output is keyed to the authoritative run. Concurrent
 Mac/body turns cannot redirect each other's filler audio, and ending one run

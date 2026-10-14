@@ -17,4 +17,4 @@ Use level translation or hardware with a verified rating when the signal is
 outside those assumptions.
 
 The sigrok wrapper is instrument authority, not permission to open or probe a
-target. The sealed WB-12 has no approved internal probe access.
+target. The WB-12 has no approved internal probe access.

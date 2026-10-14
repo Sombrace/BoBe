@@ -137,6 +137,12 @@ impl Config {
         Ok(loaded)
     }
 
+    pub(crate) async fn load_for_serve() -> Result<(LoadedConfig, bool), crate::error::AppError> {
+        let purged_release_0_2 =
+            crate::bootstrap::release_0_2::purge(&crate::util::paths::bobe_data_dir()?).await?;
+        Ok((Self::load_operational()?, purged_release_0_2))
+    }
+
     pub(crate) fn load_from(
         config_path: &std::path::Path,
         bootstrap_data_dir: &std::path::Path,

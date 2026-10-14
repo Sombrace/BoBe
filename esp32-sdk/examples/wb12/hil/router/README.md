@@ -60,20 +60,6 @@ leases, and rolls back the router if active state cannot be persisted. A lost
 apply response plus failed rollback therefore remains recoverable through
 status or router TTL expiry.
 
-## Provisioning transition
-
-The autonomous onboarding implementation must:
-
-1. Hold a router-side lease with TTL rollback.
-2. Temporarily put the 2.4 GHz radio in STA mode for the WB-12 secure SoftAP.
-3. Route the wired Mac to the provisioning endpoint without changing the Mac
-   default route.
-4. Run the existing Security-2 provisioner using private daemon inputs.
-5. Restore the fixed 2.4 GHz test AP.
-6. Verify the WB-12 joins it and that the Mac still routes internet over Wi-Fi.
-
-This transition is disabled until the exact router/radio interface names and
-25.12.5 package set (`tc-full`, `kmod-netem`, `nftables`) are validated on real
-hardware. The netem qdisc covers test-interface egress only; bidirectional IFB
-shaping must also be validated on that hardware before an uplink-loss scenario
-can claim two-way impairment.
+Automated provisioning through this router is not implemented. The netem qdisc
+shapes test-interface egress only; uplink loss needs bidirectional shaping that
+has not been validated on hardware.

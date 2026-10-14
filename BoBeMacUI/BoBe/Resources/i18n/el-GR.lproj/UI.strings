@@ -305,7 +305,7 @@
 "setup.voice.stt_label.progress_format" = "Η ακοή της: λήψη %d%%…";
 "setup.voice.try_again" = "Δοκίμασε ξανά";
 "setup.voice.continue_without" = "Συνέχεια χωρίς φωνή";
-"setup.voice.body" = "Κατεβαίνει μία φορά, περίπου 1 GB, περισσότερο για άλλες γλώσσες.";
+"setup.voice.body" = "Κατεβαίνει μία φορά, περίπου 600 MB, περισσότερο για άλλες γλώσσες.";
 "setup.voice.complete" = "Είναι έτοιμη να μιλήσει.";
 "setup.voice.failed" = "Η ρύθμιση φωνής δεν ολοκληρώθηκε.";
 "setup.voice.poll_failure" = "Η λήψη σταμάτησε. Δοκίμασε ξανά τώρα ή αργότερα από τις Ρυθμίσεις.";

@@ -20,6 +20,7 @@ are written for people changing the code.
 | [Product contract](../PRODUCT.md) | What BoBe is, and the product shapes it rejects |
 | [Architecture](architecture.md) | How the Rust daemon, the pi worker and the Swift app are built |
 | [Physical BoBe](physical-bobe.md) | Voice, embodiment and room devices |
+| [Speech](speech.md) | Speech engines, model downloads and their licenses |
 | [ESP32 SDK](../esp32-sdk/README.md) | Building a body or another small surface |
 | [Device pairing](device-pairing-crypto.md) | How a Mac and a daemon come to trust each other |
 | [Updates](cli.md#updating) | App updates and signed standalone update files |
@@ -33,6 +34,7 @@ are written for people changing the code.
 | [Security policy](../SECURITY.md) | Reporting a vulnerability, and what is in scope |
 | [Code of conduct](../CODE_OF_CONDUCT.md) | How we treat each other |
 | [License](../LICENSE) | MIT |
+| [Trademarks](../TRADEMARKS.md) | Use of the BoBe name, logo, character and media |
 
 ## How the pieces fit
 

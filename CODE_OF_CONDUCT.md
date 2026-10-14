@@ -45,7 +45,7 @@ an individual is officially representing the community in public spaces.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project maintainers at **athatheoc@gmail.com**.
+reported to the project maintainers at **hello@bobebot.com**.
 
 All complaints will be reviewed and investigated promptly and fairly.
 
