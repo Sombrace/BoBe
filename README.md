@@ -237,7 +237,9 @@ menu and the daemon the app started stops with her.
 ## Without the app
 
 The same BoBe runs headless on a Mac or a Linux machine and is driven from the
-`bobe` command line:
+`bobe` command line. On Linux x86_64, download the standalone archive from
+[Releases](https://github.com/Sombrace/BoBe/releases); elsewhere, build it from source
+([install](docs/cli.md#install)). Then:
 
 ```bash
 bobe setup
@@ -277,7 +279,7 @@ goals are reviewed.
 | Platform | Architecture | Minimum version | Status |
 |----------|-------------|-----------------|--------|
 | macOS app and daemon | Apple Silicon (arm64) | macOS 26 | ✅ Supported |
-| Ubuntu daemon | x86_64 | — | Build from source; standalone CLI and guided setup |
+| Ubuntu daemon | x86_64 | Ubuntu 24.04 | Release archive or build from source; standalone CLI and guided setup. Not release-qualified |
 | iPhone surface | iPhone | iOS 26 | Source app; requires a reachable BoBe runtime. See [capabilities and limits](docs/iphone.md) |
 
 The interface is available in English, Greek, Chinese, German, Spanish,
