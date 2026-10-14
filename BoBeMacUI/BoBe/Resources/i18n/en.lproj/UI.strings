@@ -351,7 +351,7 @@
 "settings.mcp.runtime.pending" = "pending";
 
 "setup.voice.title" = "Talk with BoBe";
-"setup.voice.body" = "A one-time download of about 1 GB, more for other languages.";
+"setup.voice.body" = "A one-time download of about 600 MB, more for other languages.";
 "setup.voice.complete" = "She’s ready to talk.";
 "setup.voice.failed" = "Voice setup didn’t finish.";
 "setup.voice.poll_failure" = "The download stopped. Try again now, or later in Settings.";

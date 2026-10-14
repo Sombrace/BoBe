@@ -305,7 +305,7 @@
 "setup.voice.stt_label.progress_format" = "듣기: 다운로드 중 %d%%…";
 "setup.voice.stt_label.ready" = "듣기: 준비 완료";
 "setup.voice.stt_label.failed_format" = "듣기: 불러오지 못했습니다. %@";
-"setup.voice.body" = "약 1 GB를 한 번만 내려받습니다. 다른 언어는 더 필요합니다.";
+"setup.voice.body" = "약 600 MB를 한 번만 내려받습니다. 다른 언어는 더 필요합니다.";
 "setup.voice.complete" = "대화할 준비가 됐습니다.";
 "setup.voice.failed" = "음성 설정을 마치지 못했습니다.";
 "setup.voice.poll_failure" = "다운로드가 멈췄습니다. 지금 다시 시도하거나 나중에 설정에서 다시 시도하세요.";

@@ -305,7 +305,7 @@
 "setup.voice.stt_label.progress_format" = "她的听觉：正在下载 %d%%…";
 "setup.voice.stt_label.ready" = "她的听觉：已就绪";
 "setup.voice.stt_label.failed_format" = "她的听觉：未能加载。%@";
-"setup.voice.body" = "只需下载一次，约 1 GB，其他语言需要更多。";
+"setup.voice.body" = "只需下载一次，约 600 MB，其他语言需要更多。";
 "setup.voice.complete" = "她已经可以说话了。";
 "setup.voice.failed" = "语音设置未完成。";
 "setup.voice.poll_failure" = "下载已停止。请现在重试，或稍后在设置中重试。";
