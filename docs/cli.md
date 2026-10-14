@@ -32,7 +32,19 @@ a client of the daemon.
 
 ## Install
 
-Build a self-contained archive on the machine type you will run it on:
+On Linux x86_64, download `bobe-daemon-<version>-linux-x86_64.tar.gz` and its
+`.sha256` from the [Releases](https://github.com/Sombrace/BoBe/releases) page. The archive
+is built on Ubuntu 24.04 and needs glibc 2.39 or later. Check it before you unpack it:
+
+```bash
+sha256sum -c bobe-daemon-<version>-linux-x86_64.tar.gz.sha256
+```
+
+If you use the Mac app, open **Settings → Runtime** and choose **Install Command Line
+Tool…**. It installs `~/.local/bin/bobe`, which runs the app's own copy of BoBe, so the
+command and the app stay the same version.
+
+On another machine, build a self-contained archive on the machine type you will run it on:
 
 ```bash
 git clone https://github.com/Sombrace/BoBe.git
@@ -40,12 +52,12 @@ cd BoBe
 scripts/tasks/standalone.sh
 ```
 
-That produces `build/bobe-daemon-<version>-<platform>.tar.gz`, holding the
-daemon, its pinned Node, the agent worker and an installer. Unpack it and run
+That produces `build/bobe-daemon-<version>-<platform>.tar.gz`. Each archive holds
+the daemon, its pinned Node, the agent worker and an installer. Unpack it and run
 the installer:
 
 ```bash
-tar -xzf build/bobe-daemon-<version>-<platform>.tar.gz
+tar -xzf bobe-daemon-<version>-<platform>.tar.gz
 ./bobe-daemon-<version>-<platform>/install.sh
 ```
 
