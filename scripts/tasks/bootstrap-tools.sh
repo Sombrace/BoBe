@@ -7,6 +7,7 @@ BIN_DIR="$TOOLS_DIR/bin"
 CACHE_DIR="$TOOLS_DIR/cache"
 MODE="${1:-install}"
 
+CARGO_ABOUT_VERSION="0.9.2"
 CARGO_DENY_VERSION="0.20.2"
 CARGO_MACHETE_VERSION="0.9.2"
 SWIFTLINT_VERSION="0.65.0"
@@ -21,6 +22,7 @@ tool_matches() {
 
 check_tools() {
     local failed=0
+    tool_matches "$BIN_DIR/cargo-about" "cargo-about $CARGO_ABOUT_VERSION" --version || failed=1
     tool_matches "$BIN_DIR/cargo-deny" "cargo-deny $CARGO_DENY_VERSION" --version || failed=1
     tool_matches "$BIN_DIR/cargo-machete" "$CARGO_MACHETE_VERSION" --version || failed=1
     tool_matches "$BIN_DIR/swiftlint" "$SWIFTLINT_VERSION" version || failed=1
@@ -91,6 +93,10 @@ command -v shasum >/dev/null
 command -v unzip >/dev/null
 mkdir -p "$BIN_DIR" "$CACHE_DIR"
 
+if ! tool_matches "$BIN_DIR/cargo-about" "cargo-about $CARGO_ABOUT_VERSION" --version; then
+    cargo install --locked --force --root "$TOOLS_DIR" --features cli \
+        cargo-about --version "$CARGO_ABOUT_VERSION"
+fi
 if ! tool_matches "$BIN_DIR/cargo-deny" "cargo-deny $CARGO_DENY_VERSION" --version; then
     cargo install --locked --force --root "$TOOLS_DIR" \
         cargo-deny --version "$CARGO_DENY_VERSION"

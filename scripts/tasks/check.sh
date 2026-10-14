@@ -24,12 +24,12 @@ cargo clippy --manifest-path BoBeService/Cargo.toml --quiet --locked
 cargo test --manifest-path BoBeService/Cargo.toml --quiet --locked
 cargo build --manifest-path BoBeService/Cargo.toml --quiet --locked
 
-(
-    cd BoBeService
-    ../.tools/bin/cargo-deny check --hide-inclusion-graph \
-        advisories licenses bans sources
-)
 for crate in BoBeService PairingCore PairingFFI; do
+    (
+        cd "$crate"
+        ../.tools/bin/cargo-deny check --hide-inclusion-graph \
+            advisories licenses bans sources
+    )
     ./.tools/bin/cargo-machete --with-metadata "$crate"
 done
 
