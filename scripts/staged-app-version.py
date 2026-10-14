@@ -23,7 +23,7 @@ def main() -> None:
             info_paths = [
                 name
                 for name in bundle.namelist()
-                if name.endswith(".app/Contents/Info.plist")
+                if name.endswith(".app/Contents/Info.plist") and name.count("/") == 2
             ]
             if not info_paths:
                 continue
