@@ -473,7 +473,7 @@
 "settings.voice.tts_backend.client_supertonic" = "Client Supertonic-3 (experimental)";
 "settings.voice.tts_backend.best_for_format" = "%1$@ · best for %2$@";
 "settings.voice.advice.engine_format" = "%1$@ can’t speak %2$@. %3$@ can.";
-"settings.voice.advice.persona_format" = "BoBe’s current voice is made for another language. Use a %@ voice?";
+"settings.voice.advice.persona_format" = "BoBe’s current voice is made for another language. Use a voice for %@?";
 "settings.voice.advice.switch" = "Switch";
 "setup.voice.model.tts" = "Her voice";
 "setup.voice.model.stt" = "Her hearing";

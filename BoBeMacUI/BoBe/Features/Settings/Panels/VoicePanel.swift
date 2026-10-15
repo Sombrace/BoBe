@@ -85,7 +85,7 @@ struct VoicePanel: View {
                     BobeMenuPicker(
                         selection: self.store.binding(\.voiceSttLanguage, fallback: "en"),
                         options: VoiceLanguages.all,
-                        label: VoiceLanguages.displayName(for:),
+                        label: { VoiceLanguages.menuTitle(for: $0) },
                         width: 240
                     )
                 }

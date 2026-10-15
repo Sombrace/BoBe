@@ -20,16 +20,12 @@ enum PocketVoices {
 enum VoiceLanguages {
     static let all: [String] = ["en", "zh", "es", "el", "ko", "ja"]
 
-    static func displayName(for code: String) -> String {
-        let base: String = switch code {
-        case "en": "English"
-        case "zh": "Mandarin"
-        case "es": "Spanish"
-        case "el": "Greek"
-        case "ko": "Korean"
-        case "ja": "Japanese"
-        default: code
-        }
-        return base
+    static func displayName(for code: String, in locale: Locale = L10n.locale) -> String {
+        locale.localizedString(forLanguageCode: code) ?? code
+    }
+
+    static func menuTitle(for code: String, in locale: Locale = L10n.locale) -> String {
+        guard let name = locale.localizedString(forLanguageCode: code) else { return code }
+        return name.prefix(1).uppercased(with: locale) + name.dropFirst()
     }
 }

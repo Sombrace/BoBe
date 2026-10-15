@@ -12,9 +12,6 @@ mkdir -p "$ROOT/build"
 mkdir -m 0700 "$TEMP_DIR"
 trap 'rm -rf "$TEMP_DIR"' EXIT
 
-required_prefixes='^(app\.service_error\.(summary|persistent_summary)$|overlay\.floating_bubble\.(silence|unsilence)$|overlay\.input\.mic\.install_progress\.(accessibility|value_format)$|overlay\.voice\.(presence_ring\.(accessibility|tooltip)|coachmark\.(title|body))$|settings\.appearance\.body\.|settings\.privacy\.storage\.(description|included\.list)$|settings\.voice\.(stt_preference|tts_backend)(\.|$)|settings\.window\.search\.enable_expert$|setup\.runtime\.|runtime\.issue\.|runtime\.action\.|settings\.runtime\.|setup\.cloud_auth\.(error\.(generic|timeout)|sheet\.error(\.(denied|expired|generic|handshake|network|slow_down)|_details))$|setup\.physical\.|setup\.proactivity\.|setup\.wizard\.progress($|\.)|setup\.voice\.(try_again|continue_without)$|setup\.(value\.control|voice)\.body$|tray\.status\.accessibility$)'
-provider_prefixes='^(settings\.agent\.|settings\.providers\.|setup\.provider\.|setup\.engine\.provider\.|setup\.engine\.local\.remote_subtitle$|setup\.cloud_auth\.(sheet\.(response|submit)|error\.invalid_url)$)'
-
 matches() {
     rg "$@" || [[ $? -eq 1 ]]
 }
@@ -23,87 +20,21 @@ extract_keys() {
     sed -nE 's/^[[:space:]]*"([^"]+)"[[:space:]]*=.*/\1/p' "$1"
 }
 
-check_catalog() {
-    local catalog="$1"
-    local work="$2"
-    local locale
-    locale="$(basename "$(dirname "$catalog")")"
-    local raw="$work/$locale.raw"
-    local sorted="$work/$locale.keys"
-
-    if [[ "$(uname -s)" == Darwin ]]; then
-        plutil -lint "$catalog" >/dev/null
-    fi
-    python3 - "$catalog" <<'PY'
-import pathlib
-import re
-import sys
-
-path = pathlib.Path(sys.argv[1])
-entry = re.compile(r'^"(?:[^"\\]|\\.)+" = "(?:[^"\\]|\\.)*";$')
-in_comment = False
-for number, raw in enumerate(path.read_text().splitlines(), 1):
-    line = raw.strip()
-    if in_comment:
-        if "*/" in line:
-            in_comment = False
-        continue
-    if line.startswith("/*"):
-        in_comment = "*/" not in line
-        continue
-    if not line or line.startswith("//"):
-        continue
-    if not entry.fullmatch(line):
-        raise SystemExit(f"{path}:{number}: invalid strings entry")
-PY
-    extract_keys "$catalog" >"$raw"
-    LC_ALL=C sort "$raw" >"$sorted"
-
-    local duplicates
-    duplicates="$(uniq -d "$sorted")"
-    if [[ -n "$duplicates" ]]; then
-        echo "$catalog contains duplicate localization keys:" >&2
-        printf '%s\n' "$duplicates" >&2
-        return 1
-    fi
-
-    if [[ "$locale" != en.lproj ]]; then
-        local unknown
-        unknown="$(comm -23 "$sorted" "$work/en.lproj.keys")"
-        if [[ -n "$unknown" ]]; then
-            echo "$catalog contains keys absent from the English source catalog:" >&2
-            printf '%s\n' "$unknown" >&2
-            return 1
-        fi
-
-        local missing_required
-        missing_required="$(comm -23 "$work/required" "$sorted")"
-        if [[ -n "$missing_required" ]]; then
-            echo "$catalog is missing required cross-locale localization keys:" >&2
-            printf '%s\n' "$missing_required" >&2
-            return 1
-        fi
-    fi
-}
-
 check_catalogs() {
     local english="$1"
     local work="$2"
-    local required_pattern="$3"
+    local table
+    table="$(basename "$english")"
     local catalog_root
     catalog_root="$(dirname "$(dirname "$english")")"
     mkdir "$work"
 
-    check_catalog "$english" "$work"
-    if [[ -n "$required_pattern" ]]; then
-        grep -E "$required_pattern" "$work/en.lproj.keys" >"$work/required"
-    else
-        cp "$work/en.lproj.keys" "$work/required"
+    if [[ "$(uname -s)" == Darwin ]]; then
+        local catalog
+        for catalog in "$catalog_root"/*.lproj/"$table"; do
+            plutil -lint "$catalog" >/dev/null
+        done
     fi
-    while IFS= read -r catalog; do
-        [[ "$catalog" == "$english" ]] && continue
-        check_catalog "$catalog" "$work"
-    done < <(find "$catalog_root" -name "$(basename "$english")" -type f | LC_ALL=C sort)
 
     python3 - "$english" "$catalog_root" <<'PY'
 import pathlib
@@ -112,7 +43,7 @@ import sys
 
 english_path = pathlib.Path(sys.argv[1])
 catalog_root = pathlib.Path(sys.argv[2])
-entry = re.compile(r'^\s*"((?:[^"\\]|\\.)*)"\s*=\s*"((?:[^"\\]|\\.)*)";')
+entry = re.compile(r'^"((?:[^"\\]|\\.)+)" = "((?:[^"\\]|\\.)*)";$')
 conversion = re.compile(
     r'%(?!%)(?:(\d+)\$)?[-+ #0]*(?:\d+)?(?:\.(?:\d+))?'
     r'((?:hh|h|ll|l|L|z|j|t|q)?[@diuoxXfFeEgGaAcCsSp])'
@@ -121,10 +52,25 @@ conversion = re.compile(
 
 def catalog_values(path):
     values = {}
-    for line in path.read_text().splitlines():
-        match = entry.match(line)
-        if match:
-            values[match.group(1)] = match.group(2)
+    in_comment = False
+    for number, raw in enumerate(path.read_text().splitlines(), 1):
+        line = raw.strip()
+        if in_comment:
+            if "*/" in line:
+                in_comment = False
+            continue
+        if line.startswith("/*"):
+            in_comment = "*/" not in line
+            continue
+        if not line or line.startswith("//"):
+            continue
+        match = entry.fullmatch(line)
+        if match is None:
+            raise SystemExit(f"{path}:{number}: invalid strings entry")
+        key, value = match.groups()
+        if key in values:
+            raise SystemExit(f"{path}:{number}: duplicate localization key {key!r}")
+        values[key] = value
     return values
 
 
@@ -141,16 +87,37 @@ def signature(value):
     return sorted(result)
 
 
+def report(catalog, problem, keys):
+    return f"{catalog} {problem}:\n" + "\n".join(f"  {key}" for key in keys)
+
+
 english = catalog_values(english_path)
-for catalog in sorted(catalog_root.glob(f'*.lproj/{english_path.name}')):
+problems = []
+for locale in sorted(catalog_root.glob("*.lproj")):
+    catalog = locale / english_path.name
     if catalog == english_path:
         continue
-    for key, value in catalog_values(catalog).items():
-        if signature(value) != signature(english[key]):
-            raise SystemExit(
-                f"{catalog}: format placeholders for {key!r} do not match English"
-            )
+    if not catalog.is_file():
+        problems.append(f"{catalog} is missing")
+        continue
+    values = catalog_values(catalog)
+    missing = sorted(english.keys() - values.keys())
+    if missing:
+        problems.append(report(catalog, "is missing keys from the English source catalog", missing))
+    unknown = sorted(values.keys() - english.keys())
+    if unknown:
+        problems.append(report(catalog, "contains keys absent from the English source catalog", unknown))
+    mismatched = sorted(
+        key for key in english.keys() & values.keys()
+        if signature(values[key]) != signature(english[key])
+    )
+    if mismatched:
+        problems.append(report(catalog, "has format placeholders that do not match English", mismatched))
+if problems:
+    raise SystemExit("\n".join(problems))
 PY
+
+    extract_keys "$english" | LC_ALL=C sort >"$work/en.lproj.keys"
 }
 
 static_keys() {
@@ -417,9 +384,9 @@ check_sources() {
     fi
 }
 
-check_catalogs "$MAC_CATALOG_ROOT/en.lproj/UI.strings" "$TEMP_DIR/mac" "$required_prefixes|$provider_prefixes"
-check_catalogs "$PHONE_CATALOG_ROOT/en.lproj/UI.strings" "$TEMP_DIR/phone" ""
-check_catalogs "$PHONE_CATALOG_ROOT/en.lproj/InfoPlist.strings" "$TEMP_DIR/phone-info" ""
+check_catalogs "$MAC_CATALOG_ROOT/en.lproj/UI.strings" "$TEMP_DIR/mac"
+check_catalogs "$PHONE_CATALOG_ROOT/en.lproj/UI.strings" "$TEMP_DIR/phone"
+check_catalogs "$PHONE_CATALOG_ROOT/en.lproj/InfoPlist.strings" "$TEMP_DIR/phone-info"
 
 python3 - "$PHONE_SOURCE_ROOT/Resources/Info.plist" "$PHONE_CATALOG_ROOT/en.lproj/InfoPlist.strings" <<'PY'
 import pathlib
