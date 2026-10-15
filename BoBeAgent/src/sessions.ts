@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import {
   compact as compactSession, createAgentSession, createBashToolDefinition, createReadToolDefinition,
   createEditToolDefinition, createWriteToolDefinition,
@@ -14,7 +14,6 @@ import { TurnEvents } from "./events.js";
 import { boundedOutput, subagentTool, type DelegateTask, type DelegateResult } from "./delegation.js";
 import { Cancelled, Serial, assertActive, type Redactor } from "./errors.js";
 import { createChildSession, flushSession, openBackgroundSession, openChannelSession, OWNER_CHANNEL } from "./persistence.js";
-import { privateRead } from "./files.js";
 import { backgroundTools } from "./background.js";
 import { scheduleTool } from "./scheduling.js";
 import { ownerInputTool, type DeferredOwnerInput } from "./owner-input.js";
@@ -22,8 +21,38 @@ import { ownedFind, ownedGrep } from "./search.js";
 import { ProcessClient } from "./process.js";
 import {
   domainResultSchema, isRecord, json, object, validate, type Delta, type Initialize,
-  type BackgroundRequest, type Json, type JsonObject, type McpConfig, type Route, type Thinking,
+  type BackgroundRequest, type Json, type JsonObject, type McpConfig, type Persona, type Route, type Thinking,
 } from "./protocol.js";
+
+let packagedBehavior: Promise<string> | undefined;
+
+function companionBehavior(): Promise<string> {
+  packagedBehavior ??= readFile(new URL("../assets/chat.md", import.meta.url), "utf8").then(text => {
+    if (!text.trim()) throw new Error("The packaged companion behavior is empty");
+    return text.trim();
+  });
+  return packagedBehavior;
+}
+
+function capabilityFacts(capabilities: Initialize["capabilities"]): string {
+  return Object.entries(capabilities).map(([name, enabled]) => `${name}: ${enabled ? "on" : "off"}`).join("\n");
+}
+
+function inertMarkers(text: string): string {
+  return text.replace(/\[(?=\/?bobe\.)/gi, "\\[");
+}
+
+function inertDocument(document: string): string {
+  return inertMarkers(document).replace(/<(?=\/?(?:bobe_|soul\b|profile\b))/gi, "&lt;");
+}
+
+function personaSection(persona: Persona): string {
+  const entries = (tag: string, documents: string[]): string[] =>
+    documents.map(document => document.trim()).filter(Boolean).map(document => `<${tag}>\n${inertDocument(document)}\n</${tag}>`);
+  return [...entries("soul", persona.souls), ...entries("profile", persona.profiles)].join("\n");
+}
+
+const noPersona: Persona = { souls: [], profiles: [] };
 
 interface SessionCallbacks {
   domain(name: string, args: JsonObject, requestId: number, signal?: AbortSignal): Promise<Json>;
@@ -38,6 +67,7 @@ interface TurnContext {
   requestId: number;
   context: string;
   memoryContext: string;
+  persona: Persona;
   channel: "voice" | "text";
   depth: number;
   childrenCreated: { count: number };
@@ -47,7 +77,8 @@ interface TurnContext {
 
 export class SessionBundle {
   current: TurnContext = {
-    requestId: 0, context: "", memoryContext: "", channel: "text", depth: 0, childrenCreated: { count: 0 }, visibleOutput: false,
+    requestId: 0, context: "", memoryContext: "", persona: noPersona, channel: "text", depth: 0,
+    childrenCreated: { count: 0 }, visibleOutput: false,
   };
   readonly errors: string[] = [];
   private closePromise: Promise<void> | undefined;
@@ -201,12 +232,6 @@ export class Sessions {
     });
   }
 
-  private async behavior(): Promise<string> {
-    const behavior = await privateRead(join(this.config.data_root, "skills/chat/SKILL.md"));
-    if (behavior === undefined || !behavior.trim()) throw new Error("The authority's companion behavior skill is missing");
-    return behavior.replace(/^---\n[\s\S]*?\n---\n/, "");
-  }
-
   private async create(
     manager: SessionManager,
     full: boolean,
@@ -254,10 +279,14 @@ export class Sessions {
           }
         }
       });
-      pi.on("before_agent_start", async event => {
+      pi.on("before_agent_start", event => {
         const bundle = binding();
-        if (full) event.systemPromptOptions.sections.bobe_behavior = await this.behavior();
-        event.systemPromptOptions.sections.bobe_memory = bundle.current.memoryContext;
+        const sections = event.systemPromptOptions.sections;
+        if (full) {
+          sections.bobe_capabilities = capabilityFacts(this.config.capabilities);
+          sections.bobe_persona = personaSection(bundle.current.persona);
+        }
+        sections.bobe_memory = inertDocument(bundle.current.memoryContext);
         event.systemPromptOptions.skills = bundle.resources.getSkills().skills;
       });
       pi.on("ui_prompt_start", (_event, ctx) => {
@@ -280,7 +309,7 @@ export class Sessions {
     const resources = new AuthorityResources(
       this.config.data_root, this.config.workspace, this.agentDir,
       full ? this.skillDirectories : [], settings,
-      finitePrompt ?? this.config.capability_instructions,
+      finitePrompt ?? await companionBehavior(),
       [contextExtension, mcp.extension()],
     );
     await resources.reload();
@@ -454,8 +483,11 @@ export class Sessions {
 
   context(
     bundle: SessionBundle, requestId: number, context: string, channel: "voice" | "text", memoryContext = "",
+    persona = noPersona,
   ): void {
-    bundle.current = { requestId, context, memoryContext, channel, depth: 0, childrenCreated: { count: 0 }, visibleOutput: false };
+    bundle.current = {
+      requestId, context, memoryContext, persona, channel, depth: 0, childrenCreated: { count: 0 }, visibleOutput: false,
+    };
   }
 
   async steer(requestId: number, text: string, followUp: boolean): Promise<void> {
@@ -536,9 +568,7 @@ export class Sessions {
       assertActive(signal);
       if (bundle.errors.length) throw new Error(`Session extension failed: ${bundle.errors.join("; ")}`);
       const hints = [bundle.current.context];
-      if (bundle.current.channel === "voice") hints.push(
-        "This is a live spoken turn. Reply with short, natural, speakable sentences. Do not wait for a tool dialog.",
-      );
+      if (bundle.current.channel === "voice") hints.push("This is a live spoken turn.");
       const hint = hints.filter(Boolean).join("\n\n");
       const prompt = hint ? `[bobe.turn_context]\n${hint}\n[/bobe.turn_context]\n\n${text}` : text;
       await bundle.session.prompt(prompt, { source: "rpc", expandPromptTemplates: false });
@@ -623,7 +653,7 @@ export class Sessions {
     try {
       this.context(bundle, requestId,
         `Background job ${params.job_id}: ${params.title}.\nThis is bounded delegated work. Return the outcome to the canonical companion; do not address the owner as another companion.\n${params.context}`,
-        "text", params.memory_context);
+        "text", params.memory_context, params.persona);
       await this.select(bundle, params.route, "text", signal);
       const prompt = params.attempt > 1
         ? `This task is being reconsidered after interruption or failure. Earlier external effects may have happened. Inspect the retained transcript and current files/tool state before repeating effects. Choose whether to continue, use another method or wait within the task's existing authorization. A retry is not new permission for an external commitment. Do not ask the owner to approve a routine technical retry.\n\n${params.task}`
@@ -687,12 +717,12 @@ export class Sessions {
       child = await this.create(manager, true, model);
       child.current = {
         ...parent.current,
-        context: `Scoped delegated work. Role: ${agent}. Return findings to the parent, not to the person.\n${task.context ?? ""}`,
+        context: `Scoped delegated work. Role: ${inertMarkers(agent)}. Return findings to the parent, not to the person.\n${inertMarkers(task.context ?? "")}`,
         depth: parent.current.depth + 1,
         visibleOutput: false,
       };
       child.session.setThinkingLevel(parent.session.thinkingLevel, { persist: false });
-      const result = await this.run(child, task.task, combined, false, false, budget.max_turns);
+      const result = await this.run(child, inertMarkers(task.task), combined, false, false, budget.max_turns);
       return {
         agent, ...boundedOutput(result.text()), output_tokens: result.last?.usage.output ?? 0,
         success: true, error: null,

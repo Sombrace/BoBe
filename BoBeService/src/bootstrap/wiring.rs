@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use crate::config::Config;
 use crate::config::manager::ConfigManager;
-use crate::runtime::behavior_context::BehaviorContext;
 use crate::runtime::capture_learner::CaptureLearner;
 use crate::runtime::conversation_service::ConversationService;
 use crate::runtime::message_handler::MessageHandler;
@@ -10,9 +9,8 @@ use crate::runtime::proactive_generator::ProactiveGenerator;
 use crate::runtime::session::RuntimeSession;
 use crate::runtime::triggers::capture_trigger::CaptureTrigger;
 use crate::runtime::triggers::{CheckinScheduler, CheckinTrigger, GoalTrigger};
+use crate::services::documents::{SoulsService, UserProfileService};
 use crate::services::goals::goals_service::GoalsService;
-use crate::services::souls_service::SoulsService;
-use crate::services::user_profile_service::UserProfileService;
 
 use super::infra::Infrastructure;
 use super::repos::Repositories;
@@ -31,6 +29,9 @@ pub(crate) async fn wire(
     infra: &Infrastructure,
     repos: &Repositories,
     workers: Arc<crate::agent::PiRuntime>,
+    souls_service: Arc<SoulsService>,
+    user_profile_service: Arc<UserProfileService>,
+    persona: Arc<crate::provider::PersonaSource>,
     goals_service: Arc<GoalsService>,
     personal_data_lifecycle: Arc<tokio::sync::RwLock<()>>,
     jobs: Arc<crate::db::agent_job_repo::AgentJobRepo>,
@@ -41,16 +42,6 @@ pub(crate) async fn wire(
     let conversation_service = Arc::new(ConversationService::new(Arc::clone(
         &repos.conversation_repo,
     )));
-
-    let souls_service = Arc::new(SoulsService::new(Arc::clone(&repos.soul_repo)));
-    let user_profile_service = Arc::new(UserProfileService::new(Arc::clone(
-        &repos.user_profile_repo,
-    )));
-
-    let behavior_context = BehaviorContext::new(
-        Arc::clone(&souls_service),
-        Arc::clone(&user_profile_service),
-    );
 
     let capture_learner = Arc::new(CaptureLearner::new(
         Arc::clone(&workers),
@@ -67,7 +58,8 @@ pub(crate) async fn wire(
         Arc::clone(&conversation_service),
         Arc::clone(&infra.event_queue),
         Arc::clone(&repos.cooldown_repo),
-        Arc::clone(&behavior_context),
+        Arc::clone(&persona),
+        Arc::clone(&goals_service),
         Arc::clone(config_arc),
         Arc::clone(&turn_admission),
         Arc::clone(&infra.connection_manager),
@@ -115,7 +107,7 @@ pub(crate) async fn wire(
             Arc::clone(&conversation_service),
             Arc::clone(&repos.cooldown_repo),
             Arc::clone(&infra.event_queue),
-            behavior_context,
+            persona,
             jobs,
         )),
         Arc::clone(&conversation_service),

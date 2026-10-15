@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -211,11 +212,16 @@ async fn create_with_database(
     result
 }
 
-pub(crate) async fn verify(path: &Path, expected_schema: i64) -> Result<BackupManifest, AppError> {
+pub(crate) async fn verify(
+    path: &Path,
+    database_schemas: &RangeInclusive<i64>,
+) -> Result<BackupManifest, AppError> {
     reject_symlink(path).await?;
     let manifest: BackupManifest =
         serde_json::from_slice(&tokio::fs::read(path.join("manifest.json")).await?)?;
-    if manifest.schema != CURRENT_BACKUP_SCHEMA || manifest.database_schema != expected_schema {
+    if manifest.schema != CURRENT_BACKUP_SCHEMA
+        || !database_schemas.contains(&manifest.database_schema)
+    {
         return Err(AppError::Conflict(format!(
             "backup format {} or database schema {} is not compatible with this daemon",
             manifest.schema, manifest.database_schema
@@ -254,7 +260,7 @@ pub(crate) async fn verify(path: &Path, expected_schema: i64) -> Result<BackupMa
             "backup has an incomplete automatic TLS identity".into(),
         ));
     }
-    validate_database(&path.join(DATABASE_ARTIFACT), &manifest, expected_schema).await?;
+    validate_database(&path.join(DATABASE_ARTIFACT), &manifest).await?;
     Ok(manifest)
 }
 
@@ -348,9 +354,9 @@ pub(crate) struct RestoreOutcome {
 pub(crate) async fn verify_restore_topology(
     backup: &Path,
     current_paths: &DataPaths,
-    expected_schema: i64,
+    database_schemas: &RangeInclusive<i64>,
 ) -> Result<BackupManifest, AppError> {
-    let manifest = verify(backup, expected_schema).await?;
+    let manifest = verify(backup, database_schemas).await?;
     let config_artifact = backup.join(CONFIG_ARTIFACT);
     if config_artifact.is_file() {
         let loaded = crate::config::Config::load_from(&config_artifact, current_paths.root())?;
@@ -392,9 +398,9 @@ pub(crate) async fn restore(
     backup: &Path,
     paths: &DataPaths,
     config_file: &Path,
-    expected_schema: i64,
+    database_schemas: &RangeInclusive<i64>,
 ) -> Result<RestoreOutcome, AppError> {
-    let manifest = verify(backup, expected_schema).await?;
+    let manifest = verify(backup, database_schemas).await?;
     let database = paths
         .database_file()
         .ok_or_else(|| AppError::Config("restore requires a file-backed SQLite database".into()))?;
@@ -424,12 +430,7 @@ pub(crate) async fn restore(
             write_artifact_file(&staged, &file.path, &read_regular_no_follow(&source).await?)
                 .await?;
         }
-        validate_database(
-            &stage_root.join(DATABASE_ARTIFACT),
-            &manifest,
-            expected_schema,
-        )
-        .await?;
+        validate_database(&stage_root.join(DATABASE_ARTIFACT), &manifest).await?;
 
         let restored_epoch = current_epoch.max(manifest.runtime_authority_epoch) + 1;
         let mut replacements = prepare_replacements(
@@ -454,7 +455,7 @@ pub(crate) async fn restore(
             staged_database,
             current_authority,
             restored_epoch,
-            expected_schema,
+            manifest.database_schema,
         )
         .await?;
         Ok::<_, AppError>((restored_epoch, replacements))
@@ -953,7 +954,7 @@ async fn validate_restored_database(
     database: &Path,
     authority: uuid::Uuid,
     epoch: i64,
-    expected_schema: i64,
+    database_schema: i64,
 ) -> Result<(), AppError> {
     let mut connection = read_only_database(database).await?;
     let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
@@ -969,7 +970,7 @@ async fn validate_restored_database(
     .await?;
     connection.close().await?;
     if integrity != "ok"
-        || schema != expected_schema
+        || schema != database_schema
         || uuid::Uuid::from_slice(&authority_bytes).ok() != Some(authority)
         || actual_epoch != epoch
     {
@@ -980,11 +981,7 @@ async fn validate_restored_database(
     Ok(())
 }
 
-async fn validate_database(
-    database: &Path,
-    manifest: &BackupManifest,
-    expected_schema: i64,
-) -> Result<(), AppError> {
+async fn validate_database(database: &Path, manifest: &BackupManifest) -> Result<(), AppError> {
     let mut connection = read_only_database(database).await?;
     let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
         .fetch_one(&mut connection)
@@ -1010,7 +1007,6 @@ async fn validate_database(
         .map_err(|error| AppError::Conflict(format!("invalid backup authority: {error}")))?;
     if foreign_keys != 0
         || schema != manifest.database_schema
-        || schema != expected_schema
         || authority != manifest.runtime_authority_id
         || epoch != manifest.runtime_authority_epoch
     {
@@ -1047,8 +1043,8 @@ async fn set_authority_epoch(
     let mut connection = sqlx::SqliteConnection::connect_with(&options).await?;
     let result = sqlx::query(
         "UPDATE runtime_authority SET authority_epoch = ?1,
-         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-         last_incarnation_id = NULL, last_started_at = NULL WHERE singleton = 1 AND authority_id = ?2",
+         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE singleton = 1 AND authority_id = ?2",
     )
     .bind(epoch)
     .bind(authority)
@@ -1255,6 +1251,9 @@ fn safe_backup_path(root: &Path, relative: &str) -> Result<PathBuf, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bootstrap::database::{
+        CURRENT_SCHEMA_VERSION, OLDEST_UPGRADABLE_SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS,
+    };
 
     #[tokio::test]
     async fn backup_accepts_the_actual_pi_worker_pointer_contract() {
@@ -1362,17 +1361,18 @@ mod tests {
             "INSERT INTO runtime_authority (singleton, authority_id, authority_epoch, data_root) VALUES (1, ?1, 7, ?2)",
         ).bind(authority).bind(data.to_string_lossy().as_ref())
             .execute(&mut connection).await.unwrap();
-        sqlx::query(
-            "INSERT INTO bobe_schema (singleton, version, daemon_version) VALUES (1, 2, 'test')",
-        )
-        .execute(&mut connection)
-        .await
-        .unwrap();
+        sqlx::query("INSERT INTO bobe_schema (singleton, version) VALUES (1, ?1)")
+            .bind(CURRENT_SCHEMA_VERSION)
+            .execute(&mut connection)
+            .await
+            .unwrap();
         connection.close().await.unwrap();
         let config = data.join("config.toml");
         tokio::fs::write(&config, "").await.unwrap();
-        let backup = create(&paths, &config, authority, 7, 2).await.unwrap();
-        let manifest = verify(&backup, 2).await.unwrap();
+        let backup = create(&paths, &config, authority, 7, CURRENT_SCHEMA_VERSION)
+            .await
+            .unwrap();
+        let manifest = verify(&backup, &SUPPORTED_SCHEMA_VERSIONS).await.unwrap();
         assert_eq!(manifest.schema, CURRENT_BACKUP_SCHEMA);
         assert!(
             manifest
@@ -1438,7 +1438,9 @@ mod tests {
         let shm = database_sidecar(&database, "-shm");
         tokio::fs::write(&wal, b"stale-wal").await.unwrap();
         tokio::fs::write(&shm, b"stale-shm").await.unwrap();
-        let outcome = restore(&backup, &paths, &config, 2).await.unwrap();
+        let outcome = restore(&backup, &paths, &config, &SUPPORTED_SCHEMA_VERSIONS)
+            .await
+            .unwrap();
         assert_eq!(outcome.restored_authority_epoch, 8);
         for (name, expected) in [
             ("memory.md", b"memory-before".as_slice()),
@@ -1486,7 +1488,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(verify(&backup, 2).await.is_err());
+        assert!(verify(&backup, &SUPPORTED_SCHEMA_VERSIONS).await.is_err());
         tokio::fs::remove_dir_all(root).await.unwrap();
     }
 
@@ -1528,7 +1530,8 @@ mod tests {
         .execute(&mut connection)
         .await
         .unwrap();
-        sqlx::query("INSERT OR REPLACE INTO bobe_schema (singleton, version, daemon_version) VALUES (1, 2, 'test')")
+        sqlx::query("INSERT OR REPLACE INTO bobe_schema (singleton, version) VALUES (1, ?1)")
+            .bind(CURRENT_SCHEMA_VERSION)
             .execute(&mut connection)
             .await
             .unwrap();
@@ -1543,12 +1546,132 @@ mod tests {
         )
         .await
         .unwrap();
-        let backup = create(&paths, &config, authority, 1, 2).await.unwrap();
+        let backup = create(&paths, &config, authority, 1, CURRENT_SCHEMA_VERSION)
+            .await
+            .unwrap();
 
-        let error = verify_restore_topology(&backup, &paths, 2)
+        let error = verify_restore_topology(&backup, &paths, &SUPPORTED_SCHEMA_VERSIONS)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("relocate"));
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_backup_at_an_upgradable_schema_restores_and_upgrades_on_the_next_open() {
+        let root =
+            std::env::temp_dir().join(format!("bobe-schema-backup-{}", uuid::Uuid::new_v4()));
+        let data = root.join("data-root");
+        let database = data.join("data/bobrust.db");
+        tokio::fs::create_dir_all(database.parent().unwrap())
+            .await
+            .unwrap();
+        let paths = DataPaths::resolve(&data, &format!("sqlite:{}", database.display()))
+            .unwrap()
+            .prepare_root()
+            .unwrap();
+        let authority = uuid::Uuid::new_v4();
+        let mut connection = sqlx::SqliteConnection::connect_with(
+            &sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&database)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+        sqlx::raw_sql(include_str!("../../migrations/fixtures/schema-9.sql"))
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO runtime_authority (singleton, authority_id, authority_epoch, data_root)
+             VALUES (1, ?1, 3, ?2)",
+        )
+        .bind(authority)
+        .bind(data.to_string_lossy().as_ref())
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        sqlx::raw_sql(
+            "INSERT INTO bobe_schema (singleton, version, daemon_version) VALUES (1, 9, '0.8.1');
+             INSERT INTO conversations (id, state, summary) VALUES (X'c0', 'closed', 'unread');",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        connection.close().await.unwrap();
+        crate::util::durable_fs::atomic_write(&data.join("skills/chat/SKILL.md"), b"owner rules")
+            .await
+            .unwrap();
+        let config = data.join("config.toml");
+        tokio::fs::write(&config, "").await.unwrap();
+        let backup = create(
+            &paths,
+            &config,
+            authority,
+            3,
+            OLDEST_UPGRADABLE_SCHEMA_VERSION,
+        )
+        .await
+        .unwrap();
+        let (pool, _) = crate::bootstrap::database::open(&paths).await.unwrap();
+        pool.close().await;
+
+        let outcome = restore(&backup, &paths, &config, &SUPPORTED_SCHEMA_VERSIONS)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            outcome.manifest.database_schema,
+            OLDEST_UPGRADABLE_SCHEMA_VERSION
+        );
+        assert_eq!(outcome.restored_authority_epoch, 4);
+        assert_eq!(
+            crate::bootstrap::database::read_schema_version(&database)
+                .await
+                .unwrap(),
+            OLDEST_UPGRADABLE_SCHEMA_VERSION
+        );
+        assert_eq!(
+            tokio::fs::read(data.join("skills/chat/SKILL.md"))
+                .await
+                .unwrap(),
+            b"owner rules"
+        );
+        let (pool, version) = crate::bootstrap::database::open(&paths).await.unwrap();
+        let (epoch, conversations): (i64, i64) = sqlx::query_as(
+            "SELECT authority_epoch, (SELECT COUNT(*) FROM conversations) FROM runtime_authority",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+        assert_eq!(version, CURRENT_SCHEMA_VERSION);
+        assert_eq!((epoch, conversations), (4, 1));
+        assert!(!data.join("skills/chat").exists());
+        assert_eq!(
+            tokio::fs::read(data.join("skills/chat.retired/SKILL.md"))
+                .await
+                .unwrap(),
+            b"owner rules"
+        );
+
+        let mut manifest = outcome.manifest;
+        for database_schema in [
+            OLDEST_UPGRADABLE_SCHEMA_VERSION - 1,
+            CURRENT_SCHEMA_VERSION + 1,
+        ] {
+            manifest.database_schema = database_schema;
+            crate::util::durable_fs::atomic_write(
+                &backup.join("manifest.json"),
+                &serde_json::to_vec(&manifest).unwrap(),
+            )
+            .await
+            .unwrap();
+            let error = verify(&backup, &SUPPORTED_SCHEMA_VERSIONS)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("not compatible"), "{error}");
+        }
         tokio::fs::remove_dir_all(root).await.unwrap();
     }
 

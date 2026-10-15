@@ -294,7 +294,9 @@ impl AgentJobRepo {
             JobInput {
                 title: schedule.title,
                 task: schedule.task,
-                context: format!("[bobe.scheduled_work]\nIntended time: {}. Actual wake: {}. Check that this work is still relevant. Missed intervals are coalesced, not replayed. Inspect uncertain earlier effects before repeating them. Previous job: {:?}.\n[/bobe.scheduled_work]\n{}",schedule.next_run_at,timestamp(now),schedule.last_job_id,schedule.context),
+                context: format!("{}\n{}",crate::provider::event_block("bobe.scheduled_work",serde_json::json!({
+                    "intended_at":schedule.next_run_at,"woke_at":timestamp(now),"previous_job_id":schedule.last_job_id,
+                })),schedule.context),
                 budget,channel_id: Some(schedule.channel_id),goal_id:schedule.goal_id,schedule_id:Some(id),
             },route,
         ).await?;
@@ -357,6 +359,20 @@ mod tests {
                 .unwrap()
                 .unwrap();
             assert_eq!(job.schedule_id, Some(schedule.id));
+            let marker = job
+                .context
+                .strip_prefix("[bobe.scheduled_work]\n")
+                .and_then(|rest| rest.split_once("\n[/bobe.scheduled_work]"))
+                .map(|(data, _)| data)
+                .expect("scheduled work starts with one daemon event block");
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(marker).unwrap(),
+                serde_json::json!({
+                    "intended_at": schedule.next_run_at,
+                    "woke_at": timestamp(later),
+                    "previous_job_id": null,
+                })
+            );
             assert!(
                 restarted
                     .enqueue_schedule(schedule.id, later, &route())

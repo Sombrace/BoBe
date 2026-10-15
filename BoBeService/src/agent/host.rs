@@ -102,7 +102,7 @@ pub(super) struct InitializeParams {
     pub(super) profiles: Value,
     pub(super) routes: crate::provider::ProviderRoutes,
     pub(super) tools: Vec<Value>,
-    pub(super) capability_instructions: String,
+    pub(super) capabilities: crate::provider::domain_tools::Capabilities,
     pub(super) mcp: McpRuntimeConfig,
     pub(super) enabled_tools: std::collections::BTreeSet<crate::config::AgentTool>,
     pub(super) execution: WorkerExecution,
@@ -898,7 +898,10 @@ impl DomainBridge {
             #[serde(default)]
             source_key: Option<String>,
         }
-        let invocation: Invocation = serde_json::from_value(params)?;
+        let mut invocation: Invocation = serde_json::from_value(params)?;
+        if method != "domain_tool" {
+            crate::provider::inert_strings(&mut invocation.arguments);
+        }
         let authority = lock(&connection.domain_turns)
             .get(&invocation.request_id)
             .cloned()
@@ -1257,6 +1260,46 @@ mod tests {
         }
     }
 
+    #[test]
+    fn worker_fixture_initialization_has_the_rust_field_set() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../BoBeAgent/fixtures/host-contract-v1.json"
+        ))
+        .unwrap();
+        let params = &fixture["initialize_request"]["params"];
+        let rust = serde_json::to_value(InitializeParams {
+            protocol_version: 1,
+            data_root: PathBuf::from("/authority"),
+            workspace: PathBuf::from("/authority/workspace"),
+            skill_directories: vec![PathBuf::from("/authority/skills/learned")],
+            profiles: json!({}),
+            routes: crate::config::Config::default().routes,
+            tools: Vec::new(),
+            capabilities: crate::provider::domain_tools::Capabilities {
+                memory: true,
+                goals: false,
+            },
+            mcp: McpRuntimeConfig::default(),
+            enabled_tools: std::collections::BTreeSet::default(),
+            execution: WorkerExecution::from(&crate::config::ExecutionLimits::default()),
+            workload_budgets: std::collections::BTreeMap::default(),
+        })
+        .unwrap();
+        let fields = |value: &Value| {
+            value
+                .as_object()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        assert_eq!(fields(params), fields(&rust));
+        assert_eq!(
+            fields(&params["capabilities"]),
+            fields(&rust["capabilities"])
+        );
+    }
+
     #[tokio::test]
     async fn protocol_rejects_oversized_and_partial_lines() {
         let mut oversized = BufReader::new(&b"12345\n"[..]);
@@ -1307,7 +1350,6 @@ mod tests {
         .unwrap()
         .prepare_root()
         .unwrap();
-        crate::provider::skills::ensure_skills(&root).await;
         let skills = SkillStore::prepare(&paths).await.unwrap();
         let memory = crate::provider::MemoryFile::new(root.join("memory.md"));
         let goals = Arc::new(crate::services::goals::goals_service::GoalsService::new(
@@ -1423,7 +1465,10 @@ input.on("line", line => {
                 profiles: json!({"hold_initialization":true}),
                 routes: crate::config::Config::default().routes,
                 tools: Vec::new(),
-                capability_instructions: String::new(),
+                capabilities: crate::provider::domain_tools::Capabilities {
+                    memory: false,
+                    goals: false,
+                },
                 mcp: McpRuntimeConfig::default(),
                 enabled_tools: std::collections::BTreeSet::default(),
                 execution: WorkerExecution::from(&crate::config::ExecutionLimits::default()),

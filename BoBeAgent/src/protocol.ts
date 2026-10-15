@@ -85,6 +85,9 @@ const domainToolSchema = Type.Object({
   parameters: Type.Record(text, Type.Unknown()),
 }, strict);
 
+const personaSchema = Type.Object({ souls: strings, profiles: strings }, strict);
+export type Persona = Static<typeof personaSchema>;
+
 const workloadBudgetSchema = Type.Object({
   wall_clock: Type.Object({
     secs: Type.Integer({ minimum: 1 }), nanos: Type.Integer({ minimum: 0, maximum: 999_999_999 }),
@@ -119,7 +122,7 @@ export const initializeSchema = Type.Object({
     small: Type.Optional(routeSchema),
   }, strict),
   tools: Type.Array(domainToolSchema),
-  capability_instructions: text,
+  capabilities: Type.Object({ memory: Type.Boolean(), goals: Type.Boolean() }, strict),
   mcp: mcpSchema,
   enabled_tools: Type.Array(toolNameSchema, { uniqueItems: true }),
 }, strict);
@@ -132,6 +135,7 @@ export const chatSchema = Type.Object({
   channel: Type.Union([Type.Literal("text"), Type.Literal("voice")]),
   context: text,
   memory_context: Type.Optional(text),
+  persona: Type.Optional(personaSchema),
 }, strict);
 export type Chat = Static<typeof chatSchema>;
 
@@ -184,6 +188,7 @@ export const backgroundSchema = Type.Object({
   task: nonempty,
   context: text,
   memory_context: text,
+  persona: personaSchema,
   attempt: Type.Integer({ minimum: 1 }),
   route: routeSchema,
   budget: Type.Object({

@@ -162,12 +162,10 @@ extension DaemonClient {
 
         struct Deleted: Decodable {
             let learnedSkills: Int
-            let primarySkillReset: Bool
             let workspaceFiles: Int
 
             enum CodingKeys: String, CodingKey {
                 case learnedSkills = "learned_skills"
-                case primarySkillReset = "primary_skill_reset"
                 case workspaceFiles = "workspace_files"
             }
         }

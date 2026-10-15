@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { TestContext } from "node:test";
@@ -32,11 +32,9 @@ export async function fixture(t: TestContext): Promise<{ root: string; workspace
   await mkdir(relative, { recursive: true, mode: 0o700 });
   const root = resolve(relative);
   const workspace = join(root, "workspace");
-  const skills = join(root, "skills");
+  const skills = join(root, "skills/learned");
   await mkdir(workspace, { mode: 0o700 });
-  await mkdir(skills, { mode: 0o700 });
-  await mkdir(join(skills, "chat"), { mode: 0o700 });
-  await copyFile(new URL("../assets/chat.md", import.meta.url), join(skills, "chat/SKILL.md"));
+  await mkdir(skills, { recursive: true, mode: 0o700 });
   const cleanup: (() => Promise<void>)[] = [];
   cleanups.set(root, cleanup);
   t.after(async () => {
@@ -59,7 +57,7 @@ export function configuration(paths: { root: string; workspace: string; skills: 
     skill_directories: [paths.skills],
     profiles: { test: { kind: "open_ai", api_key: "fixture-api-key", auth_method: "api_key" } },
     routes: { chat: { ...route }, goals: { ...route }, consolidate: { ...route } },
-    tools: [], capability_instructions: "Owner-controlled test context.", mcp: { servers: {} },
+    tools: [], capabilities: { memory: true, goals: true }, mcp: { servers: {} },
     enabled_tools: [...toolNames],
   };
 }

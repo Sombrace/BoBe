@@ -25,7 +25,7 @@ for (const background of [false,true]) {
       return {id:randomUUID(),prompt,status:"pending"};
     });
     const result=await worker.request(background
-      ? {id:2,method:"background",params:{job_id:randomUUID(),title:"Draft",task:"Prepare a draft",context:"",memory_context:"",attempt:1,
+      ? {id:2,method:"background",params:{job_id:randomUUID(),title:"Draft",task:"Prepare a draft",context:"",memory_context:"",persona:{souls:[],profiles:[]},attempt:1,
           route:{profile:"test",model:"fixture-model",reasoning_effort:"low"},budget:{timeout_seconds:1800,max_turns:64}}}
       : {id:2,method:"chat",params:{text:"Prepare a draft",channel:"text",context:""}});
     assert.equal(calls,1);

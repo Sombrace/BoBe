@@ -162,8 +162,9 @@ bobe backup verify <path>
 bobe backup restore <path>
 ```
 
-Backups exclude provider sign-ins. A backup restores only into a BoBe with the
-same backup format and schema version.
+Backups exclude provider sign-ins. A backup restores into a BoBe with the
+same backup format and the same or a newer schema; an older database is
+upgraded at the next start.
 
 ## Update
 
@@ -177,8 +178,8 @@ bobe update apply \
   --archive bobe-daemon-X.Y.Z-<platform>.tar.gz
 ```
 
-It verifies the signature and hash, requires the same schema version, backs
-up, and rolls back if the new version does not become ready.
+It verifies the signature and hash, checks that the new version can upgrade
+the database, backs up, and rolls back if the new version does not start.
 
 ## Troubleshooting
 
@@ -186,6 +187,7 @@ up, and rolls back if the new version does not become ready.
 |---|---|
 | `bobe: command not found` | Add `~/.local/bin` to `PATH` |
 | A checkout daemon cannot start the agent | Use `scripts/tasks/backend.sh`, or set `BOBE_NODE_PATH=build/agent-runtime/node` and `BOBE_AGENT_ENTRY=build/agent-runtime/agent/dist/main.js` |
-| `database schema version N is not the version this daemon uses` | There are no migrations: run the build that wrote the data, or move `~/.bobe/` aside and set up again |
+| `database schema version N is newer than …` | The data was written by a newer BoBe; run that release |
+| `database schema version N cannot be upgraded …` | The data is too old to upgrade; move `~/.bobe/` aside and set up again |
 | A second daemon refuses to start | Stop the first, or give the second its own `BOBE_DATA_DIR` |
 | Something else | `bobe status`, `bobe doctor`, `bobe service logs`, `~/.bobe/logs/` |

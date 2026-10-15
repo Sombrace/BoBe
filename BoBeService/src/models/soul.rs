@@ -1,29 +1,42 @@
-use chrono::{DateTime, Utc};
+use serde::Serialize;
 
+use super::document::{Document, DocumentKind, ShippedDefault};
 use super::ids::SoulId;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
-pub(crate) struct Soul {
-    pub(crate) id: SoulId,
-    pub(crate) name: String,
-    pub(crate) content: String,
-    pub(crate) enabled: bool,
-    pub(crate) is_default: bool,
-    pub(crate) created_at: DateTime<Utc>,
-    pub(crate) updated_at: DateTime<Utc>,
+#[derive(Debug)]
+pub(crate) enum Souls {}
+
+impl DocumentKind for Souls {
+    type Id = SoulId;
+    type Listing = SoulSummary;
+
+    const TABLE: &'static str = "souls";
+    const NOUN: &'static str = "Soul";
+    const SHIPPED_DEFAULT: Option<ShippedDefault> = Some(ShippedDefault {
+        name: "default_soul",
+        content: include_str!("../assets/defaults/SOUL.md"),
+    });
+
+    fn new_id() -> SoulId {
+        SoulId::new()
+    }
 }
 
-impl Soul {
-    pub(crate) fn new(name: String, content: String, is_default: bool) -> Self {
-        let now = Utc::now();
+pub(crate) type Soul = Document<Souls>;
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SoulSummary {
+    pub(crate) souls: Vec<Soul>,
+    pub(crate) count: usize,
+    pub(crate) enabled_count: usize,
+}
+
+impl From<Vec<Soul>> for SoulSummary {
+    fn from(souls: Vec<Soul>) -> Self {
         Self {
-            id: SoulId::new(),
-            name,
-            content,
-            enabled: true,
-            is_default,
-            created_at: now,
-            updated_at: now,
+            count: souls.len(),
+            enabled_count: souls.iter().filter(|soul| soul.enabled).count(),
+            souls,
         }
     }
 }

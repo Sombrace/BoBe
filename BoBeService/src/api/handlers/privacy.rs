@@ -35,7 +35,6 @@ struct Deleted {
     custom_profiles: u64,
     goals: usize,
     learned_skills: usize,
-    primary_skill_reset: bool,
     workspace_files: usize,
     mcp_secrets: usize,
 }
@@ -129,21 +128,9 @@ async fn purge_inner(state: Arc<AppState>) -> Result<Json<PrivacyPurgeResponse>,
     sqlx::query("DELETE FROM cooldown_state")
         .execute(&mut *transaction)
         .await?;
-    let custom_souls = sqlx::query("DELETE FROM souls WHERE is_default = 0")
-        .execute(&mut *transaction)
-        .await?
-        .rows_affected();
-    let custom_profiles = sqlx::query("DELETE FROM user_profiles WHERE is_default = 0")
-        .execute(&mut *transaction)
-        .await?
-        .rows_affected();
-    sqlx::query(
-        "UPDATE user_profiles SET content = ?1, enabled = 1,
-         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE is_default = 1",
-    )
-    .bind(crate::db::seeding::DEFAULT_USER_PROFILE_BODY)
-    .execute(&mut *transaction)
-    .await?;
+    let custom_souls = crate::db::SqliteSoulRepo::reset_to_shipped(&mut transaction).await?;
+    let custom_profiles =
+        crate::db::SqliteUserProfileRepo::reset_to_shipped(&mut transaction).await?;
     let _registry_guard = state.body.registry_lock.lock().await;
     let endpoints = state.body.endpoints.list().await?;
     sqlx::query("DELETE FROM endpoints")
@@ -194,8 +181,7 @@ async fn purge_inner(state: Arc<AppState>) -> Result<Json<PrivacyPurgeResponse>,
             custom_souls,
             custom_profiles,
             goals,
-            learned_skills: skills.learned_skills,
-            primary_skill_reset: skills.primary_reset,
+            learned_skills: skills,
             workspace_files,
             mcp_secrets,
         },

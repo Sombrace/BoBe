@@ -6,8 +6,7 @@ use tokio::sync::Mutex;
 
 use crate::error::AppError;
 
-const PRIMARY_SKILL_ID: &str = "chat";
-const LEARNED_DIRECTORY: &str = "learned";
+pub(crate) const LEARNED_DIRECTORY: &str = "learned";
 const MAX_SKILLS: usize = 64;
 const MAX_DESCRIPTION_BYTES: usize = 240;
 const MAX_SKILL_BODY_BYTES: usize = 32 * 1024;
@@ -17,18 +16,11 @@ pub(crate) struct SkillSummary {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) description: String,
-    pub(crate) primary: bool,
 }
 
 pub(crate) struct SkillStore {
     root: PathBuf,
     write_lock: Mutex<()>,
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct SkillPurgeReport {
-    pub(crate) learned_skills: usize,
-    pub(crate) primary_reset: bool,
 }
 
 impl SkillStore {
@@ -45,18 +37,6 @@ impl SkillStore {
 
     pub(crate) async fn list(&self) -> Result<Vec<SkillSummary>, AppError> {
         let mut skills = Vec::new();
-        let primary_path = self.primary_path();
-        if primary_path.is_file() {
-            let content = read_regular_file(&primary_path).await?;
-            let metadata = parse_metadata(&content)?;
-            skills.push(SkillSummary {
-                id: PRIMARY_SKILL_ID.into(),
-                name: metadata.name,
-                description: metadata.description,
-                primary: true,
-            });
-        }
-
         let learned = self.learned_root();
         let mut entries = match tokio::fs::read_dir(&learned).await {
             Ok(entries) => entries,
@@ -85,7 +65,6 @@ impl SkillStore {
                 id,
                 name: parsed.name,
                 description: parsed.description,
-                primary: false,
             });
         }
         skills.sort_by(|left, right| left.id.cmp(&right.id));
@@ -140,26 +119,19 @@ impl SkillStore {
     }
 
     pub(crate) fn directories(&self) -> Vec<PathBuf> {
-        vec![self.root.clone(), self.learned_root()]
+        vec![self.learned_root()]
     }
 
-    pub(crate) async fn purge_personal_state(&self) -> Result<SkillPurgeReport, AppError> {
+    pub(crate) async fn purge_personal_state(&self) -> Result<usize, AppError> {
         let _guard = self.write_lock.lock().await;
         let learned_root = self.learned_root();
-        let current_primary = read_regular_file(&self.primary_path()).await?;
-        let report = SkillPurgeReport {
-            learned_skills: count_skill_directories(&learned_root).await?,
-            primary_reset: current_primary != super::skills::CHAT_SKILL_MD,
-        };
-
-        crate::util::durable_fs::durable_remove_dir_all(&learned_root).await?;
+        let removed = count_skill_directories(&learned_root).await?;
+        let mut entries = tokio::fs::read_dir(&self.root).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            crate::util::durable_fs::durable_remove_entry(&entry.path()).await?;
+        }
         tokio::fs::create_dir_all(&learned_root).await?;
-        crate::util::durable_fs::atomic_write(
-            &self.primary_path(),
-            super::skills::CHAT_SKILL_MD.as_bytes(),
-        )
-        .await?;
-        Ok(report)
+        Ok(removed)
     }
 
     async fn publish_unlocked(
@@ -171,15 +143,7 @@ impl SkillStore {
         self.ensure_canonical_name_available(&name).await?;
         let target_dir = self.learned_root().join(&name);
         let target = target_dir.join("SKILL.md");
-        if !target.is_file()
-            && self
-                .list()
-                .await?
-                .into_iter()
-                .filter(|skill| !skill.primary)
-                .count()
-                >= MAX_SKILLS
-        {
+        if !target.is_file() && self.list().await?.len() >= MAX_SKILLS {
             return Err(AppError::Validation(format!(
                 "at most {MAX_SKILLS} learned skills may be active"
             )));
@@ -193,23 +157,15 @@ impl SkillStore {
             id: name.clone(),
             name,
             description,
-            primary: false,
         })
     }
 
     async fn ensure_canonical_name_available(&self, candidate: &str) -> Result<(), AppError> {
-        let primary_content = read_regular_file(&self.primary_path()).await?;
-        let primary_name = parse_metadata(&primary_content)?.name;
-        if candidate == PRIMARY_SKILL_ID || candidate == primary_name {
-            return Err(AppError::Validation(format!(
-                "'{candidate}' is reserved for BoBe's primary behavior skill"
-            )));
-        }
         if self
             .list()
             .await?
             .into_iter()
-            .any(|skill| !skill.primary && skill.name == candidate && skill.id != candidate)
+            .any(|skill| skill.name == candidate && skill.id != candidate)
         {
             return Err(AppError::Conflict(format!(
                 "another learned skill already uses canonical name '{candidate}'"
@@ -218,21 +174,23 @@ impl SkillStore {
         Ok(())
     }
 
-    fn primary_path(&self) -> PathBuf {
-        self.root.join(PRIMARY_SKILL_ID).join("SKILL.md")
-    }
-
     fn learned_root(&self) -> PathBuf {
         self.root.join(LEARNED_DIRECTORY)
     }
 
     fn skill_path(&self, id: &str) -> Result<PathBuf, AppError> {
-        if id == PRIMARY_SKILL_ID {
-            return Ok(self.primary_path());
-        }
         validate_skill_name(id)?;
         Ok(self.learned_root().join(id).join("SKILL.md"))
     }
+}
+
+pub(crate) async fn validate_skill_directory(directory: &Path) -> Result<(), AppError> {
+    let id = directory
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or_else(|| AppError::Validation("skill directory name must be UTF-8".into()))?;
+    validate_skill_name(id)?;
+    parse_metadata(&read_regular_file(&directory.join("SKILL.md")).await?).map(drop)
 }
 
 #[derive(Debug)]
@@ -421,12 +379,7 @@ mod tests {
 
     fn paths() -> (PathBuf, crate::util::paths::DataPaths) {
         let root = std::env::temp_dir().join(format!("bobe-skills-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(root.join("skills/chat")).unwrap();
-        std::fs::write(
-            root.join("skills/chat/SKILL.md"),
-            super::super::skills::CHAT_SKILL_MD,
-        )
-        .unwrap();
+        std::fs::create_dir_all(&root).unwrap();
         let paths = crate::util::paths::DataPaths::resolve(
             &root,
             &format!("sqlite:{}", root.join("data.sqlite3").display()),
@@ -476,26 +429,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn primary_names_are_reserved() {
-        let (root, paths) = paths();
-        let store = SkillStore::prepare(&paths).await.unwrap();
-
-        for name in ["chat", "bobe-chat"] {
-            let error = store
-                .create_activated(
-                    name.into(),
-                    "Shadow the primary skill".into(),
-                    "# Duplicate\n\nThis must not be created.".into(),
-                    || async { Ok(()) },
-                )
-                .await
-                .unwrap_err();
-            assert!(error.to_string().contains("reserved"));
-        }
-        drop(tokio::fs::remove_dir_all(root).await);
-    }
-
-    #[tokio::test]
     async fn create_rechecks_other_learned_canonical_names() {
         let (root, paths) = paths();
         let store = SkillStore::prepare(&paths).await.unwrap();
@@ -528,20 +461,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn purge_resets_primary_and_removes_learned_state() {
+    async fn purge_removes_learned_state_and_lists_only_learned_skills() {
         let (root, paths) = paths();
         let store = SkillStore::prepare(&paths).await.unwrap();
-        tokio::fs::write(
-            store.primary_path(),
-            render_skill(
-                "bobe-chat",
-                "Customized companion behavior",
-                "# Customized primary\n\nKeep this only until privacy purge.",
-            )
-            .unwrap(),
-        )
-        .await
-        .unwrap();
+        assert_eq!(store.directories(), vec![store.learned_root()]);
         store
             .create_activated(
                 "temporary-check".into(),
@@ -551,18 +474,24 @@ mod tests {
             )
             .await
             .unwrap();
+        let listed = store.list().await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, "temporary-check");
 
-        let report = store.purge_personal_state().await.unwrap();
+        let retired = paths.skills_dir().join("chat.retired");
+        std::fs::create_dir_all(&retired).unwrap();
+        std::fs::write(retired.join("SKILL.md"), "Owner-edited rules").unwrap();
 
-        assert_eq!(report.learned_skills, 1);
-        assert!(report.primary_reset);
-        assert_eq!(
-            tokio::fs::read_to_string(store.primary_path())
-                .await
-                .unwrap(),
-            super::super::skills::CHAT_SKILL_MD
-        );
+        let removed = store.purge_personal_state().await.unwrap();
+
+        assert_eq!(removed, 1);
         assert!(store.read("temporary-check").await.is_err());
+        assert!(store.list().await.unwrap().is_empty());
+        let remaining = std::fs::read_dir(paths.skills_dir())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        assert_eq!(remaining, ["learned"]);
         drop(tokio::fs::remove_dir_all(root).await);
     }
 

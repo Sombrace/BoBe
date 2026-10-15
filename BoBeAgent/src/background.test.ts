@@ -3,7 +3,7 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { getCurrentTools } from "@earendil-works/pi-ai";
+import { getCurrentSystemMessage, getCurrentTools } from "@earendil-works/pi-ai";
 
 import { configuration, deferred, fixture, host, userText } from "./test-support.js";
 import { abortableDelay } from "./errors.js";
@@ -18,6 +18,8 @@ test("background execution does not occupy the canonical chat and has no recursi
       started.resolve();
       const declared = JSON.stringify(context);
       assert.ok(!declared.includes('"name":"background_task"'));
+      assert.equal(getCurrentSystemMessage(context.messages)?.sections?.bobe_persona,
+        "<bobe_persona>\n<soul>\nBACKGROUND_SOUL\n</soul>\n</bobe_persona>");
       await finished.promise;
       return { text: "Background result." };
     }
@@ -28,7 +30,7 @@ test("background execution does not occupy the canonical chat and has no recursi
   const running = worker.request({
     id: 2, method: "background", params: {
       job_id: job, title: "Bounded task", task: "Background work", context: "", memory_context: "",
-      attempt: 1, route: { profile: "test", model: "fixture-model", reasoning_effort: "low" },
+      persona: { souls: ["BACKGROUND_SOUL"], profiles: [] }, attempt: 1, route: { profile: "test", model: "fixture-model", reasoning_effort: "low" },
       budget: { timeout_seconds: 1800, max_turns: 64 },
     },
   });
@@ -54,7 +56,7 @@ test("aborting a background job settles only that job and permits a later foregr
     return { text: "Ready." };
   });
   const running = worker.request({ id: 2, method: "background", params: {
-    job_id: randomUUID(), title:"Wait",task:"Wait",context:"",memory_context:"",attempt:1,
+    job_id: randomUUID(), title:"Wait",task:"Wait",context:"",memory_context:"",persona:{souls:[],profiles:[]},attempt:1,
     route:{profile:"test",model:"fixture-model",reasoning_effort:null},
     budget:{timeout_seconds:1800,max_turns:64},
   } });
@@ -142,7 +144,7 @@ test("a real pi background session can plan a durable future wake without spawni
     },
   );
   await worker.request({id:2,method:"background",params:{
-    job_id:randomUUID(),title:"Plan",task:"Plan the next check",context:"",memory_context:"",attempt:1,
+    job_id:randomUUID(),title:"Plan",task:"Plan the next check",context:"",memory_context:"",persona:{souls:[],profiles:[]},attempt:1,
     route:{profile:"test",model:"fixture-model",reasoning_effort:"low"},
     budget:{timeout_seconds:1800,max_turns:64},
   }});
@@ -170,7 +172,8 @@ test("tool exclusions also apply to scoped children and persistent background se
   await worker.request({ id: 2, method: "chat", params: { text: "Parent", channel: "text", context: "" } });
   const job = randomUUID();
   const params = {
-    job_id: job, title: "Background", task: "Background", context: "", memory_context: "", attempt: 1,
+    job_id: job, title: "Background", task: "Background", context: "", memory_context: "",
+    persona: { souls: [], profiles: [] }, attempt: 1,
     route: { profile: "test", model: "fixture-model", reasoning_effort: null },
     budget: { timeout_seconds: 1800, max_turns: 64 },
   };

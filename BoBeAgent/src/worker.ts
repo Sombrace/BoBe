@@ -286,7 +286,7 @@ export class WorkerHost implements RpcHandler {
     if (!chat.text.trim()) throw new Error("Chat requires text");
     return sessions.useChannel(chat.session_key, async main => {
     await sessions.select(main, config.routes.chat, chat.channel, signal);
-    sessions.context(main, id, chat.context, chat.channel, chat.memory_context);
+    sessions.context(main, id, chat.context, chat.channel, chat.memory_context, chat.persona);
     const events = await sessions.run(main, chat.text, signal, true);
     assertActive(signal);
     if (main.current.deferredInput) events.commitOwnerQuestion(main.current.deferredInput.prompt);
@@ -315,7 +315,7 @@ export class WorkerHost implements RpcHandler {
     try {
       bundle = await sessions.finite(
         params.class === "consolidate" ? config.routes.consolidate : config.routes.small ?? config.routes.goals, id, params.context,
-        "You are a bounded operation of BoBe's owner authority, not another companion. Follow the supplied job instructions. Pass the requested result directly as the output value of bobe_submit_result. If not using the tool, return exactly one JSON envelope {\"output\": <result>}. Do not add another output wrapper to the tool argument. Do not claim changes to owner state; Rust applies the result.",
+        "You are a bounded operation of BoBe, not another companion. Follow the job instructions. Call bobe_submit_result with the result itself as its output, or reply with only the result as JSON. Do not claim changes to owner state; the daemon applies the result.",
         [submit], signal,
       );
       const result = await sessions.run(bundle,
@@ -323,11 +323,8 @@ export class WorkerHost implements RpcHandler {
         signal, false, true, 8);
       if (result.failedTools > 0) throw new Error("Structured-result submission failed");
       if (output === undefined) {
-        const text = result.text().trim();
-        const parsed: unknown = JSON.parse(text);
-        const envelope = object(parsed);
-        if (!Object.hasOwn(envelope, "output")) throw new Error("Auxiliary JSON requires an output value");
-        output = json(envelope.output);
+        const text = result.text().trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/i, "$1");
+        output = json(JSON.parse(text) as unknown);
       }
       return { job_id: params.job.job_id, output, error: null };
     } catch (error) {

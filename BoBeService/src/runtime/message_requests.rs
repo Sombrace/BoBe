@@ -317,8 +317,8 @@ impl MessageRequests {
                 .settle_interrupted_turn(ConversationTurnId::from(request_id))
                 .await;
             if let Err(error) = sqlx::query(
-                "UPDATE message_requests SET status = ?1, failure_reason = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE request_id = ?3 AND status IN ('queued','running')",
-            ).bind(status).bind(reason).bind(request_id).execute(&service.pool).await {
+                "UPDATE message_requests SET status = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE request_id = ?2 AND status IN ('queued','running')",
+            ).bind(status).bind(request_id).execute(&service.pool).await {
                 tracing::error!(%error, %request_id, "message_request.status_update_failed");
             }
             if let Some(reason) = reason {
@@ -362,7 +362,7 @@ impl MessageRequests {
 
     pub(crate) async fn recover(self: &Arc<Self>) -> Result<(), AppError> {
         reconcile_interrupted_requests(&self.pool).await?;
-        sqlx::query("UPDATE message_requests SET status='failed',failure_reason='device_disconnected_before_execution' WHERE status='queued' AND delivery_kind='device'")
+        sqlx::query("UPDATE message_requests SET status='failed' WHERE status='queued' AND delivery_kind='device'")
             .execute(&self.pool).await?;
         let queued = sqlx::query_as::<_, (Uuid, Vec<u8>, String, ConversationChannelId,Option<Uuid>)>(
             "SELECT request_id, content_sha256, content, channel_id,owner_input_id FROM message_requests WHERE status = 'queued' ORDER BY rowid",
@@ -384,9 +384,10 @@ impl MessageRequests {
     }
 
     async fn mark_failed(&self, request_id: Uuid, reason: &str) {
+        tracing::warn!(%request_id, reason, "message_request.failed");
         if let Err(error) = sqlx::query(
-            "UPDATE message_requests SET status = 'failed', failure_reason = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE request_id = ?2",
-        ).bind(reason).bind(request_id).execute(&self.pool).await {
+            "UPDATE message_requests SET status = 'failed', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE request_id = ?1",
+        ).bind(request_id).execute(&self.pool).await {
             tracing::error!(%error, %request_id, "message_request.status_update_failed");
         }
     }
@@ -394,7 +395,7 @@ impl MessageRequests {
 
 async fn claim_request(pool: &sqlx::SqlitePool, request_id: Uuid) -> Result<(), AppError> {
     let claimed = sqlx::query(
-        "UPDATE message_requests SET status = 'running', failure_reason = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE request_id = ?1 AND status = 'queued'",
+        "UPDATE message_requests SET status = 'running', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE request_id = ?1 AND status = 'queued'",
     ).bind(request_id).execute(pool).await?.rows_affected();
     if claimed != 1 {
         return Err(AppError::Conflict(
@@ -419,9 +420,9 @@ pub(crate) async fn request_id_is_tombstoned(
 pub(crate) async fn reconcile_interrupted_requests(
     pool: &sqlx::SqlitePool,
 ) -> Result<(), AppError> {
-    sqlx::query("UPDATE message_requests SET status = 'completed', failure_reason = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE status = 'running' AND EXISTS (SELECT 1 FROM conversation_turns WHERE conversation_turns.id = message_requests.request_id AND conversation_turns.is_complete = 1)")
+    sqlx::query("UPDATE message_requests SET status = 'completed', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE status = 'running' AND EXISTS (SELECT 1 FROM conversation_turns WHERE conversation_turns.id = message_requests.request_id AND conversation_turns.is_complete = 1)")
         .execute(pool).await?;
-    sqlx::query("UPDATE message_requests SET status = 'failed', failure_reason = 'daemon_restarted_during_execution', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE status = 'running'")
+    sqlx::query("UPDATE message_requests SET status = 'failed', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE status = 'running'")
         .execute(pool).await?;
     Ok(())
 }

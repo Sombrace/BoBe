@@ -36,14 +36,21 @@ are clients of it. Swift never starts pi, and the CLI never runs inference.
   its lifetime. A Mac connects and disconnects without stopping it.
 - **Startup:** one data root (`DataPaths`), process-lifetime authority and
   database locks, then configuration, schema and services (`bootstrap/`).
-  Readiness reflects the database and initialization, not provider health.
+- **Readiness** (`api/readiness.rs`) is `ready`, `initializing` (setup not
+  finished) or `not_ready` (database unavailable). `/readyz`, `/v1/hello`,
+  `bobe status` and `bobe wait-ready` share it; a Mac attaches while a daemon
+  is `initializing` so setup can finish. It does not reflect provider health.
 - **Shutdown:** stop admission, leave unstarted messages queued, settle active
   runs and their processes, stop listeners, close the worker, close the
   database.
-- **Schema:** there are no migrations. The daemon refuses a database whose
-  schema version differs from its own; changing `schema.sql` raises that
-  version. The one exception deletes 0.2.0 data at start so those installs run
-  setup again (`bootstrap/release_0_2.rs`).
+- **Schema:** `BoBeService/migrations/schema.sql` creates a new database.
+  An older database is upgraded at start by the `upgrade-<from>-to-<to>.sql`
+  steps, one transaction per step, together with any data-root changes the
+  step needs (`bootstrap/database.rs`). A failed step leaves the database at
+  its previous version. Versions older than the oldest step, and newer than
+  the daemon, are refused untouched. Any change to `schema.sql` needs a new
+  upgrade step and a test that upgrades the previous version's fixture. 0.2.0
+  data is deleted at start instead (`bootstrap/release_0_2.rs`).
 
 ## Worker
 
@@ -69,8 +76,20 @@ Session pointers live under `agent/`: the owner channel in
 `agent/sessions/jobs/<id>/`. The worker opens the exact pointer, so restarts,
 model changes, reloads and compaction keep the same conversation.
 
-Companion behavior is `BoBeAgent/assets/chat.md`, installed as
-`skills/chat/SKILL.md` in the data root. An owner's edited copy is kept.
+The worker builds every full session's system prompt from its packaged
+`BoBeAgent/assets/chat.md` (the only behavior text), the enabled souls and
+user profiles, the memory document, the enabled capabilities and the learned
+skills in `skills/learned/`. Rust sends events as a marker plus JSON data
+(`[bobe.goal_work]`, `[bobe.proactive]`, `[bobe.background_result]` and
+others) and `chat.md` says how to handle each one. A block counts only as a
+whole message or task, or inside the `[bobe.turn_context]` the worker adds to
+a turn; every other block is written by Rust's `event_block`. Text from the
+model or stored documents (memory, persona, goal titles, earlier outcomes,
+delegated work, and the jobs, schedules and questions the agent creates) is
+escaped before it reaches a prompt, so stored or fetched text cannot forge a
+block or consent; the owner's own messages and schedules are not. Owners shape
+BoBe through souls and profiles; a shipped default soul is copy-on-write, and
+user profiles have no shipped default.
 
 ## Admission and durable work
 
@@ -101,6 +120,10 @@ Companion behavior is `BoBeAgent/assets/chat.md`, installed as
   starter goal is created paused.
 - A small-model decision offers, defers or suppresses each goal update.
   Presence and cooldowns limit speaking, not quiet work.
+- Screen context and check-ins that pass admission and cooldowns go to one
+  small-model evaluator, the only owner of "should BoBe speak now". It sees
+  the event, recent turns, memory, active goals and the owner's profiles and
+  returns a reason. The main agent then writes the message for that reason.
 - A stored reply is *committed*; it is *presented* only on a receipt from
   visible chat, CLI output, finished playback or a body's playback drain.
   Saved updates are shown again without new inference.
@@ -142,9 +165,9 @@ start does not restart it.
 
 | State | Where |
 |---|---|
-| Conversations, queues, jobs, schedules, questions, cooldowns, endpoints | SQLite (`BoBeService/migrations/schema.sql`) |
+| Conversations, queues, jobs, schedules, questions, cooldowns, endpoints, souls, user profiles | SQLite (`BoBeService/migrations/schema.sql`) |
 | Memory and goals | `memory.md`, `goals/` |
-| Skills | `skills/` |
+| Learned skills | `skills/learned/` |
 | Working files | `workspace/` |
 | pi sessions and sign-ins | `agent/`, `agent/auth/` |
 | API keys | `headless-secrets.json` (mode 0600) |
@@ -153,8 +176,9 @@ start does not restart it.
 
 Backups pause the worker and include everything except sign-in state.
 Restore verifies first, swaps whole directories with rollback and raises the
-authority epoch. A privacy purge removes personal data and keeps credentials,
-installed runtimes and backups.
+authority epoch; a backup from an older upgradable schema is upgraded at the
+next start. A privacy purge removes personal data, returns souls and profiles
+to their shipped state, and keeps credentials, installed runtimes and backups.
 
 ## Voice
 

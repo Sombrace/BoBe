@@ -30,13 +30,15 @@ before changing behavior. Commands are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Invariants
 
-- There are no schema migrations. Changing `BoBeService/migrations/schema.sql`
-  raises the schema version and makes existing data roots unreadable.
+- Changing `BoBeService/migrations/schema.sql` raises the schema version and
+  needs an `upgrade-<from>-to-<to>.sql` step plus a test that upgrades the
+  previous version's fixture. Users' data must survive every update.
 - Rust, Swift and firmware wire contracts are mirrored by hand. Change them
   together and run `scripts/check-cross-language-constants.sh` and
   `scripts/check-bodylink-contract.sh`.
-- Companion behavior lives only in `BoBeAgent/assets/chat.md` or a bounded
-  turn hint, never a parallel prompt layer.
+- Companion behavior lives only in `BoBeAgent/assets/chat.md`, read by the
+  worker from its own package. Rust sends events as markers plus data, never
+  instruction prose. Owners customize BoBe through souls and user profiles.
 - Every channel keeps its own history and pi session; all share workspace,
   memory, goals and credentials. Recall other channels explicitly.
 - Rust owns every policy value, durable job, schedule and owner question, and

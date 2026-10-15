@@ -17,6 +17,7 @@ REQUIRED_COMPATIBILITY = {
     "version",
     "platform",
     "database_schema",
+    "database_schema_min",
     "attach_protocol_min",
     "attach_protocol_max",
 }
@@ -103,9 +104,16 @@ def inspect_archive(archive: pathlib.Path) -> dict[str, object]:
         fail(f"unsupported standalone platform: {compatibility['platform']}")
     if not isinstance(compatibility["version"], str) or not compatibility["version"]:
         fail("standalone version must be a non-empty string")
-    for field in ("database_schema", "attach_protocol_min", "attach_protocol_max"):
+    for field in (
+        "database_schema",
+        "database_schema_min",
+        "attach_protocol_min",
+        "attach_protocol_max",
+    ):
         if not isinstance(compatibility[field], int):
             fail(f"{field} must be an integer")
+    if compatibility["database_schema_min"] > compatibility["database_schema"]:
+        fail("database_schema_min must not exceed database_schema")
     if compatibility["attach_protocol_min"] > compatibility["attach_protocol_max"]:
         fail("attach_protocol_min must not exceed attach_protocol_max")
     return compatibility
@@ -122,6 +130,7 @@ def create_manifest(archive: pathlib.Path) -> dict[str, object]:
         "version": compatibility["version"],
         "platform": compatibility["platform"],
         "database_schema": compatibility["database_schema"],
+        "database_schema_min": compatibility["database_schema_min"],
         "attach_protocol_min": compatibility["attach_protocol_min"],
         "attach_protocol_max": compatibility["attach_protocol_max"],
         "archive_sha256": digest.hexdigest(),

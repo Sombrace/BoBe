@@ -53,8 +53,7 @@ impl EndpointRepo {
                  VALUES ('body-cert-' || ?1, ?1, 'body_certificate', ?2, 1)
                  ON CONFLICT(id) DO UPDATE SET
                    certificate_sha256 = excluded.certificate_sha256,
-                   revoked_at = NULL,
-                   revocation_reason = NULL",
+                   revoked_at = NULL",
             )
             .bind(&endpoint.id)
             .bind(&endpoint.certificate_sha256)
@@ -270,6 +269,7 @@ mod tests {
         let trust = crate::db::device_trust_repo::DeviceTrustRepo::new(pool.clone());
         assert!(trust.revoke_endpoint("body-a", "test").await.unwrap());
         assert!(repo.upsert(&endpoint("body-a", 3)).await.is_err());
+        assert!(repo.upsert(&endpoint("body-c", 1)).await.is_err());
         let endpoint_digest: Vec<u8> =
             sqlx::query_scalar("SELECT certificate_sha256 FROM endpoints WHERE id = 'body-a'")
                 .fetch_one(&pool)

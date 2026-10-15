@@ -312,9 +312,9 @@ impl AgentJobRepo {
             "response":record.response.as_deref().map(|response|crate::util::text::truncate_str(response,400)),
             "resumed_job_id":record.resumed_job_id,
         })).collect::<Vec<_>>();
-        Ok(format!(
-            "[bobe.owner_input]\nAuthoritative pending questions and recorded answers. Do not bypass a pending, declined or expired decision. Use bobe_owner_input to inspect or present a question when useful. The durable queue alone resumes each saved answer, even when resumed_job_id is not assigned yet. Acknowledge the answer here; do not execute its continuation again in this conversation.\n{}\n[/bobe.owner_input]",
-            serde_json::to_string(&facts)?
+        Ok(crate::provider::event_block(
+            "bobe.owner_input",
+            serde_json::Value::Array(facts),
         ))
     }
 
@@ -508,13 +508,13 @@ impl AgentJobRepo {
         let mut released = false;
         for input in answers {
             let definition: AskOwner = serde_json::from_str(&input.definition_json)?;
-            let context=serde_json::json!({
+            let answer = serde_json::json!({
                 "request_id":input.id,"kind":input.kind,"question":input.question,"action":input.action,
                 "owner_answer":input.response,
-            }).to_string();
+            });
             let job = if let Some(id) = input.job_id {
                 let changed=sqlx::query("UPDATE agent_jobs SET status='queued',attempt=attempt+1,resume_context=?2,output=NULL,error=NULL,delivery_id=?3,delivery_status='pending',delivery_after=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1 AND status='awaiting_input' AND delivery_status!='delivering'")
-                    .bind(id).bind(&context).bind(Uuid::new_v4()).execute(&mut *transaction).await?.rows_affected();
+                    .bind(id).bind(answer.to_string()).bind(Uuid::new_v4()).execute(&mut *transaction).await?.rows_affected();
                 if changed == 0 {
                     continue;
                 }
@@ -539,7 +539,8 @@ impl AgentJobRepo {
                         title: crate::util::text::truncate_str(&input.action, 160).to_owned(),
                         task: definition.task,
                         context: format!(
-                            "[bobe.owner_response]\n{context}\n[/bobe.owner_response]\n{}",
+                            "{}\n{}",
+                            crate::provider::event_block("bobe.owner_response", answer),
                             definition.context
                         ),
                         budget,
@@ -603,6 +604,35 @@ mod tests {
             channel: ConversationChannelId::OWNER,
             goal_id: None,
         }
+    }
+
+    #[tokio::test]
+    async fn owner_input_context_is_one_data_block_or_nothing() {
+        let pool = crate::db::test_helpers::in_memory_pool().await;
+        let repo = AgentJobRepo::new(pool.clone());
+        assert!(
+            repo.owner_input_context(ConversationChannelId::OWNER, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let input = repo
+            .ask_owner("request", origin(Uuid::new_v4(), None), question())
+            .await
+            .unwrap();
+        let context = repo
+            .owner_input_context(ConversationChannelId::OWNER, None)
+            .await
+            .unwrap();
+        let data = context
+            .strip_prefix("[bobe.owner_input]\n")
+            .and_then(|rest| rest.strip_suffix("\n[/bobe.owner_input]"))
+            .expect("owner input context is one daemon event block");
+        let facts: serde_json::Value = serde_json::from_str(data).unwrap();
+        assert_eq!(facts[0]["id"], serde_json::json!(input.id));
+        assert_eq!(facts[0]["status"], "pending");
+        assert_eq!(facts[0]["action"], "Email the reviewed draft to Pat.");
+        pool.close().await;
     }
 
     #[tokio::test]

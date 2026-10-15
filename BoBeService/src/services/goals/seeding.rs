@@ -70,13 +70,12 @@ mod tests {
     async fn fixture() -> (std::path::PathBuf, sqlx::SqlitePool, GoalsService) {
         let root = std::env::temp_dir().join(format!("bobe-goal-seed-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir_all(&root).await.unwrap();
-        let database = root.join("data.sqlite3");
-        let (pool, _) = crate::bootstrap::database::connect_and_apply_schema(&format!(
-            "sqlite:{}",
-            database.display()
-        ))
-        .await
+        let paths = crate::util::paths::DataPaths::resolve(
+            &root,
+            &format!("sqlite:{}", root.join("data.sqlite3").display()),
+        )
         .unwrap();
+        let (pool, _) = crate::bootstrap::database::open(&paths).await.unwrap();
         let service = GoalsService::new(crate::services::goals::file_store::GoalFileStore::new(
             root.join("goals"),
         ));

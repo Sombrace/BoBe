@@ -1,5 +1,6 @@
 pub(crate) mod conversation;
 pub(crate) mod cooldown;
+pub(crate) mod document;
 pub(crate) mod ids;
 pub(crate) mod soul;
 pub(crate) mod types;

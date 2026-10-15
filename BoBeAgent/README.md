@@ -47,8 +47,9 @@ sides and the fixture together.
 - No global pi auth, settings, prompts, extensions or project `.pi` files are
   loaded. Sessions, transcripts and sign-ins live under the data root's
   `agent/` directory.
-- `assets/chat.md` is the only companion behavior source. Rust installs it as
-  the data root's `skills/chat/SKILL.md`.
+- `assets/chat.md` is the only companion behavior text and the base system
+  prompt. Rust sends persona (souls, profiles), memory and capability facts as
+  data, and events as a marker plus data; `chat.md` says how to handle each.
 - Anthropic is API-key-only.
 
 `src/search.ts` adapts pi's grep and find so searches run under Rust's process

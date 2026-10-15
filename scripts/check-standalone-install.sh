@@ -23,7 +23,7 @@ install -m 0755 "$bin" "$archive/bin/bobe"
 install -m 0755 "$runtime/node" "$archive/bin/node"
 cp -RP "$runtime/agent" "$archive/bin/agent"
 install -m 0755 "$root/scripts/install-standalone.sh" "$archive/install.sh"
-printf '{"schema":1,"version":"%s","database_schema":1,"attach_protocol_min":1,"attach_protocol_max":1,"platform":"test"}\n' \
+printf '{"schema":1,"version":"%s","database_schema":1,"database_schema_min":1,"attach_protocol_min":1,"attach_protocol_max":1,"platform":"test"}\n' \
     "$version" >"$archive/compatibility.json"
 cp "$archive/compatibility.json" "$destination/compatibility.json"
 

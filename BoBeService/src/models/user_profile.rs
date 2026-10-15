@@ -1,29 +1,39 @@
-use chrono::{DateTime, Utc};
+use serde::Serialize;
 
+use super::document::{Document, DocumentKind, ShippedDefault};
 use super::ids::UserProfileId;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
-pub(crate) struct UserProfile {
-    pub(crate) id: UserProfileId,
-    pub(crate) name: String,
-    pub(crate) content: String,
-    pub(crate) enabled: bool,
-    pub(crate) is_default: bool,
-    pub(crate) created_at: DateTime<Utc>,
-    pub(crate) updated_at: DateTime<Utc>,
+#[derive(Debug)]
+pub(crate) enum UserProfiles {}
+
+impl DocumentKind for UserProfiles {
+    type Id = UserProfileId;
+    type Listing = UserProfileSummary;
+
+    const TABLE: &'static str = "user_profiles";
+    const NOUN: &'static str = "User profile";
+    const SHIPPED_DEFAULT: Option<ShippedDefault> = None;
+
+    fn new_id() -> UserProfileId {
+        UserProfileId::new()
+    }
 }
 
-impl UserProfile {
-    pub(crate) fn new(name: String, content: String, is_default: bool) -> Self {
-        let now = Utc::now();
+pub(crate) type UserProfile = Document<UserProfiles>;
+
+#[derive(Debug, Serialize)]
+pub(crate) struct UserProfileSummary {
+    pub(crate) profiles: Vec<UserProfile>,
+    pub(crate) count: usize,
+    pub(crate) enabled_count: usize,
+}
+
+impl From<Vec<UserProfile>> for UserProfileSummary {
+    fn from(profiles: Vec<UserProfile>) -> Self {
         Self {
-            id: UserProfileId::new(),
-            name,
-            content,
-            enabled: true,
-            is_default,
-            created_at: now,
-            updated_at: now,
+            count: profiles.len(),
+            enabled_count: profiles.iter().filter(|profile| profile.enabled).count(),
+            profiles,
         }
     }
 }

@@ -60,6 +60,10 @@ tools; [Releasing](docs/releasing.md) covers release scripts.
   tool versions, lint rules); constraints belong in the docs.
 - Change Rust, Swift, tests and `scripts/check-*` contracts together for any
   wire change.
+- A schema change needs an upgrade step and test (see
+  [architecture](docs/architecture.md#lifecycle)); a new UI string needs a
+  translation in every locale, which `scripts/check-localization-catalogs.sh`
+  enforces.
 - Keep tests that protect behavior: authority, persistence and recovery,
   admission and cancellation, protocols, privacy and audio. Do not test
   defaults, wording or dependencies.

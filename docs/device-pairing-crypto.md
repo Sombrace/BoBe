@@ -55,8 +55,8 @@ because the self-signed TLS channel is not trusted until key confirmation.
 - A phone invitation also yields a `bobe://pair` link carrying the code, the
   daemon's origins and its TLS key digest, so the phone pins its first
   connection.
-- Enrollment commits the endpoint, its scopes, the credential verifier and
-  the audit event in one transaction, then consumes the invitation. A failure
+- Enrollment commits the endpoint, its scopes and the credential verifier in
+  one transaction, logs a security event, then consumes the invitation. A failure
   releases the invitation for a retry within its expiry.
 - The credential is `bobe_v2_<lookup-id>_<256-bit secret>`; only its verifier
   is stored. Re-enrollment or revocation revokes earlier credentials and

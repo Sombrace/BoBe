@@ -28,6 +28,12 @@ pub(crate) struct ToolSpec {
     pub(crate) description: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct Capabilities {
+    pub(crate) memory: bool,
+    pub(crate) goals: bool,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub(crate) struct ToolOutcome {
     pub(crate) success: bool,
@@ -130,24 +136,19 @@ impl DomainTools {
         self.specs().into_iter().find(|spec| spec.name == name)
     }
 
+    pub(crate) fn memory_file(&self) -> Arc<MemoryFile> {
+        Arc::clone(&self.memory)
+    }
+
     pub(crate) const fn memory_enabled(&self) -> bool {
         self.memory_enabled
     }
 
-    pub(crate) fn capability_instructions(&self) -> String {
-        let memory = if self.memory_enabled {
-            "enabled; memory context is injected and bobe_memory_* tools are available"
-        } else {
-            "disabled; no memory context is injected and bobe_memory_* tools are unavailable"
-        };
-        let goals = if self.goals_enabled {
-            "enabled; bobe_goal_* tools are available"
-        } else {
-            "disabled; bobe_goal_* tools are unavailable"
-        };
-        format!(
-            "# Active daemon capabilities\n\n- Durable memory: {memory}.\n- Goals: {goals}.\n- Pi supplies filesystem, read/edit, search and shell tools. Use shell tools for Git and the registered MCP and delegation tools for connected capabilities.\n- The current working directory is BoBe's stable authority-owned workspace. Host operations use the daemon's operating-system permissions.\n- `bobe_skill_create` atomically publishes and activates learned skills.\n\nUse the live tool catalog. Report a capability as active only when it is available, and a mutation as complete only after its result confirms it."
-        )
+    pub(crate) const fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            memory: self.memory_enabled,
+            goals: self.goals_enabled,
+        }
     }
 
     pub(crate) fn is_enabled(&self, name: &str) -> bool {
@@ -527,12 +528,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("bobe-tools-{}", uuid::Uuid::new_v4()));
         let memory = MemoryFile::new(root.join("memory.md"));
         let goals = Arc::new(GoalsService::new(GoalFileStore::new(root.join("goals"))));
-        std::fs::create_dir_all(root.join("skills/chat")).unwrap();
-        std::fs::write(
-            root.join("skills/chat/SKILL.md"),
-            super::super::skills::CHAT_SKILL_MD,
-        )
-        .unwrap();
+        std::fs::create_dir_all(&root).unwrap();
         let paths = crate::util::paths::DataPaths::resolve(
             &root,
             &format!("sqlite:{}", root.join("data.sqlite3").display()),

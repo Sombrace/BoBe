@@ -63,13 +63,10 @@ pub(crate) async fn get(pool: &SqlitePool) -> Result<InitializationState, AppErr
 }
 
 pub(crate) async fn set(pool: &SqlitePool, state: InitializationState) -> Result<(), AppError> {
-    sqlx::query(
-        "UPDATE runtime_initialization SET state = ?,
-         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE singleton = 1",
-    )
-    .bind(state.as_str())
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE runtime_initialization SET state = ? WHERE singleton = 1")
+        .bind(state.as_str())
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

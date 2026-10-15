@@ -150,15 +150,11 @@ impl DeviceTrustRepo {
             .iter()
             .filter(|scope| !active_scopes.iter().any(|active| active == scope.as_str()))
         {
-            sqlx::query(
-                "INSERT INTO endpoint_scope_grants (endpoint_id, scope, granted_by)
-                 VALUES (?1, ?2, ?3)",
-            )
-            .bind(&endpoint.id)
-            .bind(scope.as_str())
-            .bind(granted_by)
-            .execute(&mut *transaction)
-            .await?;
+            sqlx::query("INSERT INTO endpoint_scope_grants (endpoint_id, scope) VALUES (?1, ?2)")
+                .bind(&endpoint.id)
+                .bind(scope.as_str())
+                .execute(&mut *transaction)
+                .await?;
         }
 
         let superseded_credential_ids: Vec<String> = sqlx::query_scalar(
@@ -190,35 +186,25 @@ impl DeviceTrustRepo {
         .await?;
         sqlx::query(
             "UPDATE endpoint_credentials
-             SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-                 revocation_reason = 'superseded', replaced_by = ?1
-             WHERE endpoint_id = ?2 AND kind = 'bearer' AND id <> ?1
+             SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+             WHERE endpoint_id = ?1 AND kind = 'bearer' AND id <> ?2
                AND revoked_at IS NULL",
         )
-        .bind(&credential_id)
-        .bind(&endpoint.id)
-        .execute(&mut *transaction)
-        .await?;
-
-        let details = serde_json::json!({
-            "authority_epoch": authority_epoch,
-            "generation": generation,
-            "granted_by": granted_by,
-            "scopes": scopes.iter().map(|scope| scope.as_str()).collect::<Vec<_>>(),
-        });
-        sqlx::query(
-            "INSERT INTO security_audit_events
-             (id, event_kind, endpoint_id, credential_id, source_summary, details_json)
-             VALUES (?1, 'endpoint_bearer_enrolled', ?2, ?3, ?4, ?5)",
-        )
-        .bind(Uuid::new_v4().as_bytes().as_slice())
         .bind(&endpoint.id)
         .bind(&credential_id)
-        .bind(source_summary)
-        .bind(serde_json::to_string(&details)?)
         .execute(&mut *transaction)
         .await?;
         transaction.commit().await?;
+        tracing::info!(
+            endpoint_id = %endpoint.id,
+            credential_id = %credential_id,
+            generation,
+            authority_epoch,
+            granted_by,
+            source = source_summary,
+            scopes = ?scopes.iter().map(|scope| scope.as_str()).collect::<Vec<_>>(),
+            "security.endpoint_bearer_enrolled"
+        );
 
         Ok(IssuedBearerCredential {
             endpoint_id: endpoint.id.clone(),
@@ -309,12 +295,10 @@ impl DeviceTrustRepo {
         let result = sqlx::query(
             "UPDATE endpoints
              SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-                 revocation_reason = ?2,
                  updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE id = ?1 AND revoked_at IS NULL",
         )
         .bind(endpoint_id)
-        .bind(reason)
         .execute(&mut *transaction)
         .await?;
         if result.rows_affected() != 1 {
@@ -323,12 +307,10 @@ impl DeviceTrustRepo {
         }
         sqlx::query(
             "UPDATE endpoint_credentials
-             SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-                 revocation_reason = ?2
+             SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
              WHERE endpoint_id = ?1 AND revoked_at IS NULL",
         )
         .bind(endpoint_id)
-        .bind(reason)
         .execute(&mut *transaction)
         .await?;
         sqlx::query(
@@ -339,19 +321,8 @@ impl DeviceTrustRepo {
         .bind(endpoint_id)
         .execute(&mut *transaction)
         .await?;
-        sqlx::query(
-            "INSERT INTO security_audit_events
-             (id, event_kind, endpoint_id, details_json)
-             VALUES (?1, 'endpoint_revoked', ?2, ?3)",
-        )
-        .bind(Uuid::new_v4().as_bytes().as_slice())
-        .bind(endpoint_id)
-        .bind(serde_json::to_string(
-            &serde_json::json!({ "reason": reason }),
-        )?)
-        .execute(&mut *transaction)
-        .await?;
         transaction.commit().await?;
+        tracing::info!(endpoint_id, reason, "security.endpoint_revoked");
         Ok(true)
     }
 
@@ -476,7 +447,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn enrollment_supersedes_bearers_replaces_scopes_and_audits() {
+    async fn enrollment_supersedes_bearers_and_replaces_scopes() {
         let repo = repo().await;
         let first = repo
             .enroll_endpoint_with_bearer(
@@ -531,23 +502,13 @@ mod tests {
             .unwrap();
         assert!(current.scopes.contains(Scope::ProviderAdmin));
         assert!(!current.scopes.contains(Scope::ConversationRead));
-        let superseded: (Option<String>, Option<String>) = sqlx::query_as(
-            "SELECT revocation_reason, replaced_by FROM endpoint_credentials WHERE id = ?1",
-        )
-        .bind(&first_record.0)
-        .fetch_one(&repo.pool)
-        .await
-        .unwrap();
-        assert_eq!(superseded.0.as_deref(), Some("superseded"));
-        assert_eq!(superseded.1.as_deref(), Some(second_record.0.as_str()));
-        let audit_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM security_audit_events
-             WHERE event_kind = 'endpoint_bearer_enrolled' AND endpoint_id = 'mac-a'",
-        )
-        .fetch_one(&repo.pool)
-        .await
-        .unwrap();
-        assert_eq!(audit_count, 2);
+        let superseded_at: Option<String> =
+            sqlx::query_scalar("SELECT revoked_at FROM endpoint_credentials WHERE id = ?1")
+                .bind(&first_record.0)
+                .fetch_one(&repo.pool)
+                .await
+                .unwrap();
+        assert!(superseded_at.is_some());
     }
 
     #[tokio::test]
@@ -633,15 +594,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn enrollment_rolls_back_every_change_when_audit_fails() {
+    async fn enrollment_rolls_back_every_change_when_the_credential_is_not_stored() {
         let repo = repo().await;
         EndpointRepo::new(repo.pool.clone())
             .upsert(&mac_endpoint("Mac A"))
             .await
             .unwrap();
         sqlx::query(
-            "CREATE TRIGGER fail_enrollment_audit BEFORE INSERT ON security_audit_events
-             BEGIN SELECT RAISE(FAIL, 'audit unavailable'); END",
+            "CREATE TRIGGER fail_credential_issue BEFORE INSERT ON endpoint_credentials
+             BEGIN SELECT RAISE(FAIL, 'credential store unavailable'); END",
         )
         .execute(&repo.pool)
         .await
@@ -708,7 +669,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn revocation_cascades_to_credentials_and_grants_and_audits() {
+    async fn revocation_cascades_to_credentials_and_grants() {
         let repo = repo().await;
         drop(enroll(&repo, &[Scope::ConversationRead], 2).await);
         let credential_id = active_bearer_id(&repo).await;
@@ -724,13 +685,13 @@ mod tests {
                 .await
                 .unwrap()
         );
-        let credential_reason: Option<String> =
-            sqlx::query_scalar("SELECT revocation_reason FROM endpoint_credentials WHERE id = ?1")
+        let credential_revoked_at: Option<String> =
+            sqlx::query_scalar("SELECT revoked_at FROM endpoint_credentials WHERE id = ?1")
                 .bind(credential_id)
                 .fetch_one(&repo.pool)
                 .await
                 .unwrap();
-        assert_eq!(credential_reason.as_deref(), Some("owner_requested"));
+        assert!(credential_revoked_at.is_some());
         let active_grants: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM endpoint_scope_grants
              WHERE endpoint_id = 'mac-a' AND revoked_at IS NULL",
@@ -739,14 +700,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(active_grants, 0);
-        let audit_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM security_audit_events
-             WHERE event_kind = 'endpoint_revoked' AND endpoint_id = 'mac-a'",
-        )
-        .fetch_one(&repo.pool)
-        .await
-        .unwrap();
-        assert_eq!(audit_count, 1);
     }
 
     #[tokio::test]
