@@ -35,10 +35,6 @@ final class BobeStatusItemController: NSObject, NSMenuDelegate {
         self.statusItem = nil
     }
 
-    var menuItemTitles: [String] {
-        self.menu.items.map(\.title)
-    }
-
     nonisolated func menuNeedsUpdate(_ menu: NSMenu) {
         MainActor.assumeIsolated {
             self.rebuildMenu()

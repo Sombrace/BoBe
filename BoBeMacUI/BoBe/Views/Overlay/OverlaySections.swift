@@ -44,13 +44,11 @@ extension OverlayView {
     }
 
     private var columnTransition: AnyTransition {
-        guard !BobeMotion.isReduced else { return .opacity }
-        return .scale(scale: 0.9, anchor: self.placement.corner).combined(with: .opacity)
+        .bobePop(anchor: self.placement.corner, scale: 0.9)
     }
 
     private var capsuleTransition: AnyTransition {
-        guard !BobeMotion.isReduced else { return .opacity }
-        return .scale(scale: 0.4, anchor: self.placement.nearEdge).combined(with: .opacity)
+        .bobePop(anchor: self.placement.nearEdge, scale: 0.4)
     }
 
     private var showsThread: Bool {

@@ -319,7 +319,7 @@ final class OverlayWindowManager: NSObject {
             try? await Task.sleep(for: .milliseconds(70))
             guard let columnHost else { return }
             NSAnimationContext.beginGrouping()
-            NSAnimationContext.current.duration = AccessibilityRuntime.shared.reduceMotion ? 0 : 0.18
+            NSAnimationContext.current.duration = BobeMotion.windowFadeSeconds
             columnHost.animator().alphaValue = 1
             NSAnimationContext.endGrouping()
         }

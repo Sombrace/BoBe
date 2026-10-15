@@ -4,9 +4,6 @@ import Security
 struct BrainRecord: Codable, Sendable, Equatable {
     var origins: [URL]
     let pin: Data
-    let endpointId: UUID
-    let authorityId: UUID
-    let authorityEpoch: Int
 }
 
 struct BrainPairing: Codable, Sendable, Equatable {

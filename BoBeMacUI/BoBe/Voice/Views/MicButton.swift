@@ -164,7 +164,7 @@ struct MicButton: View {
             for _ in 0 ..< 60 where !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(30))
                 await self.pipeline.refreshDaemonState()
-                switch self.pipeline.modelPreparation {
+                switch VoiceModelInstaller.shared.preparation {
                 case .ready, .failed: return
                 case .preparing, .installing, .missing: break
                 }

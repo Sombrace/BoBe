@@ -1,7 +1,6 @@
 import SwiftUI
 
 enum PhoneText {
-    case hero
     case title
     case heading
     case body
@@ -12,7 +11,6 @@ enum PhoneText {
 
     var font: Font {
         switch self {
-        case .hero: .system(.largeTitle, design: .rounded, weight: .semibold)
         case .title: .system(.title2, design: .rounded, weight: .semibold)
         case .heading: .system(.headline, design: .rounded)
         case .body: .body
@@ -77,7 +75,6 @@ struct PhoneButtonStyle: ButtonStyle {
         case primary
         case secondary
         case quiet
-        case destructive
     }
 
     var kind: Kind = .primary
@@ -112,15 +109,12 @@ struct PhoneButtonStyle: ButtonStyle {
         case .quiet:
             Capsule(style: .continuous)
                 .fill(pressed ? self.theme.well : .clear)
-        case .destructive:
-            Capsule(style: .continuous)
-                .fill(self.theme.colors.destructive.mix(with: .black, by: pressed ? 0.12 : 0))
         }
     }
 
     private var foreground: Color {
         switch self.kind {
-        case .primary, .destructive: self.theme.onAccent
+        case .primary: self.theme.onAccent
         case .secondary: self.theme.colors.text
         case .quiet: self.theme.colors.primary
         }
@@ -138,10 +132,6 @@ extension ButtonStyle where Self == PhoneButtonStyle {
 
     static var phoneQuiet: PhoneButtonStyle {
         PhoneButtonStyle(kind: .quiet)
-    }
-
-    static var phoneDestructive: PhoneButtonStyle {
-        PhoneButtonStyle(kind: .destructive)
     }
 }
 

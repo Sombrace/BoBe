@@ -2,14 +2,12 @@ import Foundation
 
 struct AuthStatusResponse: Codable, Sendable {
     let isAuthenticated: Bool
-    let authType: String?
     let host: String?
     let login: String?
     let statusMessage: String?
 
     enum CodingKeys: String, CodingKey {
         case isAuthenticated = "is_authenticated"
-        case authType = "auth_type"
         case login, host
         case statusMessage = "status_message"
     }
@@ -33,14 +31,12 @@ struct LocalRuntimeSnapshot: Codable, Sendable {
     let error: String?
     let runtime: LocalRuntimeDownload
     let chatModel: LocalRuntimePull
-    let batchModel: LocalRuntimePull
 
     enum CodingKeys: String, CodingKey {
         case status
         case error
         case runtime
         case chatModel = "chat_model"
-        case batchModel = "batch_model"
     }
 }
 
@@ -49,7 +45,6 @@ struct LocalRuntimeDownload: Codable, Sendable {
 }
 
 struct LocalRuntimePull: Codable, Sendable {
-    let status: String
     let percent: Int?
 }
 

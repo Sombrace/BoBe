@@ -184,15 +184,14 @@ struct DaemonEndpointTests {
     }
 
     @Test
-    func readinessResponseDecodesDaemonIdentityAndInitialization() throws {
+    func readinessResponseDecodesRuntimeIncarnation() throws {
         let data = try #require(
             """
             {"status":"ready","runtime_authority_id":"11111111-2222-3333-4444-555555555555","runtime_authority_epoch":1,"runtime_incarnation_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","daemon_version":"0.1.0","schema_version":1,"initialization_state":"provider_required","started_at":"2026-07-29T00:00:00Z","blocking_reasons":[]}
             """.data(using: .utf8)
         )
         let response = try JSONDecoder().decode(ReadinessResponse.self, from: data)
-        #expect(response.initializationState == .providerRequired)
-        #expect(response.runtimeAuthorityEpoch == 1)
+        #expect(response.runtimeIncarnationId == UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
     }
 
     @Test

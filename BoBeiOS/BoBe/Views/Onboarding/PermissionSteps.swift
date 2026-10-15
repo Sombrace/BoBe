@@ -1,28 +1,5 @@
 import SwiftUI
 
-struct ReachStep: View {
-    @Bindable var model: PhoneModel
-    @State private var asking = false
-
-    var body: some View {
-        OnboardingAsk(
-            title: L10n.tr("phone.reach.title"),
-            message: L10n.tr("phone.reach.body"),
-            allowTitle: L10n.tr("phone.reach.allow"),
-            skipTitle: L10n.tr("phone.common.not_now"),
-            asking: self.asking,
-            onAllow: {
-                self.asking = true
-                Task {
-                    await self.model.allowNotifications()
-                    self.asking = false
-                }
-            },
-            onSkip: self.model.skipNotifications
-        )
-    }
-}
-
 struct HearStep: View {
     @Bindable var model: PhoneModel
     @State private var asking = false

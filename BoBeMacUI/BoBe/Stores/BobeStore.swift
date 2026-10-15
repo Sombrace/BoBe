@@ -482,18 +482,6 @@ final class BobeStore {
         await self.sendMessage(recovery.content, requestId: recovery.requestId)
     }
 
-    func clearMessages() {
-        self.cancelConversationClear()
-        self.updateState {
-            $0.messages = []
-            $0.lastMessage = nil
-            $0.currentMessage = ""
-        }
-        self.latestLiveBobeMessageId = nil
-        self.streamingMessage = ""
-        self.streamingMessageId = nil
-    }
-
     static func markMessageSent(_ messageId: String, messages: inout [ChatMessage]) {
         self.updateMessage(messageId, messages: &messages) { message in
             message.isStreaming = false

@@ -47,13 +47,7 @@ enum CapabilityStateWire: String, Codable, Sendable {
 }
 
 struct RuntimeCapabilitiesWire: Codable, Sendable {
-    let agent: CapabilityStateWire
     let stt: CapabilityStateWire
-    let tts: CapabilityStateWire
-    let capture: CapabilityStateWire
-    let body: CapabilityStateWire
-    let mcp: CapabilityStateWire
-    let events: CapabilityStateWire
 }
 
 struct HelloReadiness: Codable, Sendable {
@@ -66,49 +60,25 @@ struct HelloReadiness: Codable, Sendable {
     }
 }
 
-struct EventsContractWire: Codable, Sendable {
-    let subscription: String
-    let cursorStart: UInt64?
-
-    enum CodingKeys: String, CodingKey {
-        case subscription
-        case cursorStart = "cursor_start"
-    }
-}
-
 struct HelloResponse: Codable, Sendable {
     let runtimeAuthorityId: UUID
     let runtimeAuthorityEpoch: Int
-    let runtimeIncarnationId: UUID
     let daemonVersion: String
-    let schemaVersion: Int
-    let startedAt: String
-    let protocolMin: UInt32
-    let protocolMax: UInt32
     let negotiatedProtocol: UInt32
     let deploymentMode: String
     let initializationState: InitializationStateWire
     let readiness: HelloReadiness
     let capabilities: RuntimeCapabilitiesWire
     let grantedScopes: [String]
-    let authMode: String
-    let events: EventsContractWire
 
     enum CodingKeys: String, CodingKey {
         case runtimeAuthorityId = "runtime_authority_id"
         case runtimeAuthorityEpoch = "runtime_authority_epoch"
-        case runtimeIncarnationId = "runtime_incarnation_id"
         case daemonVersion = "daemon_version"
-        case schemaVersion = "schema_version"
-        case startedAt = "started_at"
-        case protocolMin = "protocol_min"
-        case protocolMax = "protocol_max"
         case negotiatedProtocol = "negotiated_protocol"
         case deploymentMode = "deployment_mode"
         case initializationState = "initialization_state"
         case readiness, capabilities
         case grantedScopes = "granted_scopes"
-        case authMode = "auth_mode"
-        case events
     }
 }

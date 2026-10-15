@@ -3,7 +3,6 @@
 "phone.common.dismiss" = "Schließen";
 "phone.common.done" = "Fertig";
 "phone.common.maybe_later" = "Vielleicht später";
-"phone.common.not_now" = "Nicht jetzt";
 "phone.common.open_settings" = "Einstellungen öffnen";
 "phone.onboarding.progress_format" = "Schritt %d von %d";
 "phone.welcome.title" = "Hallo, ich bin BoBe";
@@ -30,9 +29,6 @@
 "phone.where.title" = "Wo ist der Code?";
 "phone.where.mac" = "Mac: Einstellungen › Geräte › iPhone koppeln";
 "phone.where.linux" = "Linux:";
-"phone.reach.title" = "Darf ich mich melden?";
-"phone.reach.body" = "Nur, wenn es wichtig ist.";
-"phone.reach.allow" = "Mitteilungen erlauben";
 "phone.hear.title" = "Laut sprechen?";
 "phone.hear.body" = "Halte die Taste gedrückt und sprich.";
 "phone.hear.allow" = "Mikrofon erlauben";
@@ -85,7 +81,6 @@
 "phone.talk.permission" = "Schalte in den Einstellungen Mikrofon und Spracherkennung ein.";
 "phone.settings.title" = "Einstellungen";
 "phone.settings.address" = "Adresse";
-"phone.settings.notifications" = "Mitteilungen";
 "phone.settings.voice" = "Sprechen";
 "phone.settings.unpair" = "Dieses iPhone entkoppeln";
 "phone.settings.unpair.title" = "Dieses iPhone entkoppeln?";

@@ -287,11 +287,9 @@
 "overlay.input.mic.install_progress.accessibility" = "Progresso do download do modelo de voz";
 "overlay.input.mic.install_progress.value_format" = "%d por cento";
 "voice.model.status.installed" = "Instalado";
-"voice.model.status.already_installed" = "Já instalado";
 "voice.model.status.downloading" = "Baixando…";
 "voice.model.status.pending" = "Ainda não baixado";
 "voice.model.status.failed" = "Falhou";
-"voice.model.status.canceled" = "Cancelado";
 "tray.status.accessibility" = "Status do BoBe";
 "tray.more" = "Mais";
 "tray.physical_setup" = "Configurar BoBe físico…";

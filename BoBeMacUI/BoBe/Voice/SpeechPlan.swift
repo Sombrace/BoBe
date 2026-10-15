@@ -78,10 +78,9 @@ struct SpeechPlanWire: Codable, Sendable, Equatable {
     let downlink: SpeechTransferWire
     let eouOwner: SpeechBoundaryOwnerWire
     let wakeOwner: SpeechBoundaryOwnerWire
-    let reason: String
 
     enum CodingKeys: String, CodingKey {
-        case uplink, downlink, reason
+        case uplink, downlink
         case planId = "plan_id"
         case sttSite = "stt_site"
         case sttEngineId = "stt_engine_id"

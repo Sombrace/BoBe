@@ -70,11 +70,8 @@ final class VoiceTtsPreference {
     private(set) var backend: VoiceTtsBackend
 
     private init() {
-        let saved = UserDefaults.standard.string(forKey: Self.key)
-        self.backend = saved.flatMap(VoiceTtsBackend.init(rawValue:)) ?? .serverPocket
-        if saved == "server_kokoro" {
-            UserDefaults.standard.set(self.backend.rawValue, forKey: Self.key)
-        }
+        self.backend = UserDefaults.standard.string(forKey: Self.key)
+            .flatMap(VoiceTtsBackend.init(rawValue:)) ?? .serverPocket
     }
 
     func setBackend(_ backend: VoiceTtsBackend) {

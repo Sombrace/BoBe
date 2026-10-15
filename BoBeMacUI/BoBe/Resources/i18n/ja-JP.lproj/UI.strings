@@ -287,11 +287,9 @@
 "overlay.input.mic.install_progress.accessibility" = "音声モデルのダウンロードの進行状況";
 "overlay.input.mic.install_progress.value_format" = "%d パーセント";
 "voice.model.status.installed" = "インストール済み";
-"voice.model.status.already_installed" = "インストール済み";
 "voice.model.status.downloading" = "ダウンロード中…";
 "voice.model.status.pending" = "未ダウンロード";
 "voice.model.status.failed" = "失敗";
-"voice.model.status.canceled" = "キャンセル済み";
 "tray.status.accessibility" = "BoBeのステータス";
 "tray.more" = "その他";
 "tray.physical_setup" = "物理BoBeを設定…";

@@ -1,6 +1,5 @@
 import AVFoundation
 import Speech
-import UserNotifications
 
 enum PhonePermission: Sendable, Equatable {
     case unknown
@@ -9,19 +8,6 @@ enum PhonePermission: Sendable, Equatable {
 }
 
 enum PhonePermissions {
-    static func notifications() async -> PhonePermission {
-        switch await UNUserNotificationCenter.current().notificationSettings().authorizationStatus {
-        case .authorized, .provisional, .ephemeral: .granted
-        case .denied: .denied
-        case .notDetermined: .unknown
-        @unknown default: .unknown
-        }
-    }
-
-    static func requestNotifications() async -> Bool {
-        (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])) ?? false
-    }
-
     static func microphone() -> PhonePermission {
         switch AVAudioApplication.shared.recordPermission {
         case .granted: .granted

@@ -20,23 +20,15 @@ enum EventType: String, Codable, Sendable {
 }
 
 struct StreamBundle: Codable, Sendable {
-    var channelId: UUID? = nil
     let eventId: UInt64?
     let runtimeIncarnationId: UUID?
-    let audience: String?
-    let runId: UUID?
-    let turnId: UUID?
     let type: EventType
     let payload: AnyCodablePayload
     let messageId: String
 
     enum CodingKeys: String, CodingKey {
-        case channelId = "channel_id"
         case eventId = "event_id"
         case runtimeIncarnationId = "runtime_incarnation_id"
-        case audience
-        case runId = "run_id"
-        case turnId = "turn_id"
         case type
         case payload
         case messageId = "message_id"
@@ -44,14 +36,12 @@ struct StreamBundle: Codable, Sendable {
 }
 
 struct SnapshotRequiredPayload: Codable, Sendable {
-    let from: UInt64?
-    let to: UInt64?
     let resumeAfter: UInt64?
     let reason: String
     let snapshotRequired: Bool
 
     enum CodingKeys: String, CodingKey {
-        case from, to, reason
+        case reason
         case resumeAfter = "resume_after"
         case snapshotRequired = "snapshot_required"
     }

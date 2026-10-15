@@ -62,6 +62,15 @@ actor DaemonClient {
         return eventId > lastProcessedEventId
     }
 
+    static func decodeEvent<Event: Decodable>(
+        _ type: Event.Type,
+        from line: String,
+        decoder: JSONDecoder = JSONDecoder()
+    ) throws -> Event? {
+        guard line.hasPrefix("data: ") else { return nil }
+        return try decoder.decode(type, from: Data(line.dropFirst(6).utf8))
+    }
+
     func endpointURL(_ path: String, queryItems: [URLQueryItem] = []) -> URL {
         let segments = path.split(separator: "/").map(String.init)
         return self.endpointURL(pathSegments: segments, queryItems: queryItems)
@@ -190,11 +199,10 @@ actor DaemonClient {
 
             streamLoop: for try await line in bytes.lines {
                 if Task.isCancelled { break }
-                guard line.hasPrefix("data: ") else { continue }
-                let jsonStr = String(line.dropFirst(6))
-                guard let data = jsonStr.data(using: .utf8) else { continue }
                 do {
-                    let bundle = try decoder.decode(StreamBundle.self, from: data)
+                    guard let bundle = try Self.decodeEvent(StreamBundle.self, from: line, decoder: self.decoder) else {
+                        continue
+                    }
                     if !Self.shouldProcess(
                         eventId: bundle.eventId,
                         eventIncarnationId: bundle.runtimeIncarnationId,

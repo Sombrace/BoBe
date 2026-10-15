@@ -1,7 +1,6 @@
 import SwiftUI
 
 enum BobeElevation {
-    case flat
     case resting
     case lifted
 }
@@ -67,7 +66,6 @@ private struct BobeRaisedSurface<S: InsettableShape>: ViewModifier {
 
     private var near: BobeShadow {
         switch self.elevation {
-        case .flat: BobeShadow()
         case .resting: BobeShadow(opacity: 0.09 * self.darkBoost, radius: 3, x: 1, y: 2)
         case .lifted: BobeShadow(opacity: 0.12 * self.darkBoost, radius: 6, x: 2, y: 4)
         }
@@ -75,7 +73,6 @@ private struct BobeRaisedSurface<S: InsettableShape>: ViewModifier {
 
     private var far: BobeShadow {
         switch self.elevation {
-        case .flat: BobeShadow()
         case .resting: BobeShadow(opacity: 0.07 * self.darkBoost, radius: 10, x: 3, y: 7)
         case .lifted: BobeShadow(opacity: 0.11 * self.darkBoost, radius: 20, x: 6, y: 14)
         }
@@ -83,10 +80,10 @@ private struct BobeRaisedSurface<S: InsettableShape>: ViewModifier {
 }
 
 private struct BobeShadow {
-    var opacity: Double = 0
-    var radius: CGFloat = 0
-    var x: CGFloat = 0
-    var y: CGFloat = 0
+    let opacity: Double
+    let radius: CGFloat
+    let x: CGFloat
+    let y: CGFloat
 }
 
 private struct BobeWellSurface<S: InsettableShape>: ViewModifier {

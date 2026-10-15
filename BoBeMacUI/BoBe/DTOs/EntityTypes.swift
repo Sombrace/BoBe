@@ -39,11 +39,10 @@ struct Goal: Identifiable, Codable, Sendable {
 
 struct GoalListResponse: Codable, Sendable {
     let goals: [Goal]
-    let count: Int
     let activeCount: Int
 
     enum CodingKeys: String, CodingKey {
-        case goals, count
+        case goals
         case activeCount = "active_count"
     }
 }
@@ -105,12 +104,6 @@ struct Soul: Identifiable, Codable, Sendable {
 struct SoulListResponse: Codable, Sendable {
     let souls: [Soul]
     let count: Int
-    let enabledCount: Int
-
-    enum CodingKeys: String, CodingKey {
-        case souls, count
-        case enabledCount = "enabled_count"
-    }
 }
 
 struct SoulCreateRequest: Codable, Sendable {
@@ -144,13 +137,6 @@ struct UserProfile: Identifiable, Codable, Sendable {
 
 struct UserProfileListResponse: Codable, Sendable {
     let profiles: [UserProfile]
-    let count: Int
-    let enabledCount: Int
-
-    enum CodingKeys: String, CodingKey {
-        case profiles, count
-        case enabledCount = "enabled_count"
-    }
 }
 
 struct UserProfileCreateRequest: Codable, Sendable {
@@ -186,13 +172,10 @@ struct MCPServer: Identifiable, Codable, Sendable {
 struct MCPConfigDocumentResponse: Codable, Sendable {
     let rawJson: String
     let servers: [MCPServer]
-    let count: Int
-    let connectedCount: Int
 
     enum CodingKeys: String, CodingKey {
-        case servers, count
+        case servers
         case rawJson = "raw_json"
-        case connectedCount = "connected_count"
     }
 }
 
@@ -223,23 +206,19 @@ struct MCPConfigSaveResponse: Codable, Sendable {
     let message: String
     let rawJson: String
     let servers: [MCPServer]
-    let count: Int
-    let connectedCount: Int
 
     enum CodingKeys: String, CodingKey {
-        case message, servers, count
+        case message, servers
         case rawJson = "raw_json"
-        case connectedCount = "connected_count"
     }
 }
 
 struct MCPConfigResetResponse: Codable, Sendable {
     let message: String
     let rawJson: String
-    let count: Int
 
     enum CodingKeys: String, CodingKey {
-        case message, count
+        case message
         case rawJson = "raw_json"
     }
 }

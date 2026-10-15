@@ -426,11 +426,9 @@
 "overlay.input.mic.failed_format" = "Voice model failed to load: %@. Tap to retry.";
 
 "voice.model.status.installed" = "Installed";
-"voice.model.status.already_installed" = "Already installed";
 "voice.model.status.downloading" = "Downloading…";
 "voice.model.status.pending" = "Not downloaded yet";
 "voice.model.status.failed" = "Failed";
-"voice.model.status.canceled" = "Canceled";
 "settings.voice.empty.unreachable" = "Couldn't reach BoBe. Voice settings will appear once she's connected.";
 "overlay.input.mic.disabled.thinking" = "BoBe is thinking…";
 "overlay.input.mic.disabled.speaking" = "BoBe is speaking. Wait for the reply to finish.";

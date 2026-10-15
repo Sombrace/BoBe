@@ -3,7 +3,6 @@
 "phone.common.dismiss" = "Fechar";
 "phone.common.done" = "Concluído";
 "phone.common.maybe_later" = "Talvez depois";
-"phone.common.not_now" = "Agora não";
 "phone.common.open_settings" = "Abrir Ajustes";
 "phone.onboarding.progress_format" = "Etapa %d de %d";
 "phone.welcome.title" = "Oi, eu sou a BoBe";
@@ -30,9 +29,6 @@
 "phone.where.title" = "Onde está o código?";
 "phone.where.mac" = "Mac: Ajustes › Dispositivos › Emparelhar iPhone";
 "phone.where.linux" = "Linux:";
-"phone.reach.title" = "Posso avisar você?";
-"phone.reach.body" = "Só quando for importante.";
-"phone.reach.allow" = "Permitir notificações";
 "phone.hear.title" = "Falar em voz alta?";
 "phone.hear.body" = "Segure o botão e fale.";
 "phone.hear.allow" = "Permitir microfone";
@@ -85,7 +81,6 @@
 "phone.talk.permission" = "Ative Microfone e Reconhecimento de Fala nos Ajustes.";
 "phone.settings.title" = "Ajustes";
 "phone.settings.address" = "Endereço";
-"phone.settings.notifications" = "Notificações";
 "phone.settings.voice" = "Voz";
 "phone.settings.unpair" = "Desemparelhar este iPhone";
 "phone.settings.unpair.title" = "Desemparelhar este iPhone?";

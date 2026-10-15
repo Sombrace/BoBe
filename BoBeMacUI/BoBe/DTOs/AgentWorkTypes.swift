@@ -14,7 +14,6 @@ enum AgentToolWire: String, Codable, Sendable, CaseIterable {
 
 struct AgentToolState: Codable, Identifiable, Sendable {
     let name: AgentToolWire
-    let description: String
     let enabled: Bool
     let active: Bool
     var id: AgentToolWire { self.name }
@@ -45,7 +44,6 @@ struct AgentJobWire: Decodable, Identifiable, Sendable {
     let title: String
     let task: String
     let status: AgentJobStatusWire
-    let attempt: Int
     let output: String?
     let error: String?
     let deliveryStatus: String
@@ -55,7 +53,7 @@ struct AgentJobWire: Decodable, Identifiable, Sendable {
         (self.status == .failed || self.status == .interrupted) && self.deliveryStatus != "delivering"
     }
     enum CodingKeys: String, CodingKey {
-        case id, title, task, status, attempt, output, error
+        case id, title, task, status, output, error
         case deliveryStatus = "delivery_status"
     }
 }
@@ -67,7 +65,6 @@ struct AgentScheduleWire: Decodable, Identifiable, Sendable {
     let nextRunAt: String
     let everySeconds: Int?
     let enabled: Bool
-    let generation: Int
     let lastError: String?
 
     var nextRunDate: Date? {
@@ -77,7 +74,7 @@ struct AgentScheduleWire: Decodable, Identifiable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, task, enabled, generation
+        case id, title, task, enabled
         case nextRunAt = "next_run_at", everySeconds = "every_seconds", lastError = "last_error"
     }
 }
@@ -97,11 +94,6 @@ enum AgentRunKindWire: String, Decodable, Sendable {
     case voice
 }
 
-enum OwnerInputKindWire: String, Decodable, Sendable {
-    case approval
-    case information
-}
-
 enum OwnerInputStatusWire: String, Decodable, Sendable {
     case pending
     case answered
@@ -118,18 +110,9 @@ struct OwnerInputChoiceWire: Decodable, Identifiable, Sendable {
 
 struct OwnerInputWire: Decodable, Identifiable, Sendable {
     let id: UUID
-    let kind: OwnerInputKindWire
     let question: String
     let action: String
     let prompt: String
     let choices: [OwnerInputChoiceWire]
     let status: OwnerInputStatusWire
-    let expiresAt: String
-    let response: String?
-    let resumedJobId: UUID?
-
-    enum CodingKeys: String, CodingKey {
-        case id, kind, question, action, prompt, choices, status, response
-        case expiresAt = "expires_at", resumedJobId = "resumed_job_id"
-    }
 }

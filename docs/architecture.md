@@ -175,9 +175,11 @@ disconnect instead of running elsewhere. See the [ESP32 SDK](../esp32-sdk/README
 ## Mac app
 
 The app only presents; it never changes authority or admission.
-`BoBeMacUI/BoBe/Design/` is the single design layer: `BobeMotion` holds every
-animation (so Reduce Motion is one switch), `BobeMaterial` the surfaces and
-`Design/Character/` the one BoBe face. The overlay is two panels sharing
+`BoBeMacUI/BoBe/Design/` is the single design layer for the overlay, Settings,
+setup and the iPhone: controls, typography and themes, `BobeMotion` for
+animation curves (Reduce Motion is read in one place, `AccessibilityRuntime`),
+`BobeMaterial` for surfaces and `Design/Character/` for the one BoBe face.
+`SettingsStore` is the app's only cache of daemon settings. The overlay is two panels sharing
 `OverlayModel`: the avatar panel never takes the keyboard, and the
 conversation panel takes it only while the owner writes. Only the owner's
 drag moves the avatar.

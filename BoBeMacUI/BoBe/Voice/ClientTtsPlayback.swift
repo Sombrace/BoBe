@@ -165,8 +165,9 @@ extension VoicePipeline {
         self.pendingServerListening = false
         let engine = self.clientTtsEngine
         let language = self.effectiveLanguage
-        let voiceId = self.sessionVoicePersona ?? self.voicePersona
-        let speed = self.sessionVoiceSpeed ?? self.voiceSpeed ?? 1
+        let settings = SettingsStore.shared.settings
+        let voiceId = self.sessionVoicePersona ?? settings?.voicePersona
+        let speed = self.sessionVoiceSpeed ?? settings?.voiceSpeed ?? 1
 
         self.clientTtsTask = Task { @MainActor [weak self] in
             guard let self else { return }

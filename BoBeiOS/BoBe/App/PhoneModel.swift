@@ -8,7 +8,6 @@ final class PhoneModel {
     enum Step: Int, CaseIterable {
         case welcome
         case find
-        case reach
         case hear
         case ready
     }
@@ -73,7 +72,7 @@ final class PhoneModel {
         self.paired = paired
         self.brainAddress = paired?.record.origins.first?.absoluteString ?? ""
         self.isOnboarded = paired != nil && defaults.bool(forKey: Self.onboardedKey)
-        self.step = paired == nil ? .welcome : .reach
+        self.step = paired == nil ? .welcome : .hear
     }
 
     var mood: BobeMood {
@@ -166,7 +165,7 @@ final class PhoneModel {
             if self.isOnboarded {
                 self.connect()
             } else {
-                self.advance(to: .reach)
+                self.advance(to: .hear)
             }
         } catch {
             withAnimation(BobeMotion.standard) { self.pairing = .failed(Self.describe(error)) }
@@ -177,15 +176,6 @@ final class PhoneModel {
         if case .failed = self.pairing {
             self.pairing = .idle
         }
-    }
-
-    func allowNotifications() async {
-        _ = await PhonePermissions.requestNotifications()
-        self.advance(to: .hear)
-    }
-
-    func skipNotifications() {
-        self.advance(to: .hear)
     }
 
     func allowVoice() async {

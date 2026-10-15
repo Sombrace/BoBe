@@ -43,7 +43,6 @@ struct AvatarStatusBubble: View {
 
     @Environment(\.theme) private var theme
     @Environment(\.overlayPlacement) private var placement
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
     @State private var messageContentHeight: CGFloat = 20
     @State private var messageScrolledToBottom = false
@@ -82,7 +81,7 @@ struct AvatarStatusBubble: View {
         .frame(maxWidth: .infinity, alignment: self.placement.nearEdgeAlignment)
         .modifier(
             AmbientBubbleTransition(
-                style: self.reduceMotion ? .fade : self.dismissalStyle,
+                style: BobeMotion.isReduced ? .fade : self.dismissalStyle,
                 progress: self.recedeProgress
             )
         )
@@ -135,7 +134,7 @@ struct AvatarStatusBubble: View {
                     Image(systemName: "waveform")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(self.theme.colors.primary)
-                        .symbolEffect(.variableColor.iterative, isActive: !self.reduceMotion)
+                        .symbolEffect(.variableColor.iterative, isActive: !BobeMotion.isReduced)
                     Text(text)
                         .bobeTextStyle(.chatBody)
                         .lineSpacing(2)

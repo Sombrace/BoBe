@@ -143,6 +143,58 @@ struct BodyThemeLifecycleTests {
 
         #expect(store.restartFields == Set(["example_static_field"]))
     }
+
+    @Test
+    @MainActor
+    func refreshAdoptsDaemonSettingsButLeavesBodyThemeFlow() async {
+        let client = BodyThemeClientStub(settings: makeSettings(theme: .warmLedge), updateOutcomes: [])
+        let store = SettingsStore(bodyThemeClient: client)
+        await store.loadIfNeeded()
+        var changed = makeSettings(theme: .solarCrown)
+        changed.bodyConnected = false
+        changed.voiceEnabled = false
+        changed.voiceSttLanguage = "de"
+        await client.replaceSettings(changed)
+
+        await store.refresh()
+
+        #expect(store.settings?.voiceEnabled == false)
+        #expect(store.settings?.voiceSttLanguage == "de")
+        #expect(store.settings?.bodyTheme == .warmLedge)
+        #expect(store.settings?.bodyConnected == true)
+    }
+
+    @Test
+    @MainActor
+    func refreshKeepsUnsavedLocalEdit() async {
+        let client = BodyThemeClientStub(settings: makeSettings(theme: .warmLedge), updateOutcomes: [])
+        let store = SettingsStore(bodyThemeClient: client)
+        await store.loadIfNeeded()
+        store.update { $0.voiceEnabled = false }
+
+        await store.refresh()
+
+        #expect(store.settings?.voiceEnabled == false)
+        await store.flushPendingSave()
+    }
+
+    @Test
+    @MainActor
+    func editDuringRefreshWins() async {
+        let client = BodyThemeClientStub(settings: makeSettings(theme: .warmLedge), updateOutcomes: [])
+        let store = SettingsStore(bodyThemeClient: client)
+        await store.loadIfNeeded()
+        await client.suspendNextSettingsFetch()
+        let refresh = Task { await store.refresh() }
+        while !(await client.hasSuspendedFetch()) { await Task.yield() }
+
+        store.update { $0.voiceSpeed = 1.5 }
+        await client.resumeSettingsFetch(with: makeSettings(theme: .warmLedge))
+        await refresh.value
+
+        #expect(store.settings?.voiceSpeed == 1.5)
+        await store.flushPendingSave()
+    }
 }
 
 private actor BodyThemeClientStub: BodyThemeSettingsClient {
@@ -192,7 +244,14 @@ private actor BodyThemeClientStub: BodyThemeSettingsClient {
             self.suspendUpdate = false
             await withCheckedContinuation { self.updateContinuation = $0 }
         }
-        let theme = try #require(request.bodyTheme)
+        guard let theme = request.bodyTheme else {
+            return SettingsUpdateResponse(
+                message: "updated",
+                restartRequiredFields: [],
+                persistFailed: nil,
+                bodyThemeDelivered: nil
+            )
+        }
         self.themes.append(theme)
         let outcome = self.updateOutcomes.removeFirst()
         switch outcome {
@@ -212,6 +271,10 @@ private actor BodyThemeClientStub: BodyThemeSettingsClient {
 
     func suspendNextSettingsFetch() {
         self.shouldSuspendNextFetch = true
+    }
+
+    func replaceSettings(_ settings: DaemonSettings) {
+        self.settings = settings
     }
 
     func hasSuspendedFetch() -> Bool {

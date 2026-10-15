@@ -38,12 +38,6 @@ enum BobeMetrics {
     static let pageMaxWidth: CGFloat = 760
 }
 
-extension View {
-    func bobeTextStyle(_ style: BobeTextStyle) -> some View {
-        font(style.font)
-    }
-}
-
 struct BobeSpinner: View {
     var size: CGFloat = 14
     var lineWidth: CGFloat = 2
@@ -69,7 +63,7 @@ struct BobeSpinner: View {
                     style: StrokeStyle(lineWidth: self.lineWidth, lineCap: .round)
                 )
                 .rotationEffect(.degrees(self.spinning ? 360 : 0))
-                .animation(BobeMotion.isReduced ? nil : .linear(duration: 0.85).repeatForever(autoreverses: false), value: self.spinning)
+                .animation(BobeMotion.spin, value: self.spinning)
         }
         .frame(width: self.size, height: self.size)
         .onAppear { self.spinning = true }

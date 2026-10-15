@@ -58,7 +58,7 @@ struct BehaviorPanel: View {
             .frame(maxWidth: .infinity)
             .animation(BobeMotion.standard, value: self.store.savedMessage)
         }
-        .task { await self.store.loadIfNeeded() }
+        .task { await self.store.refresh() }
         .onDisappear { self.store.cancelToast() }
     }
 

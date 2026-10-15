@@ -287,11 +287,9 @@
 "overlay.input.mic.install_progress.accessibility" = "Πρόοδος λήψης μοντέλου φωνής";
 "overlay.input.mic.install_progress.value_format" = "%d τοις εκατό";
 "voice.model.status.installed" = "Εγκαταστάθηκε";
-"voice.model.status.already_installed" = "Ήδη εγκατεστημένο";
 "voice.model.status.downloading" = "Λήψη…";
 "voice.model.status.pending" = "Δεν έχει κατέβει ακόμη";
 "voice.model.status.failed" = "Απέτυχε";
-"voice.model.status.canceled" = "Ακυρώθηκε";
 "tray.status.accessibility" = "Κατάσταση BoBe";
 "tray.more" = "Περισσότερα";
 "tray.physical_setup" = "Ρύθμιση φυσικού BoBe…";

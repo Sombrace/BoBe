@@ -471,7 +471,7 @@ struct OverlayView: View {
             return .hidden
         }
         let pipeline = VoicePipeline.shared
-        if pipeline.showPartialCaption, !pipeline.partialTranscript.isEmpty {
+        if SettingsStore.shared.settings?.voiceShowPartialCaption ?? true, !pipeline.partialTranscript.isEmpty {
             return .userTranscribing(text: pipeline.partialTranscript)
         }
         if let msg = self.floatingBubbleMessage {

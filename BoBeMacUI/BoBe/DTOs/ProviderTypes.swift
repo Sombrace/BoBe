@@ -333,13 +333,11 @@ struct ProviderModelInfo: Decodable, Identifiable, Sendable {
     let name: String
     let vision: Bool
     let contextWindow: Int?
-    let defaultReasoningEffort: String?
     let supportedReasoningEfforts: [String]?
 
     enum CodingKeys: String, CodingKey {
         case id, name, vision
         case contextWindow = "context_window"
-        case defaultReasoningEffort = "default_reasoning_effort"
         case supportedReasoningEfforts = "supported_reasoning_efforts"
     }
 
@@ -358,16 +356,13 @@ struct ProviderModelInfo: Decodable, Identifiable, Sendable {
 }
 
 struct ProviderModelsResponse: Decodable, Sendable {
-    let profile: String
     let models: [ProviderModelInfo]
 }
 
 struct ProviderMutationResponse: Codable, Sendable {
-    let updated: Bool
     let restartRequired: Bool
 
     enum CodingKeys: String, CodingKey {
-        case updated
         case restartRequired = "restart_required"
     }
 }

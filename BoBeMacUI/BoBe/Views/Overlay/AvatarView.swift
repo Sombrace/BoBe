@@ -203,7 +203,7 @@ private struct SleepNote: View {
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
                 withTransaction(transaction) { self.progress = 0 }
-                withAnimation(.easeOut(duration: 2.4).delay(Double(self.index) * 0.5)) {
+                withAnimation(BobeMotion.drift(self.index)) {
                     self.progress = 1
                 }
             }
@@ -254,7 +254,7 @@ struct SatelliteChrome: View {
             .font(.system(size: 12.5, weight: .semibold))
             .foregroundStyle(self.foreground)
             .opacity(self.isDimmed ? 0.5 : 1)
-            .contentTransition(.symbolEffect(.replace))
+            .contentTransition(BobeMotion.symbolReplace)
             .frame(width: AvatarMetrics.satelliteSize, height: AvatarMetrics.satelliteSize)
             .bobeRaised(in: Circle(), fill: self.isActive ? self.theme.colors.primary : nil)
             .scaleEffect(self.isHovered ? 1.1 : 1)
@@ -430,7 +430,7 @@ struct ToolBadge: View {
         Image(systemName: ToolGlyph.symbol(for: self.toolName))
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(self.theme.colors.primary)
-            .contentTransition(.symbolEffect(.replace))
+            .contentTransition(BobeMotion.symbolReplace)
             .frame(width: Self.side, height: Self.side)
             .bobeRaised(in: Circle())
             .overlay {

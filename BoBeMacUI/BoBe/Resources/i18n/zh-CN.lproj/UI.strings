@@ -287,11 +287,9 @@
 "overlay.input.mic.install_progress.accessibility" = "语音模型下载进度";
 "overlay.input.mic.install_progress.value_format" = "百分之%d";
 "voice.model.status.installed" = "已安装";
-"voice.model.status.already_installed" = "已安装";
 "voice.model.status.downloading" = "正在下载…";
 "voice.model.status.pending" = "尚未下载";
 "voice.model.status.failed" = "失败";
-"voice.model.status.canceled" = "已取消";
 "tray.status.accessibility" = "BoBe 状态";
 "tray.more" = "更多";
 "tray.physical_setup" = "设置实体 BoBe…";

@@ -16,8 +16,9 @@ maintained SPAKE2+ implementation spans Rust, macOS and iOS.
 
 `PairingCore` owns the client and server OPAQUE states, wire messages, the
 session key, code validation and error normalization. `PairingFFI` exposes
-only the Apple client role through a static C ABI: start login, finish login,
-destroy state, and zeroize and free buffers. Swift never implements OPAQUE.
+only the Apple client role through a static C ABI (`PairingFFI/include/bobe_pairing.h`):
+start and finish login, the certificate's SPKI SHA-256, and destroying client
+state and zeroized buffers. Swift never implements OPAQUE.
 
 ABI rules:
 

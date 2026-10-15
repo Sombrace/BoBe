@@ -20,10 +20,6 @@ struct ProviderProfilesSection: View {
     @State private var accountErrors: [String: String] = [:]
     @Namespace private var identity
 
-    private var motion: Animation? {
-        BobeMotion.isReduced ? nil : .spring(response: 0.32, dampingFraction: 0.9)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             if let snapshot {
@@ -63,7 +59,7 @@ struct ProviderProfilesSection: View {
                         self.accounts = [:]
                         self.accountErrors = [:]
                         self.apiKey = ""
-                        withAnimation(self.motion) { self.adding.toggle() }
+                        withAnimation(BobeMotion.disclose) { self.adding.toggle() }
                     } label: {
                         Image(systemName: self.adding ? "xmark" : "plus")
                     }
@@ -96,8 +92,8 @@ struct ProviderProfilesSection: View {
             }
         }
         .disabled(self.working && !self.adding)
-        .animation(self.motion, value: self.adding)
-        .animation(self.motion, value: self.connectionFields.profileID)
+        .animation(BobeMotion.disclose, value: self.adding)
+        .animation(BobeMotion.disclose, value: self.connectionFields.profileID)
         .task(id: self.endpoint) { await self.load() }
         .onReceive(NotificationCenter.default.publisher(for: .bobeEndpointIdentityChanged)) { _ in
             let current = EndpointStore.shared.selection
@@ -122,7 +118,7 @@ struct ProviderProfilesSection: View {
                     .bobeTextStyle(.rowTitle)
                 Spacer()
                 Button {
-                    withAnimation(self.motion) { self.adding = false }
+                    withAnimation(BobeMotion.disclose) { self.adding = false }
                     self.apiKey = ""
                 } label: {
                     Image(systemName: "xmark")
@@ -137,7 +133,7 @@ struct ProviderProfilesSection: View {
                 showsModelSelection: false,
                 onCriticalOperationChange: { self.working = $0 },
                 onConnected: {
-                    withAnimation(self.motion) { self.adding = false }
+                    withAnimation(BobeMotion.disclose) { self.adding = false }
                     Task { await self.load() }
                 },
                 identity: self.editingProfile == nil ? nil : self.identity
@@ -207,7 +203,7 @@ struct ProviderProfilesSection: View {
                     } else {
                         Image(systemName: self.testedWorkload == workload && self.probe?.profile == route.profile && self.probe?.model == route.model
                             ? (self.probe?.ok == true ? "checkmark.circle" : "exclamationmark.circle") : "play.circle")
-                            .contentTransition(BobeMotion.isReduced ? .identity : .symbolEffect(.replace))
+                            .contentTransition(BobeMotion.symbolReplace)
                     }
                 }
                 .buttonStyle(.plain)
@@ -226,7 +222,7 @@ struct ProviderProfilesSection: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .animation(self.motion, value: self.testedWorkload)
+        .animation(BobeMotion.disclose, value: self.testedWorkload)
         .disabled(self.working)
     }
 
@@ -243,7 +239,7 @@ struct ProviderProfilesSection: View {
                 self.connectionFields.load(snapshot, profileID: profile.id)
                 self.editingProfile = profile.id
                 self.apiKey = ""
-                withAnimation(self.motion) { self.adding = true }
+                withAnimation(BobeMotion.disclose) { self.adding = true }
             } label: {
                 HStack(spacing: 10) {
                     ProviderMark(kind: profile.kind)
@@ -282,7 +278,7 @@ struct ProviderProfilesSection: View {
                 }
                 .bobeButton(.destructive, size: .small)
                 Button {
-                    withAnimation(self.motion) { self.confirmRemoval = nil }
+                    withAnimation(BobeMotion.disclose) { self.confirmRemoval = nil }
                 } label: { Image(systemName: "xmark") }
                     .bobeButton(.ghost, size: .small)
                     .accessibilityLabel(L10n.tr("settings.editor.action.cancel"))
@@ -292,7 +288,7 @@ struct ProviderProfilesSection: View {
                         self.connectionFields.load(snapshot, profileID: profile.id)
                         self.editingProfile = profile.id
                         self.apiKey = ""
-                        withAnimation(self.motion) { self.adding = true }
+                        withAnimation(BobeMotion.disclose) { self.adding = true }
                     }
                     if profile.authMethod == .oauth {
                         Button(L10n.tr("settings.providers.sign_out")) {
@@ -305,7 +301,7 @@ struct ProviderProfilesSection: View {
                     }
                     BobeHairline()
                     Button(L10n.tr("settings.providers.remove"), role: .destructive) {
-                        withAnimation(self.motion) { self.confirmRemoval = profile }
+                        withAnimation(BobeMotion.disclose) { self.confirmRemoval = profile }
                     }
                     .disabled(!snapshot.canRemove(profile))
                     .help(L10n.tr("settings.providers.remove.help"))
@@ -320,7 +316,7 @@ struct ProviderProfilesSection: View {
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 14).fill(self.theme.colors.surface))
-        .animation(self.motion, value: self.confirmRemoval?.id)
+        .animation(BobeMotion.disclose, value: self.confirmRemoval?.id)
         .disabled(self.working)
     }
 

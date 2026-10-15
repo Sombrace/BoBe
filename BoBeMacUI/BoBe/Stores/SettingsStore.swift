@@ -147,6 +147,31 @@ final class SettingsStore {
         if self.isCurrent(selection) { self.loadTask = nil }
     }
 
+    func refresh() async {
+        self.synchronizeEndpoint()
+        guard self.settings != nil else {
+            await self.loadIfNeeded()
+            return
+        }
+        if let existing = self.loadTask {
+            await existing.value
+            return
+        }
+        guard !self.debouncer.hasPendingSave else { return }
+        let selection = self.selection
+        let revision = self.mutationRevision
+        guard let latest = try? await self.client(for: selection).getSettings(),
+              self.isCurrent(selection),
+              revision == self.mutationRevision,
+              !self.debouncer.hasPendingSave,
+              let current = self.settings
+        else { return }
+        var refreshed = latest
+        refreshed.bodyTheme = current.bodyTheme
+        refreshed.bodyConnected = current.bodyConnected
+        self.settings = refreshed
+    }
+
     private func startBackendObserverIfNeeded() {
         guard self.backendObserverTask == nil else { return }
         self.backendObserverTask = Task { @MainActor [weak self] in
@@ -274,9 +299,7 @@ final class SettingsStore {
             setError: { [weak self] in self?.error = $0 },
             setSaved: { [weak self] in self?.savedMessage = $0 },
             onSuccess: { [weak self] response in
-                guard let self else { return }
-                self.restartFields.formUnion(response.restartRequiredFields)
-                VoicePipeline.shared.applySettings(currentSettings)
+                self?.restartFields.formUnion(response.restartRequiredFields)
             },
             update: { try await client.updateSettings($0) },
             isCurrent: { [weak self] in

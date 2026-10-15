@@ -114,10 +114,6 @@ diff_sets \
     "$(rust_enum_variants "$ROOT/BoBeService/src/runtime/run_registry.rs" RunKind)" \
     "$(swift_enum_variants "$ROOT/BoBeMacUI/BoBe/DTOs/AgentWorkTypes.swift" AgentRunKindWire)"
 diff_sets \
-    "OwnerInputKind" \
-    "$(rust_enum_variants "$ROOT/BoBeService/src/db/owner_input_repo.rs" InputKind)" \
-    "$(swift_enum_variants "$ROOT/BoBeMacUI/BoBe/DTOs/AgentWorkTypes.swift" OwnerInputKindWire)"
-diff_sets \
     "OwnerInputStatus" \
     "$(rust_enum_variants "$ROOT/BoBeService/src/db/owner_input_repo.rs" InputStatus)" \
     "$(swift_enum_variants "$ROOT/BoBeMacUI/BoBe/DTOs/AgentWorkTypes.swift" OwnerInputStatusWire)"

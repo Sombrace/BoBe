@@ -13,6 +13,10 @@ final class SettingsDebouncer {
     private var generation: UInt64 = 0
     private var persistGeneration: UInt64 = 0
 
+    var hasPendingSave: Bool {
+        self.pendingWork != nil || self.inFlightTask != nil
+    }
+
     func cancelPendingSave() {
         self.generation &+= 1
         self.saveTask?.cancel()

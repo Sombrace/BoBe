@@ -45,7 +45,6 @@ python3 scripts/check-standalone-update-manifest.py
 (
     cd BoBeMacUI
     ../.tools/bin/swiftlint lint --quiet
-    swift build -c debug --target PairingSmoke
 )
 ./scripts/check-standalone-install.sh
 BOBE_SKIP_TOOL_CHECK=1 "$TASK_DIR/xcode.sh"

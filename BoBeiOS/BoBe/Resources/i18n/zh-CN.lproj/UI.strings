@@ -3,7 +3,6 @@
 "phone.common.dismiss" = "关闭";
 "phone.common.done" = "完成";
 "phone.common.maybe_later" = "以后再说";
-"phone.common.not_now" = "暂时不用";
 "phone.common.open_settings" = "打开设置";
 "phone.onboarding.progress_format" = "第 %d 步，共 %d 步";
 "phone.welcome.title" = "你好，我是 BoBe";
@@ -30,9 +29,6 @@
 "phone.where.title" = "配对码在哪里？";
 "phone.where.mac" = "Mac：设置 › 设备 › 配对 iPhone";
 "phone.where.linux" = "Linux：";
-"phone.reach.title" = "可以给你发通知吗？";
-"phone.reach.body" = "只在重要的时候。";
-"phone.reach.allow" = "允许通知";
 "phone.hear.title" = "要用语音聊天吗？";
 "phone.hear.body" = "按住按钮说话。";
 "phone.hear.allow" = "允许使用麦克风";
@@ -85,7 +81,6 @@
 "phone.talk.permission" = "请在设置中打开“麦克风”和“语音识别”。";
 "phone.settings.title" = "设置";
 "phone.settings.address" = "地址";
-"phone.settings.notifications" = "通知";
 "phone.settings.voice" = "语音";
 "phone.settings.unpair" = "解除这台 iPhone 的配对";
 "phone.settings.unpair.title" = "要解除这台 iPhone 的配对吗？";

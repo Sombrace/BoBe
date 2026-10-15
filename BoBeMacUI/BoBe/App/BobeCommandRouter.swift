@@ -12,16 +12,9 @@ final class BobeCommandRouter {
     static let shared = BobeCommandRouter()
 
     private let store: BobeStore
-    private let isBodyAdapterOnly: Bool
 
-    init(
-        store: BobeStore = .shared,
-        isBodyAdapterOnly: Bool = ProcessInfo.processInfo.environment[
-            "BOBE_BODY_ADAPTER_ONLY"
-        ] == "1"
-    ) {
+    init(store: BobeStore = .shared) {
         self.store = store
-        self.isBodyAdapterOnly = isBodyAdapterOnly
     }
 
     var settingsTitle: String {
@@ -44,12 +37,11 @@ final class BobeCommandRouter {
     }
 
     var canCheckForUpdates: Bool {
-        !self.isBodyAdapterOnly && UpdaterManager.shared.canCheckForUpdates
+        UpdaterManager.shared.canCheckForUpdates
     }
 
     @discardableResult
     func openSettings() -> BobeCommandOutcome {
-        guard !self.isBodyAdapterOnly else { return .unavailable }
         if SetupWindowManager.shared.isOnboardingCompleted {
             SettingsWindowManager.shared.show()
             return .performed
@@ -60,7 +52,6 @@ final class BobeCommandRouter {
 
     @discardableResult
     func showOverlay() -> BobeCommandOutcome {
-        guard !self.isBodyAdapterOnly else { return .unavailable }
         guard SetupWindowManager.shared.isOnboardingCompleted else {
             SetupWindowManager.shared.show()
             return .setupRequired
@@ -72,7 +63,6 @@ final class BobeCommandRouter {
 
     @discardableResult
     func hideOverlay() -> BobeCommandOutcome {
-        guard !self.isBodyAdapterOnly else { return .unavailable }
         guard SetupWindowManager.shared.isOnboardingCompleted else {
             SetupWindowManager.shared.show()
             return .setupRequired
@@ -91,25 +81,18 @@ final class BobeCommandRouter {
     }
 
     func toggleCapture() async {
-        guard !self.isBodyAdapterOnly,
-              SetupWindowManager.shared.isOnboardingCompleted
-        else {
-            if !self.isBodyAdapterOnly {
-                SetupWindowManager.shared.show()
-            }
+        guard SetupWindowManager.shared.isOnboardingCompleted else {
+            SetupWindowManager.shared.show()
             return
         }
         _ = await self.store.toggleCapture()
     }
 
     func toggleMicrophone() {
-        guard !self.isBodyAdapterOnly,
-              SetupWindowManager.shared.isOnboardingCompleted,
+        guard SetupWindowManager.shared.isOnboardingCompleted,
               let url = URL(string: DaemonConfig.baseURL)
         else {
-            if !self.isBodyAdapterOnly {
-                SetupWindowManager.shared.show()
-            }
+            SetupWindowManager.shared.show()
             return
         }
         Task { await VoicePipeline.shared.toggle(daemonBaseURL: url) }
@@ -117,9 +100,7 @@ final class BobeCommandRouter {
 
     @discardableResult
     func toggleLogicalMicrophoneMute() async -> BobeCommandOutcome {
-        guard !self.isBodyAdapterOnly,
-              SetupWindowManager.shared.isOnboardingCompleted
-        else { return self.isBodyAdapterOnly ? .unavailable : .setupRequired }
+        guard SetupWindowManager.shared.isOnboardingCompleted else { return .setupRequired }
         let desiredMute = !VoicePipeline.shared.muted
         guard await VoicePipeline.shared.setMuted(desiredMute),
               VoicePipeline.shared.muted == desiredMute
@@ -129,7 +110,6 @@ final class BobeCommandRouter {
 
     @discardableResult
     func stopSpeaking() -> BobeCommandOutcome {
-        guard !self.isBodyAdapterOnly else { return .unavailable }
         switch VoicePipeline.shared.state {
         case .thinking, .speaking, .capturing:
             return VoicePipeline.shared.interrupt() ? .performed : .unavailable
@@ -144,7 +124,6 @@ final class BobeCommandRouter {
     }
 
     func showAbout() {
-        guard !self.isBodyAdapterOnly else { return }
         NSApp.activate()
         NSApp.orderFrontStandardAboutPanel(nil)
     }

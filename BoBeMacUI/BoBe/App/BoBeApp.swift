@@ -49,8 +49,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let shutdownDeadlineSeconds: TimeInterval = 8
     private var isDuplicateInstance = false
     private var isStartingUp = true
-    private let isBodyAdapterOnly =
-        ProcessInfo.processInfo.environment["BOBE_BODY_ADAPTER_ONLY"] == "1"
 
     override init() {
         self.store = BobeStore.shared
@@ -63,20 +61,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         logger.info("BoBe starting up")
-
-        if self.isBodyAdapterOnly {
-            NSApp.setActivationPolicy(.prohibited)
-            self.isStartingUp = false
-            guard let configuration = BodyAdapterConfig.load() else {
-                logger.error("Body adapter-only mode has invalid configuration")
-                NSApp.terminate(nil)
-                return
-            }
-            Task {
-                await BodySpeechAdapter.shared.start(configuration: configuration)
-            }
-            return
-        }
 
         self.store.applyPersistedLocale()
 
@@ -145,15 +129,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if self.isDuplicateInstance { return .terminateNow }
         guard !self.isQuitting else { return .terminateLater }
         self.isQuitting = true
-        if self.isBodyAdapterOnly {
-            Task {
-                await BodySpeechAdapter.shared.stop()
-                await MainActor.run {
-                    NSApp.reply(toApplicationShouldTerminate: true)
-                }
-            }
-            return .terminateLater
-        }
 
         OverlayWindowManager.shared.hide()
         self.statusItemController.tearDown()
@@ -200,7 +175,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
-        guard !self.isBodyAdapterOnly else { return }
         guard !self.isQuitting, !self.isStartingUp else { return }
         if SetupWindowManager.shared.isOnboardingCompleted {
             if OverlayWindowManager.shared.panel == nil {

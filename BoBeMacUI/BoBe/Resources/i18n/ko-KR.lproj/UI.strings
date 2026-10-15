@@ -287,11 +287,9 @@
 "overlay.input.mic.install_progress.accessibility" = "음성 모델 다운로드 진행률";
 "overlay.input.mic.install_progress.value_format" = "%d퍼센트";
 "voice.model.status.installed" = "설치됨";
-"voice.model.status.already_installed" = "이미 설치됨";
 "voice.model.status.downloading" = "다운로드 중…";
 "voice.model.status.pending" = "아직 다운로드 안 됨";
 "voice.model.status.failed" = "실패";
-"voice.model.status.canceled" = "취소됨";
 "tray.status.accessibility" = "BoBe 상태";
 "tray.more" = "더 보기";
 "tray.physical_setup" = "실물 BoBe 설정…";

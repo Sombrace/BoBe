@@ -60,17 +60,6 @@ let package = Package(
                     "-Xlinker", "@executable_path/../Frameworks",
                 ])
             ]
-        ),
-        .executableTarget(
-            name: "PairingSmoke",
-            dependencies: ["PairingClient"],
-            path: "PairingSmoke",
-            linkerSettings: [
-                .unsafeFlags([
-                    "-framework", "Security",
-                    "-framework", "SystemConfiguration",
-                ])
-            ]
         )
     ]
 )
