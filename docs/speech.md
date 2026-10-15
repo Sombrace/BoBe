@@ -1,19 +1,15 @@
 # Speech
 
-Speech recognition and synthesis run on the owner's hardware. Raw audio is not
-stored. Models are downloaded from their publishers on first use and are not part
-of BoBe's source or releases.
-
-## Engines
+Speech is recognized and synthesized on the owner's hardware, and raw audio is
+not stored. Models download from their publishers on first use and are not
+part of BoBe's source or releases.
 
 | Surface | Recognition | Synthesis |
 |---|---|---|
-| Mac app | Parakeet Realtime EOU for English; Nemotron 3.5 multilingual for other languages; Silero voice activity detection | The daemon's Pocket TTS, streamed as Opus. Supertonic-3 in the app is an experimental option for other languages |
+| Mac app | Parakeet Realtime EOU for English, Nemotron 3.5 for other languages, Silero VAD | The daemon's Pocket TTS, streamed as Opus; Supertonic-3 in the app is an experimental option for other languages |
 | Daemon (headless, physical body) | sherpa-onnx streaming Zipformer, English | Pocket TTS, English |
 
-English needs about 600 MB: the Pocket TTS pack (about 170 MB) and the Mac's
-English listener (about 450 MB). Another language adds a Nemotron pack of about
-0.7 GB.
+English needs about 600 MB; each other language adds about 0.7 GB.
 
 ## Models and licenses
 
@@ -37,67 +33,27 @@ notice, "Licensed by NVIDIA Corporation under the NVIDIA Open Model License", an
 a copy of that license. Supertonic-3's license forbids the uses listed in its
 OpenRAIL-M restrictions.
 
-## Pocket TTS
+## Daemon engines
 
-The daemon runs `ptts` 0.4.0-rc.1 (MIT or Apache-2.0) natively on the CPU with
-Q8 weights. No Python, model server or voice cloning is involved. The pack is
-`pocket-tts-en-b6369a24-q8` with six presets; Alba is the default and earlier
-Kokoro voice selections resolve to it. `BoBeService/src/voice/install_artifacts.rs`
-pins the conversion revision and every file's SHA-256. Other Pocket languages need
-an independently pinned model, tokenizer and voice pack and an updated capability
-catalog; unsupported language and engine combinations fail during negotiation.
+- Pocket TTS runs natively through `ptts` 0.4.0-rc.1 with Q8 weights; no
+  Python or model server. `BoBeService/src/voice/install_artifacts.rs` pins the
+  pack revision and every file's SHA-256. Alba is the default voice.
+- Tempo from 0.5x to 2x uses Signalsmith Stretch, which needs a C++ compiler
+  and libclang to build.
+- Recognition uses sherpa-onnx 1.13.8 from its `static-no-tts-lib` archives;
+  `third_party/sherpa-onnx-sys/README.md` records the adaptation. Supported
+  targets are macOS and Linux x86_64.
+- Installs verify sizes and digests, swap the directory into place, and report
+  `installed` separately from `ready` (engine loaded).
 
-Speed from 0.5× to 2× uses Signalsmith Stretch (MIT) with pitch preserved.
-Building it needs a C++ compiler and libclang (Xcode on macOS; `clang` and
-`libclang-dev` on Linux).
-
-Recognition uses sherpa-onnx 1.13.8 from its `static-no-tts-lib` archives, which
-contain no eSpeak NG or Piper. `third_party/sherpa-onnx-sys/README.md` records the
-adaptation. Apple Silicon and Intel macOS and Linux x86_64 are supported; other
-targets fail the build.
-
-### Streaming and interruption
-
-Generation runs on a blocking worker. A two-chunk queue bounds pending PCM and
-passes playback backpressure to inference. Closing or aborting a turn closes the
-queue, and the stream stops at the next chunk. The Opus packetizer carries partial
-20 ms frames across chunks and pads once per sentence. A sentence is registered
-before its audio starts and marked complete only after generation ends, so a
-partially generated sentence never counts as heard.
-
-Filler and reply streams keep separate Opus decoder state on the Mac and the body,
-and reply decoding resets at each turn. Output sends whole phrases, so filler
-cannot interleave with a reply; a filler is skipped, not queued, while another
-phrase is in flight.
-
-### Installation
-
-The installer stages every file, checks size bounds and SHA-256 digests, and swaps
-the directory into place; cancellation discards the staging directory. A pack that
-fails to load is quarantined, and engines reload before success is reported.
-Status separates `installed` (files present) from `ready` (engine loaded). One
-reinstall repairs an unusable pack. Old Kokoro directories are no longer used and
-are not deleted automatically.
-
-## Preview speech without a provider account
-
-With a local daemon running (`bobe init`, then `bobe serve`), install the English
-voice and preview text. Neither step needs a model provider or speech recognition:
+## Preview without a provider
 
 ```sh
 bobe voice-models install --kind tts
 bobe voice preview "Hello. This is BoBe." --output /tmp/bobe-preview.wav --play --json
 ```
 
-`--voice marius` selects a preset, `--speed 0.5` to `--speed 2.0` sets tempo, and
-`--cancel-after 100ms` cancels after the first audio packet. The output path must
-be new. A cancelled preview leaves a valid WAV of the audio received; a failed one
-leaves nothing. Omit `--play` to export only; playback uses `afplay` on macOS and
-`pw-play` or `aplay` on Linux, and is acknowledged only after the player exits
-successfully. The JSON report includes the voice, captions, frame count, audio
-duration and first-packet time.
-
-Preview uses the authenticated `/voice/preview` WebSocket with `bobe.voice.v2`,
-accepts at most 8,000 bytes of text, and shares the conversation's sentence
-cleaner, engine, worker and packetizer. It respects disabled voice and voice-session
-exclusion, and writes no conversation turns, memories or goals.
+`--voice`, `--speed` and `--cancel-after` exercise voice selection, tempo and
+cancellation. The output path must be new. Preview uses the same sentence
+cleaning, engine and Opus stream as a conversation and writes no
+conversation, memory or goals.

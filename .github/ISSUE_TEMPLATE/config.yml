@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/Sombrace/BoBe/security/advisories/new
     about: Please report security problems privately, not in a public issue.
   - name: Guides and troubleshooting
-    url: https://github.com/Sombrace/BoBe/blob/main/docs/README.md
-    about: Getting started, everyday use, the command line and common problems.
+    url: https://github.com/Sombrace/BoBe/blob/main/docs/using-bobe.md
+    about: Installing, everyday use and common problems.

@@ -6,28 +6,19 @@ labels: bug
 
 ## What happened
 
-<!-- What you did, what you expected, and what BoBe did instead. -->
+<!-- What you did, what you expected, and what happened. -->
 
 ## Steps to reproduce
 
 1.
 2.
-3.
 
-## Your setup
+## Setup
 
-- BoBe version (`bobe version`, or **More → About BoBe**):
-- macOS version and Mac model:
-- Installed from: release DMG / built from source / standalone daemon
-- Where BoBe runs: this Mac / already running on this Mac / another computer
-- Model provider (name only, no keys):
+- BoBe version (`bobe version`):
+- macOS or Linux version:
+- Installed from (release, source, standalone):
 
 ## Diagnostics
 
-<!--
-Paste the output of `bobe doctor`, and the relevant part of the log from
-~/.bobe/logs/. Read it first and remove anything private.
-
-Never post API keys, tokens or pairing codes.
-Security problems go through SECURITY.md, not a public issue.
--->
+<!-- `bobe doctor` and the relevant part of ~/.bobe/logs/. Remove anything private; never post keys, tokens or pairing codes. Security problems go through SECURITY.md. -->
