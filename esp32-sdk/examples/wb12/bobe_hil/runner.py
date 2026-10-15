@@ -51,8 +51,6 @@ def execute_cleanup(
     backend: MockScenarioBackend | LiveScenarioBackend,
     run: EvidenceRun,
 ) -> None:
-    """Run cleanup and verify that physical state was released."""
-
     errors: list[str] = []
     for step in scenario.cleanup:
         run.event(

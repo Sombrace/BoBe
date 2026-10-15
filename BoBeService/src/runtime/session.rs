@@ -239,12 +239,15 @@ impl RuntimeSession {
                     30.0
                 }
             };
-            Box::pin(run_trigger(
-                "goal",
+            if Box::pin(tokio::time::timeout(
                 std::time::Duration::from_mins(5),
                 self.goal_trigger.fire(),
             ))
-            .await;
+            .await
+            .is_err()
+            {
+                warn!(trigger = "goal", "runtime_session.trigger_timeout");
+            }
             tokio::time::sleep(std::time::Duration::from_secs_f64(seconds.min(30.0))).await;
         }
     }

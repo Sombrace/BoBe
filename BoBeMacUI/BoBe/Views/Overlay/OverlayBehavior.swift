@@ -186,14 +186,7 @@ extension OverlayView {
             return
         }
 
-        let duration = BobeMotion.isReduced
-            ? AmbientBubbleTransition.fadeDurationSeconds
-            : AmbientBubbleTransition.stardustDurationSeconds
-        let animation = BobeMotion.isReduced
-            ? Animation.easeOut(duration: duration)
-            : Animation.easeIn(duration: duration)
-
-        withAnimation(animation, completionCriteria: .logicallyComplete) {
+        withAnimation(BobeMotion.recede, completionCriteria: .logicallyComplete) {
             self.floatingBubbleRecedeProgress = 1
         } completion: {
             guard generation == self.floatingBubbleTransitionGeneration else {
@@ -254,11 +247,7 @@ extension OverlayView {
                 return
             }
             self.floatingBubbleTransitionGeneration &+= 1
-            withAnimation(
-                BobeMotion.isReduced
-                    ? .easeOut(duration: 0.1)
-                    : .easeOut(duration: 0.14)
-            ) {
+            withAnimation(BobeMotion.restore) {
                 self.floatingBubbleRecedeProgress = 0
             }
         } else {

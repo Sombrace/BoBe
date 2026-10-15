@@ -29,8 +29,6 @@ extern "C" {
 typedef enum {
     BOBE_MEDIA_MICROPHONE_PCM = 0x01,
     BOBE_MEDIA_SPEAKER_PCM = 0x02,
-    BOBE_MEDIA_OPUS = 0x03,
-    BOBE_MEDIA_DIAGNOSTIC = 0x04,
 } bobe_media_kind_t;
 
 typedef struct {
@@ -121,10 +119,7 @@ typedef enum {
     BOBE_CONTROL_PLAYBACK_OPEN,
     BOBE_CONTROL_PLAYBACK_CLOSE,
     BOBE_CONTROL_TURN_STATE,
-    BOBE_CONTROL_VOLUME_SET,
     BOBE_CONTROL_UPDATE_OFFER,
-    BOBE_CONTROL_CLAIM_REVOKE,
-    BOBE_CONTROL_PING,
     BOBE_CONTROL_ERROR,
     BOBE_CONTROL_INPUT_RESULT,
     BOBE_CONTROL_DISPLAY_TEXT,
@@ -167,13 +162,7 @@ typedef struct {
             char lease_id[BOBE_LEASE_ID_MAX_BYTES];
             char turn_id[BOBE_TURN_ID_MAX_BYTES];
         } turn;
-        struct {
-            uint8_t percent;
-        } volume;
         bobe_update_manifest_t update;
-        struct {
-            uint64_t nonce;
-        } ping;
         struct {
             char code[48];
             char message[160];
@@ -198,11 +187,9 @@ typedef struct {
     } data;
 } bobe_control_message_t;
 
-/** Audio bodies use minor 1; other surfaces need minor 2. */
 uint8_t bobe_capabilities_protocol_minor(const bobe_capabilities_t *capabilities);
 bool bobe_utf8_valid(const char *input, size_t length);
 
-/** Builders return TOO_LARGE if escaped JSON does not fit the caller's buffer. */
 bobe_protocol_result_t bobe_protocol_build_text_input(
     char *output, size_t capacity, const char *request_id, const char *text
 );
@@ -328,12 +315,6 @@ bobe_protocol_result_t bobe_protocol_build_update_state(
     const char *phase,
     uint8_t progress_percent,
     const char *reason
-);
-
-bobe_protocol_result_t bobe_protocol_build_pong(
-    char *output,
-    size_t output_size,
-    uint64_t nonce
 );
 
 bobe_protocol_result_t bobe_protocol_parse_control(

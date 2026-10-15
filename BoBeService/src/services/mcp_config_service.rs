@@ -7,17 +7,16 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tracing::warn;
 
+use crate::agent::PiRuntime;
 use crate::config::Config;
 use crate::error::AppError;
-use crate::mcp::config::{self as mcp_config, McpConfigFile, McpServerEntry, timeout_millis};
-use crate::mcp::security::{validate_mcp_command_with_args, validate_mcp_env};
-use crate::provider::AgentRuntime;
+use crate::mcp::config::{self as mcp_config, McpConfigFile, McpParsedServer, McpServerEntry};
 use crate::secrets::SecretStore;
 
 pub(crate) struct McpConfigDeps<'a> {
     pub(crate) config: &'a ArcSwap<Config>,
     pub(crate) mcp_config_lock: &'a Mutex<()>,
-    pub(crate) workers: &'a Arc<dyn AgentRuntime>,
+    pub(crate) workers: &'a Arc<PiRuntime>,
     pub(crate) secret_store: &'a Arc<dyn SecretStore>,
 }
 
@@ -109,8 +108,8 @@ pub(crate) fn validate_document(
 ) -> Result<McpConfigValidateResponse, AppError> {
     let (blocked_cmds, dangerous_keys) = blocked_and_dangerous(deps);
 
-    let validation = parse_and_validate(&body.raw_json, &blocked_cmds, &dangerous_keys)
-        .and_then(|file| normalize_secrets(file, &body.secret_keys, None));
+    let validation = parse_document(&body.raw_json, &blocked_cmds, &dangerous_keys)
+        .and_then(|(file, _)| normalize_secrets(file, &body.secret_keys, None));
     match validation {
         Ok(normalized) => Ok(McpConfigValidateResponse {
             valid: true,
@@ -139,7 +138,7 @@ pub(crate) async fn save_document(
     body: McpConfigMutationRequest,
 ) -> Result<McpConfigSaveResponse, AppError> {
     let (blocked_cmds, dangerous_keys) = blocked_and_dangerous(deps);
-    let file = parse_and_validate(&body.raw_json, &blocked_cmds, &dangerous_keys)?;
+    let (file, servers) = parse_document(&body.raw_json, &blocked_cmds, &dangerous_keys)?;
 
     let guard = deps.mcp_config_lock.lock().await;
     let file = normalize_secrets(file, &body.secret_keys, Some(deps.secret_store.as_ref()))?;
@@ -153,9 +152,7 @@ pub(crate) async fn save_document(
     }
 
     let runtime = if deps.config.load().mcp.enabled {
-        let parsed =
-            mcp_config::parse_enabled_servers(file.clone(), &blocked_cmds, &dangerous_keys)?;
-        mcp_config::to_runtime_mcp_config(parsed)
+        mcp_config::to_runtime_mcp_config(servers)
     } else {
         crate::provider::McpRuntimeConfig::default()
     };
@@ -202,11 +199,11 @@ pub(crate) async fn reset_document(
     })
 }
 
-fn parse_and_validate(
+fn parse_document(
     raw_json: &str,
     blocked_commands: &[String],
     dangerous_env_keys: &[String],
-) -> Result<McpConfigFile, AppError> {
+) -> Result<(McpConfigFile, Vec<McpParsedServer>), AppError> {
     if raw_json.trim().is_empty() {
         return Err(AppError::Validation("raw_json must not be empty".into()));
     }
@@ -225,13 +222,15 @@ fn parse_and_validate(
                 "MCP server '{name}' command must not be empty"
             )));
         }
-        timeout_millis(entry.timeout_seconds)
-            .map_err(|message| AppError::Validation(format!("MCP server '{name}' {message}")))?;
-        validate_mcp_command_with_args(&entry.command, &entry.args, blocked_commands)?;
-        validate_mcp_env(&entry.env, dangerous_env_keys)?;
     }
 
-    Ok(file)
+    let servers =
+        mcp_config::parse_enabled_servers(file.clone(), blocked_commands, dangerous_env_keys)
+            .map_err(|error| match error {
+                AppError::Config(message) => AppError::Validation(message),
+                error => error,
+            })?;
+    Ok((file, servers))
 }
 
 fn normalize_secrets(
@@ -282,7 +281,7 @@ fn build_env_with_refs(
 }
 
 async fn build_runtime_summaries(
-    workers: &Arc<dyn AgentRuntime>,
+    workers: &Arc<PiRuntime>,
     file: &McpConfigFile,
 ) -> Result<Vec<McpServerSummary>, AppError> {
     let mut entries: Vec<(&String, &McpServerEntry)> = file.mcp_servers.iter().collect();
@@ -435,8 +434,32 @@ mod tests {
         for timeout in ["-1", "0", "600.001", "1e100"] {
             let raw = r#"{"mcpServers":{"test":{"command":"server","timeout_seconds":$TIMEOUT}}}"#
                 .replace("$TIMEOUT", timeout);
-            let error = parse_and_validate(&raw, &[], &[]).expect_err("invalid timeout");
+            let error = parse_document(&raw, &[], &[]).expect_err("invalid timeout");
+            assert!(matches!(error, AppError::Validation(_)));
             assert!(error.to_string().contains("timeout_seconds"));
         }
+    }
+
+    #[test]
+    fn documents_are_checked_with_the_values_the_runtime_will_load() {
+        let variable = format!("BOBE_TEST_UNSET_{}", uuid::Uuid::new_v4().simple()).to_uppercase();
+        let raw = r#"{"mcpServers":{"test":{"command":"server","args":["${VARIABLE}"],"enabled":$ENABLED}}}"#
+            .replace("VARIABLE", &variable);
+
+        let error = parse_document(&raw.replace("$ENABLED", "true"), &[], &[])
+            .expect_err("unresolvable enabled server");
+        assert!(matches!(error, AppError::Validation(message) if message.contains(&variable)));
+
+        let (file, servers) = parse_document(&raw.replace("$ENABLED", "false"), &[], &[])
+            .expect("disabled servers are not resolved");
+        assert_eq!(file.mcp_servers.len(), 1);
+        assert!(servers.is_empty());
+    }
+
+    #[test]
+    fn a_resolved_blocked_command_is_rejected_before_saving() {
+        let raw = r#"{"mcpServers":{"test":{"command":"${BOBE_TEST_COMMAND:-rm}"}}}"#;
+        let error = parse_document(raw, &[], &[]).expect_err("blocked after resolution");
+        assert!(matches!(error, AppError::Mcp(_)));
     }
 }

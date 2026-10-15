@@ -1,21 +1,19 @@
 use arc_swap::ArcSwap;
-use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::sqlite::SqlitePool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use tokio::sync::{Mutex, RwLock};
 
+use crate::agent::PiRuntime;
 use crate::config::Config;
 use crate::config::manager::ConfigManager;
-use crate::provider::AgentRuntime;
 use crate::provider::MemoryFile;
 use crate::provider::{AgentWorkspace, SkillStore};
 use crate::runtime::session::RuntimeSession;
 use crate::secrets::SecretStore;
+use crate::services::documents::{SoulsService, UserProfileService};
 use crate::services::goals::goals_service::GoalsService;
 use crate::services::ollama::install_service::OllamaInstallService;
-use crate::services::souls_service::SoulsService;
-use crate::services::user_profile_service::UserProfileService;
 use crate::util::network::MdnsAnnouncer;
 use crate::util::sse::connection_manager::SseConnectionManager;
 use crate::util::sse::event_queue::EventQueue;
@@ -40,13 +38,12 @@ pub(crate) struct Infrastructure {
     pub(crate) mdns_announcer: Arc<MdnsAnnouncer>,
     pub(crate) secret_store: Arc<dyn SecretStore>,
     pub(crate) headless_secret_store: Arc<dyn SecretStore>,
-    pub(crate) metrics_handle: PrometheusHandle,
     pub(crate) mcp_config_lock: Arc<Mutex<()>>,
 }
 
 pub(crate) struct RuntimeContext {
     pub(crate) runtime_session: Arc<RuntimeSession>,
-    pub(crate) workers: Arc<dyn AgentRuntime>,
+    pub(crate) workers: Arc<PiRuntime>,
     pub(crate) active_providers: crate::provider::ProvidersConfig,
     pub(crate) active_routes: crate::provider::ProviderRoutes,
     pub(crate) active_agent: crate::config::AgentConfig,

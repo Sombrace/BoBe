@@ -77,7 +77,7 @@ class BodyLinkTests(unittest.TestCase):
         self.addCleanup(run.close)
         return run
 
-    def test_handshake_and_ping_are_nonce_bound(self) -> None:
+    def test_handshake_waits_for_session_health(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             nonce = "ab" * 16
             config = bodylink.BodyLinkConfig(
@@ -93,11 +93,8 @@ class BodyLinkTests(unittest.TestCase):
                 device_id="device-1",
                 boot_id="1" * 32,
             )
-            pong = bodylink.control_message(
-                "pong",
-                nonce=identifiers["ping_nonce"],
-            )
-            websocket = FakeWebSocket([hello, pong])
+            health = bodylink.control_message("health.report", build_number=1)
+            websocket = FakeWebSocket([hello, health])
             run = self.evidence_run(Path(directory))
             asyncio.run(
                 bodylink.BodyLinkSession(websocket, config, run).run()
@@ -109,10 +106,12 @@ class BodyLinkTests(unittest.TestCase):
             ]
             self.assertEqual(
                 [message["type"] for message in sent],
-                ["welcome", "ping"],
+                ["welcome"],
             )
             self.assertEqual(sent[0]["controller_epoch"], 7)
-            self.assertEqual(sent[1]["nonce"], identifiers["ping_nonce"])
+            self.assertEqual(sent[0]["session_id"], identifiers["session_id"])
+            self.assertEqual(sent[0]["heartbeat_interval_ms"], 10000)
+            self.assertEqual(websocket.incoming, [])
 
     def test_rejects_wrong_hello_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -157,7 +156,7 @@ class BodyLinkTests(unittest.TestCase):
                 run,
             )
             with self.assertRaisesRegex(ValueError, "unexpected BodyLink media"):
-                asyncio.run(session.receive_control("pong"))
+                asyncio.run(session.receive_control("health.report"))
 
     def test_speaker_challenge_is_deterministic_and_bounded(self) -> None:
         first = bodylink.speaker_pcm("12" * 16, frame_count=3)
@@ -183,25 +182,25 @@ class BodyLinkTests(unittest.TestCase):
             bodylink.parse_media(header + b"payload")
         with self.assertRaisesRegex(ValueError, "protocol major"):
             bodylink.parse_control(
-                json.dumps({"type": "ping", "protocol_major": True})
+                json.dumps({"type": "hello", "protocol_major": True})
             )
 
     def test_control_rejects_ambiguous_and_non_json_values(self) -> None:
         for message in [
-            '{"type":"ping","protocol_major":1,"protocol_major":1}',
-            '{"type":"ping","protocol_major":1,"nonce":NaN}',
-            '{"type":"ping","protocol_major":1,"nested":{"value":1,"value":2}}',
+            '{"type":"health.report","protocol_major":1,"protocol_major":1}',
+            '{"type":"health.report","protocol_major":1,"uptime_s":NaN}',
+            '{"type":"health.report","protocol_major":1,"nested":{"value":1,"value":2}}',
         ]:
             with self.subTest(message=message), self.assertRaises(ValueError):
                 bodylink.parse_control(message)
 
     def test_media_parser_matches_firmware_bounds(self) -> None:
         for kind, flags, length in [(0, 0, 640), (1, 2, 640), (1, 0, 638),
-                                    (2, 0, 962), (3, 0, 0), (3, 0, 513), (4, 0, 1025)]:
+                                    (2, 0, 962), (3, 0, 1), (4, 0, 0)]:
             packet = bodylink.MEDIA_HEADER.pack(1, kind, flags, 1, 0, 0) + bytes(length)
             with self.subTest(kind=kind, flags=flags, length=length), self.assertRaises(ValueError):
                 bodylink.parse_media(packet)
-        for kind, length in [(1, 640), (2, 960), (3, 1), (3, 512), (4, 0), (4, 1024)]:
+        for kind, length in [(1, 640), (2, 960)]:
             packet = bodylink.MEDIA_HEADER.pack(1, kind, 1, 1, 0, 0) + bytes(length)
             header, payload = bodylink.parse_media(packet)
             self.assertEqual(header["kind"], kind)
@@ -229,10 +228,6 @@ class BodyLinkTests(unittest.TestCase):
                 protocol_minor=1,
                 device_id="device-1",
                 boot_id="1" * 32,
-            )
-            pong = bodylink.control_message(
-                "pong",
-                nonce=identifiers["ping_nonce"],
             )
             request = bodylink.control_message(
                 "capture.request",
@@ -282,7 +277,6 @@ class BodyLinkTests(unittest.TestCase):
             websocket = VoiceWebSocket(
                 [
                     hello,
-                    pong,
                     request,
                     capture_open,
                     microphone,

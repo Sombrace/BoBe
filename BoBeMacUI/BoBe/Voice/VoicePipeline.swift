@@ -43,17 +43,13 @@ public final class VoicePipeline {
         AVCaptureDevice.authorizationStatus(for: .audio)
 
     var installSnapshot: VoiceInstallSnapshot?
-    var voiceEnabled: Bool?
+    var installSnapshotRevision: UInt64 = 0
     var daemonSttReady = false
-
-    var showPartialCaption: Bool = true
-    var voicePersona: String?
-    var voiceSpeed: Float?
+    @ObservationIgnored var sttStatusLanguage = "en"
 
     var refreshDaemonTask: Task<Void, Never>?
     var daemonStateSelection = EndpointStore.shared.selection
-    var installPollTask: Task<Void, Never>?
-    var installSnapshotRevision: UInt64 = 0
+    @ObservationIgnored private var settingsObservation: Task<Void, Never>?
 
     public internal(set) var inputLevel: Float = 0
     public internal(set) var ttsOutputLevel: Float = 0
@@ -79,7 +75,6 @@ public final class VoicePipeline {
     let parakeetStt = FluidAudioStt()
     let nemotronStt = FluidAudioNemotronStt()
     var appleSttByLanguage: [String: AppleSpeechStt] = [:]
-    var activeSttLanguage: String = "en"
 
     var sessionSttLanguage: String?
     var sessionSttEngineId: String?
@@ -206,6 +201,15 @@ public final class VoicePipeline {
         }
         self.notificationObservers.append(engineToken)
         self.registerApplicationMuteHandler()
+        self.observeVoiceSettings()
+    }
+
+    private func observeVoiceSettings() {
+        self.settingsObservation = Task { @MainActor [weak self] in
+            for await _ in Observations({ SettingsStore.shared.settings }) {
+                self?.reconcileVoiceSettings()
+            }
+        }
     }
 
 
@@ -336,15 +340,6 @@ public final class VoicePipeline {
             logger.error(
                 "endpoint STT load failed engine=\(engineId, privacy: .public) language=\(language, privacy: .public): \(msg, privacy: .public)"
             )
-        }
-    }
-
-    public func prepareSelectedTts() async throws {
-        switch VoiceTtsPreference.shared.backend {
-        case .serverPocket:
-            try await self.startDaemonTtsInstall()
-        case .clientSupertonic:
-            try await self.clientTtsEngine.prepare()
         }
     }
 
@@ -491,8 +486,9 @@ public final class VoicePipeline {
         self.sessionSttLanguage = self.activeSttLanguage
         self.sessionSttEngineId = self.preferredSttEngineId(for: self.activeSttLanguage)
         self.sessionTtsBackend = VoiceTtsPreference.shared.backend
-        self.sessionVoicePersona = self.voicePersona
-        self.sessionVoiceSpeed = self.voiceSpeed
+        let settings = SettingsStore.shared.settings
+        self.sessionVoicePersona = settings?.voicePersona
+        self.sessionVoiceSpeed = settings?.voiceSpeed
         let language = self.activeSttLanguage
         if language != "en" {
             Task { [weak self] in await self?.nemotronStt.setLanguage(language) }

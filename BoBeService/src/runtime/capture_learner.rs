@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use tracing::{debug, info, warn};
 
+use crate::agent::PiRuntime;
 use crate::error::AppError;
-use crate::provider::AgentRuntime;
+use crate::provider::AuxiliaryClass;
 use crate::provider::JobInput;
 use crate::provider::MemoryFile;
-use crate::provider::WorkerClass;
 use crate::util::text::truncate_str;
 
 const RECENT_SECTION: &str = "Recent";
@@ -27,14 +27,14 @@ struct ActivityDescription {
 }
 
 pub(crate) struct CaptureLearner {
-    workers: Arc<dyn AgentRuntime>,
+    workers: Arc<PiRuntime>,
     memory_file: Arc<MemoryFile>,
     memory_enabled: bool,
 }
 
 impl CaptureLearner {
     pub(crate) fn new(
-        workers: Arc<dyn AgentRuntime>,
+        workers: Arc<PiRuntime>,
         memory_file: Arc<MemoryFile>,
         memory_enabled: bool,
     ) -> Self {
@@ -73,7 +73,7 @@ impl CaptureLearner {
         };
         let output = self
             .workers
-            .run_auxiliary(WorkerClass::Small, job)
+            .run_auxiliary(AuxiliaryClass::Small, job)
             .await
             .map_err(|e| AppError::Capture(format!("screen activity inference failed: {e}")))?;
         if let Some(error) = output.error {

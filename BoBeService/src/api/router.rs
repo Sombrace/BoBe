@@ -12,6 +12,8 @@ use super::middleware::{
     request_logging, scope_enforcement,
 };
 use crate::app_state::AppState;
+use crate::models::soul::Souls;
+use crate::models::user_profile::UserProfiles;
 
 pub(crate) fn build_router(
     state: Arc<AppState>,
@@ -170,7 +172,6 @@ pub(crate) fn build_router(
         .route(crate::constants::attach::PATH, post(handlers::hello::hello))
         .route("/health", get(handlers::health::health_check))
         .route("/readyz", get(handlers::health::readiness))
-        .route("/metrics", get(handlers::metrics::metrics))
         .route("/status", get(handlers::health::get_status))
         .route(
             "/config",
@@ -253,9 +254,7 @@ pub(crate) fn build_router(
         )
         .route(
             "/goals/{goal_id}",
-            get(handlers::goals::get_goal)
-                .patch(handlers::goals::update_goal)
-                .delete(handlers::goals::delete_goal),
+            axum::routing::patch(handlers::goals::update_goal).delete(handlers::goals::delete_goal),
         )
         .route(
             "/goals/{goal_id}/complete",
@@ -271,39 +270,38 @@ pub(crate) fn build_router(
         )
         .route(
             "/souls",
-            get(handlers::souls::list_souls).post(handlers::souls::create_soul),
+            get(handlers::documents::list::<Souls>).post(handlers::documents::create::<Souls>),
         )
         .route(
             "/souls/{soul_id}",
-            get(handlers::souls::get_soul)
-                .patch(handlers::souls::update_soul)
-                .delete(handlers::souls::delete_soul),
+            axum::routing::patch(handlers::documents::update::<Souls>)
+                .delete(handlers::documents::delete::<Souls>),
         )
         .route(
             "/souls/{soul_id}/enable",
-            post(handlers::souls::enable_soul),
+            post(handlers::documents::enable::<Souls>),
         )
         .route(
             "/souls/{soul_id}/disable",
-            post(handlers::souls::disable_soul),
+            post(handlers::documents::disable::<Souls>),
         )
         .route(
             "/user-profiles",
-            get(handlers::user_profile::list_profiles).post(handlers::user_profile::create_profile),
+            get(handlers::documents::list::<UserProfiles>)
+                .post(handlers::documents::create::<UserProfiles>),
         )
         .route(
             "/user-profiles/{profile_id}",
-            get(handlers::user_profile::get_profile)
-                .patch(handlers::user_profile::update_profile)
-                .delete(handlers::user_profile::delete_profile),
+            axum::routing::patch(handlers::documents::update::<UserProfiles>)
+                .delete(handlers::documents::delete::<UserProfiles>),
         )
         .route(
             "/user-profiles/{profile_id}/enable",
-            post(handlers::user_profile::enable_profile),
+            post(handlers::documents::enable::<UserProfiles>),
         )
         .route(
             "/user-profiles/{profile_id}/disable",
-            post(handlers::user_profile::disable_profile),
+            post(handlers::documents::disable::<UserProfiles>),
         )
         .route(
             "/settings",

@@ -3,7 +3,6 @@
 "phone.common.dismiss" = "閉じる";
 "phone.common.done" = "完了";
 "phone.common.maybe_later" = "あとで";
-"phone.common.not_now" = "今はしない";
 "phone.common.open_settings" = "設定を開く";
 "phone.onboarding.progress_format" = "ステップ %d / %d";
 "phone.welcome.title" = "こんにちは、BoBeです";
@@ -30,9 +29,6 @@
 "phone.where.title" = "コードはどこですか？";
 "phone.where.mac" = "Mac：設定 › デバイス › iPhoneをペアリング";
 "phone.where.linux" = "Linux：";
-"phone.reach.title" = "お知らせしてもいいですか？";
-"phone.reach.body" = "大切なときだけです。";
-"phone.reach.allow" = "通知を許可";
 "phone.hear.title" = "声で話しますか？";
 "phone.hear.body" = "ボタンを押したまま話してください。";
 "phone.hear.allow" = "マイクを許可";
@@ -85,7 +81,6 @@
 "phone.talk.permission" = "設定で「マイク」と「音声認識」をオンにしてください。";
 "phone.settings.title" = "設定";
 "phone.settings.address" = "アドレス";
-"phone.settings.notifications" = "通知";
 "phone.settings.voice" = "音声";
 "phone.settings.unpair" = "このiPhoneのペアリングを解除";
 "phone.settings.unpair.title" = "このiPhoneのペアリングを解除しますか？";

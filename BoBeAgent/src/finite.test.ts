@@ -2,29 +2,35 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { getCurrentSystemMessage, type TranscriptContext } from "@earendil-works/pi-ai";
 import { configuration, fixture, host, userText } from "./test-support.js";
 import { isRecord } from "./protocol.js";
 
 test("auxiliary structured-result tool is a real SDK tool and does not enter the main transcript", async t => {
   const paths = await fixture(t);
-  const { worker } = await host(t, configuration(paths), () => ({
-    tools: [{ id: "submit-1", name: "bobe_submit_result", arguments: { output: { goals: ["bounded"] } } }],
-  }));
+  const contexts: TranscriptContext[] = [];
+  const { worker } = await host(t, configuration(paths), context => {
+    contexts.push(structuredClone(context));
+    return { tools: [{ id: "submit-1", name: "bobe_submit_result", arguments: { output: { goals: ["bounded"] } } }] };
+  });
   const pointer = await readFile(join(paths.root, "agent/session.json"), "utf8");
   const result = await worker.request({
     id: 2, method: "auxiliary",
-    params: { class: "goals", job: { job_id: "job-1", kind: "extract", instructions: "Extract goals.", input: {} }, context: "finite owner context" },
+    params: { class: "small", job: { job_id: "job-1", kind: "extract", instructions: "Extract goals.", input: {} }, context: "finite owner context" },
   });
   assert.deepEqual(result, { job_id: "job-1", output: { goals: ["bounded"] }, error: null });
+  const sections = getCurrentSystemMessage(contexts[0]?.messages ?? [])?.sections ?? {};
+  assert.ok(sections.preamble?.startsWith("You are a bounded operation of BoBe, not another companion."));
+  for (const companion of ["bobe_persona", "bobe_capabilities", "bobe_memory"]) assert.equal(sections[companion], undefined);
   assert.equal(await readFile(join(paths.root, "agent/session.json"), "utf8"), pointer);
   const parsed: unknown = JSON.parse(pointer);
   assert.ok(isRecord(parsed) && typeof parsed.file === "string");
   assert.equal((await readFile(join(paths.root, "agent", parsed.file), "utf8")).includes("finite owner context"), false);
 });
 
-test("Rust auxiliary jobs preserve result values rather than an extra output envelope", async t => {
+test("Rust auxiliary jobs receive the submitted result value unchanged", async t => {
   for (const result of [
-    { kind: "proactive_activation", value: { activate: true, context: "The owner asked for this reminder." } },
+    { kind: "proactive_activation", value: { activate: true, reason: "The owner asked for this reminder." } },
     { kind: "conversation_summary", value: "The owner plans to practise Spanish this week." },
     { kind: "consolidate", value: { body: "# Memory\n\nA durable fact." } },
   ]) {
@@ -36,7 +42,7 @@ test("Rust auxiliary jobs preserve result values rather than an extra output env
       assert.deepEqual(await worker.request({
         id: 2, method: "auxiliary",
         params: {
-          class: result.kind === "consolidate" ? "consolidate" : "goals",
+          class: result.kind === "consolidate" ? "consolidate" : "small",
           job: { job_id: "rust-job", kind: result.kind, instructions: "Submit the requested result.", input: {} },
           context: "",
         },
@@ -45,8 +51,15 @@ test("Rust auxiliary jobs preserve result values rather than an extra output env
   }
 });
 
-test("auxiliary accepts a validated result envelope and reports malformed or missing output as failure", async t => {
-  for (const text of ['{"output":{"ok":true}}', '{"ok":true}', "Not structured output", "[]", ""]) {
+test("auxiliary accepts the result as JSON text, fenced or bare, and reports anything else as failure", async t => {
+  const cases: [string, unknown][] = [
+    ['{"activate":false,"reason":""}', { activate: false, reason: "" }],
+    ['```json\n{"ok":true}\n```', { ok: true }],
+    ["[]", []],
+    ["Not structured output", undefined],
+    ["", undefined],
+  ];
+  for (const [text, expected] of cases) {
     await t.test(text || "empty", async t => {
       const paths = await fixture(t);
       const { worker } = await host(t, configuration(paths), () => ({ text }));
@@ -55,12 +68,12 @@ test("auxiliary accepts a validated result envelope and reports malformed or mis
         params: { class: "consolidate", job: { job_id: "job-2", kind: "consolidate", instructions: "Produce result.", input: {} }, context: "" },
       });
       assert.ok(isRecord(result));
-      if (text.startsWith('{"output":')) {
-        assert.equal(result.error, null);
-        assert.deepEqual(result.output, { ok: true });
-      } else {
+      if (expected === undefined) {
         assert.equal(typeof result.error, "string");
         assert.equal(result.output, null);
+      } else {
+        assert.equal(result.error, null);
+        assert.deepEqual(result.output, expected);
       }
     });
   }

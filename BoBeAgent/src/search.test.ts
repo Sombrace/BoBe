@@ -32,7 +32,6 @@ test("grep and find retain pi search results but launch through the daemon proce
 test("persistent MCP processes and native search share the same process capacity",async t=>{
   const paths=await fixture(t);
   const config=configuration(paths);
-  config.execution.process_concurrency=4;
   config.mcp={servers:Object.fromEntries([0,1,2,3].map(index=>[`server${index}`,{
     command:process.execPath,args:[fileURLToPath(new URL("./mcp-fixture.js",import.meta.url))],
     env:{},timeout_ms:1000,excluded_tools:[],
@@ -43,7 +42,7 @@ test("persistent MCP processes and native search share the same process capacity
     if (calls++===0) return {tools:[{id:"search",name:"find",arguments:{pattern:"*.txt"}}]};
     results=JSON.stringify(context.messages.filter(message=>message.role==="toolResult"));
     return {text:"Search could not start because the process budget was occupied."};
-  });
+  },undefined,undefined,4);
   await worker.request({id:2,method:"chat",params:{text:"Search",channel:"text",context:""}});
   assert.ok(results.includes("process capacity is full"),results);
   assert.equal(processes.programs.length,4);

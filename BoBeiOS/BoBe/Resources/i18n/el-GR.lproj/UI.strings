@@ -3,7 +3,6 @@
 "phone.common.dismiss" = "Κλείσιμο";
 "phone.common.done" = "Τέλος";
 "phone.common.maybe_later" = "Ίσως αργότερα";
-"phone.common.not_now" = "Όχι τώρα";
 "phone.common.open_settings" = "Άνοιγμα Ρυθμίσεων";
 "phone.onboarding.progress_format" = "Βήμα %d από %d";
 "phone.welcome.title" = "Γεια, είμαι η BoBe";
@@ -30,9 +29,6 @@
 "phone.where.title" = "Πού είναι ο κωδικός;";
 "phone.where.mac" = "Mac: Ρυθμίσεις › Συσκευές › Σύνδεση iPhone";
 "phone.where.linux" = "Linux:";
-"phone.reach.title" = "Να σε ειδοποιώ;";
-"phone.reach.body" = "Μόνο όταν έχει σημασία.";
-"phone.reach.allow" = "Επίτρεψη ειδοποιήσεων";
 "phone.hear.title" = "Να μιλάμε με φωνή;";
 "phone.hear.body" = "Κράτα πατημένο το κουμπί και μίλα.";
 "phone.hear.allow" = "Επίτρεψη μικροφώνου";
@@ -85,7 +81,6 @@
 "phone.talk.permission" = "Ενεργοποίησε το Μικρόφωνο και την Αναγνώριση ομιλίας στις Ρυθμίσεις.";
 "phone.settings.title" = "Ρυθμίσεις";
 "phone.settings.address" = "Διεύθυνση";
-"phone.settings.notifications" = "Ειδοποιήσεις";
 "phone.settings.voice" = "Φωνή";
 "phone.settings.unpair" = "Αποσύνδεση αυτού του iPhone";
 "phone.settings.unpair.title" = "Αποσύνδεση αυτού του iPhone;";

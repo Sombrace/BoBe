@@ -20,7 +20,6 @@ use voice_loader::build_voice_engines_snapshot;
 
 pub(crate) async fn initialize_storage(
     paths: &crate::util::paths::DataPaths,
-    register_start: bool,
 ) -> Result<
     (
         sqlx::SqlitePool,
@@ -28,12 +27,8 @@ pub(crate) async fn initialize_storage(
     ),
     AppError,
 > {
-    let (pool, schema_version) = database::connect_and_apply_schema(paths.database_url()).await?;
-    let identity = if register_start {
-        crate::db::runtime_authority_repo::claim_and_start(&pool, paths, schema_version).await?
-    } else {
-        crate::db::runtime_authority_repo::claim(&pool, paths, schema_version).await?
-    };
+    let (pool, schema_version) = database::open(paths).await?;
+    let identity = crate::db::runtime_authority_repo::claim(&pool, paths, schema_version).await?;
     Ok((pool, identity))
 }
 
@@ -45,7 +40,7 @@ pub(crate) async fn run(
     local_enrollment: Arc<crate::api::handlers::local_enrollment::LocalEnrollmentBootstrap>,
 ) -> Result<Arc<AppState>, AppError> {
     crate::util::tls::install_crypto_provider()?;
-    let (pool, identity) = initialize_storage(&paths, true).await?;
+    let (pool, identity) = initialize_storage(&paths).await?;
     let initialization = crate::db::runtime_initialization_repo::ensure(&pool).await?;
     let identity = Arc::new(identity);
     info!(
@@ -114,7 +109,6 @@ async fn run_with_config(
         let path = data_root.join("memory.md");
         crate::provider::MemoryFile::new(path)
     };
-    crate::provider::skills::ensure_skills(&data_root).await;
     let skill_store = crate::provider::SkillStore::prepare(&paths).await?;
     let agent_workspace = crate::provider::AgentWorkspace::prepare(&paths)?;
     let mcp = load_mcp_servers(&config);
@@ -132,8 +126,6 @@ async fn run_with_config(
     );
     let voice_ws_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let voice_sink = Arc::new(crate::voice::sinks::VoiceSink::new());
-    let metrics_handle = crate::voice::telemetry::install_recorder()
-        .map_err(|e| AppError::Internal(format!("metrics recorder: {e}")))?;
     let voice_engines: Arc<ArcSwap<crate::voice::engines::VoiceEnginesSnapshot>> = Arc::new(
         ArcSwap::from_pointee(crate::voice::engines::VoiceEnginesSnapshot::default()),
     );
@@ -174,11 +166,21 @@ async fn run_with_config(
     );
     let runs = Arc::new(crate::runtime::run_registry::RunRegistry::new());
     agent_jobs.recover().await?;
+    let souls_service = Arc::new(crate::services::documents::SoulsService::new(Arc::clone(
+        &repos.soul_repo,
+    )));
+    let user_profile_service = Arc::new(crate::services::documents::UserProfileService::new(
+        Arc::clone(&repos.user_profile_repo),
+    ));
+    let persona = crate::provider::PersonaSource::new(
+        Arc::clone(&souls_service),
+        Arc::clone(&user_profile_service),
+    );
     let agent = crate::agent::PiRuntime::new(
         &config,
         Arc::new(paths.clone()),
         headless_secret_store.as_ref(),
-        Arc::clone(&memory_file),
+        Arc::clone(&persona),
         Arc::clone(&skill_store),
         domain_tools,
         Arc::clone(&agent_jobs),
@@ -188,8 +190,7 @@ async fn run_with_config(
         Arc::clone(&voice_sink),
         Arc::clone(&voice_engines),
     )?;
-    let workers: Arc<dyn crate::provider::AgentRuntime> =
-        Arc::clone(&agent) as Arc<dyn crate::provider::AgentRuntime>;
+    let workers = Arc::clone(&agent);
 
     let wired = wiring::wire(
         &config,
@@ -197,6 +198,9 @@ async fn run_with_config(
         &infra,
         &repos,
         Arc::clone(&workers),
+        souls_service,
+        user_profile_service,
+        persona,
         goals_service,
         Arc::clone(&personal_data_lifecycle),
         Arc::clone(&agent_jobs),
@@ -207,11 +211,6 @@ async fn run_with_config(
     if config.seed_default_documents {
         if let Err(e) = crate::db::seeding::seed_default_souls(repos.soul_repo.as_ref()).await {
             tracing::warn!(error = %e, "bootstrap.soul_seeding_failed");
-        }
-        if let Err(e) =
-            crate::db::seeding::seed_default_user_profiles(repos.user_profile_repo.as_ref()).await
-        {
-            tracing::warn!(error = %e, "bootstrap.profile_seeding_failed");
         }
         if let Err(e) =
             crate::services::goals::seeding::seed_sample_goal(&pool, wired.goals_service.as_ref())
@@ -340,7 +339,6 @@ async fn run_with_config(
             mdns_announcer: infra.mdns_announcer,
             secret_store,
             headless_secret_store,
-            metrics_handle,
             mcp_config_lock: Arc::new(tokio::sync::Mutex::new(())),
         }),
         runtime: Arc::new(crate::app_state::RuntimeContext {

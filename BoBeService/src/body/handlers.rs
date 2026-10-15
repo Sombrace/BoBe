@@ -307,21 +307,6 @@ async fn handle_body_control(
                 .handle_device_input(device_id, generation, &kind, text)
                 .await
         }
-        "ping" => {
-            let nonce = value
-                .get("nonce")
-                .and_then(serde_json::Value::as_u64)
-                .unwrap_or_default();
-            send_json(
-                sender,
-                &serde_json::json!({
-                    "type": "pong",
-                    "protocol_major": PROTOCOL_MAJOR,
-                    "nonce": nonce,
-                }),
-            )
-            .await
-        }
         "capture.request" => {
             if !gateway
                 .interaction_connection(device_id, Some(generation))
@@ -523,7 +508,7 @@ async fn handle_body_control(
             let Ok(health) = serde_json::from_value::<BodyHealthReport>(value) else {
                 return false;
             };
-            match gateway.record_health_report(device_id, generation, health) {
+            match gateway.classify_offer(device_id, generation, health.build_number) {
                 OfferDecision::Send => gateway.send_update_offer(device_id, generation).await,
                 OfferDecision::AlreadyOffered
                 | OfferDecision::NotNewer
@@ -532,16 +517,8 @@ async fn handle_body_control(
                 | OfferDecision::StaleConnection => true,
             }
         }
-        "battery.state" => {
-            let Ok(battery) = serde_json::from_value::<BodyBatteryState>(value) else {
-                return false;
-            };
-            if battery.percent > 100 {
-                return false;
-            }
-            gateway.record_battery_state(device_id, generation, battery);
-            true
-        }
+        "battery.state" => serde_json::from_value::<BodyBatteryState>(value)
+            .is_ok_and(|battery| battery.percent <= 100),
         "update.state" => {
             let Ok(report) = serde_json::from_value::<UpdateStateReport>(value) else {
                 return false;
@@ -558,7 +535,7 @@ async fn handle_body_control(
                 );
                 return true;
             }
-            gateway.record_update_state(device_id, generation, report);
+            gateway.record_update_state(device_id, generation, &report);
             true
         }
         "button.event" => true,

@@ -93,10 +93,6 @@ typedef struct {
     char caption[BOBE_CAPTION_MAX_BYTES];
 } bobe_face_state_t;
 
-/*
- * The built-in theme is the production default and is not addressable over
- * BodyLink; the seven named themes are the exact wire identifiers.
- */
 typedef enum {
     BOBE_FACE_THEME_DEFAULT = 0,
     BOBE_FACE_THEME_WARM_APERTURE,
@@ -116,12 +112,6 @@ typedef struct {
     bobe_face_theme_id_t theme;
 } bobe_theme_state_t;
 
-/*
- * Notices are a purely local, transient confirmation channel. They never
- * carry or replace authoritative remote face state: the controller owns
- * `bobe_face_state_t`, while notices only acknowledge a physical control the
- * child just used, or a local milestone the controller cannot narrate.
- */
 typedef enum {
     BOBE_NOTICE_NONE = 0,
     BOBE_NOTICE_HINT,

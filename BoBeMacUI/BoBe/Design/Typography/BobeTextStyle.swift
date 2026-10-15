@@ -57,3 +57,9 @@ enum BobeTextStyle {
         }
     }
 }
+
+extension View {
+    func bobeTextStyle(_ style: BobeTextStyle) -> some View {
+        font(style.font)
+    }
+}

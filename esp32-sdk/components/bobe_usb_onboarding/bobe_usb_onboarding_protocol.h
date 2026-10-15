@@ -7,7 +7,6 @@
 #define BOBE_USB_ONBOARDING_NONCE_BYTES 16U
 
 typedef enum {
-    BOBE_USB_REQUEST_NONE = 0,
     BOBE_USB_REQUEST_INFO,
     BOBE_USB_REQUEST_SET_WIFI,
 } bobe_usb_request_kind_t;

@@ -10,10 +10,14 @@ use tokio::process::Child;
 use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::constants::voice_wire::TTS_OUTPUT_SAMPLE_RATE;
 use crate::error::AppError;
 use crate::ops::{exit::ExitCode, status::OpsTarget};
+use crate::speech::protocol::{FLAG_FIRST_OF_TURN, decode_tts_frame};
 
 mod wav;
+
+const PACKET_SAMPLES: usize = TTS_OUTPUT_SAMPLE_RATE as usize / 50;
 
 #[derive(Subcommand)]
 pub(crate) enum VoiceCommands {
@@ -119,7 +123,7 @@ pub(crate) async fn run(command: VoiceCommands) -> Result<ExitCode, AppError> {
         output,
         voice: String::new(),
         speed: 1.0,
-        sample_rate: 24_000,
+        sample_rate: TTS_OUTPUT_SAMPLE_RATE,
         audio_ms: 0,
         frames: 0,
         sentences: Vec::new(),
@@ -157,17 +161,16 @@ pub(crate) async fn run(command: VoiceCommands) -> Result<ExitCode, AppError> {
                 frame = socket.next() => match frame {
                     Some(Ok(Message::Binary(bytes))) => {
                         if report.cancelled { continue; }
-                        if turn_id.is_none() || ended || bytes.len() <= 9 {
-                            return Err(AppError::Internal("Unexpected voice audio frame".into()));
-                        }
-                        let id = u64::from_be_bytes(bytes[..8].try_into().map_err(ws_error)?);
-                        let expected_flags = if report.frames == 0 { crate::speech::protocol::FLAG_FIRST_OF_TURN } else { 0 };
-                        if id != report.frames || bytes[8] != expected_flags {
+                        let frame = decode_tts_frame(&bytes)
+                            .filter(|_| turn_id.is_some() && !ended)
+                            .ok_or_else(|| AppError::Internal("Unexpected voice audio frame".into()))?;
+                        let expected_flags = if report.frames == 0 { FLAG_FIRST_OF_TURN } else { 0 };
+                        if frame.chunk_id != report.frames || frame.flags != expected_flags {
                             return Err(AppError::Internal("Voice frame sequence or flags are invalid".into()));
                         }
-                        let mut pcm = [0.0; 480];
-                        let samples = decoder.decode_float_to_slice(&bytes[9..], &mut pcm, false).map_err(ws_error)?;
-                        if samples != 480 { return Err(AppError::Internal("Expected a 20 ms voice packet".into())); }
+                        let mut pcm = [0.0; PACKET_SAMPLES];
+                        let samples = decoder.decode_float_to_slice(frame.payload, &mut pcm, false).map_err(ws_error)?;
+                        if samples != PACKET_SAMPLES { return Err(AppError::Internal("Expected a 20 ms voice packet".into())); }
                         file.append(&pcm)?;
                         report.peak = pcm.iter().map(|s| s.abs()).fold(report.peak, f32::max);
                         report.frames += 1;
@@ -181,7 +184,7 @@ pub(crate) async fn run(command: VoiceCommands) -> Result<ExitCode, AppError> {
                         let event: serde_json::Value = serde_json::from_str(&text)?;
                         match event["type"].as_str() {
                             Some("preview_ready") => {
-                                if turn_id.is_some() || event["sample_rate"] != 24_000 { return Err(AppError::Internal("Invalid preview negotiation".into())); }
+                                if turn_id.is_some() || event["sample_rate"] != TTS_OUTPUT_SAMPLE_RATE { return Err(AppError::Internal("Invalid preview negotiation".into())); }
                                 turn_id = event["turn_id"].as_str().map(str::to_owned);
                                 event["voice_id"].as_str().unwrap_or_default().clone_into(&mut report.voice);
                                 report.speed = event["speed"].as_f64().unwrap_or(1.0) as f32;

@@ -6,15 +6,15 @@ use serde_json::json;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::agent::PiRuntime;
 use crate::error::AppError;
-use crate::provider::AgentRuntime;
 use crate::provider::JobInput;
 use crate::provider::memory_file::{MemoryFile, TARGET_MAX_BYTES};
 
 const DEFAULT_FIRE_AT: (u32, u32) = (3, 0);
 
 pub(crate) struct ConsolidationScheduler {
-    workers: Arc<dyn AgentRuntime>,
+    workers: Arc<PiRuntime>,
     memory_file: Arc<MemoryFile>,
     personal_data_lifecycle: Arc<tokio::sync::RwLock<()>>,
     fire_at: NaiveTime,
@@ -22,7 +22,7 @@ pub(crate) struct ConsolidationScheduler {
 
 impl ConsolidationScheduler {
     pub(crate) fn new(
-        workers: Arc<dyn AgentRuntime>,
+        workers: Arc<PiRuntime>,
         memory_file: Arc<MemoryFile>,
         personal_data_lifecycle: Arc<tokio::sync::RwLock<()>>,
     ) -> Self {
@@ -110,7 +110,7 @@ impl ConsolidationScheduler {
 
         let out = self
             .workers
-            .run_auxiliary(crate::provider::WorkerClass::Consolidate, job)
+            .run_auxiliary(crate::provider::AuxiliaryClass::Consolidate, job)
             .await
             .map_err(|e| AppError::Internal(format!("consolidation inference: {e}")))?;
 

@@ -9,7 +9,20 @@ pub(crate) struct WorkloadBudget {
     pub(crate) max_output_tokens: usize,
 }
 
+impl WorkloadBudget {
+    pub(crate) const fn context_tokens(self) -> usize {
+        self.max_prompt_tokens + self.max_output_tokens
+    }
+}
+
 impl WorkerClass {
+    pub(crate) fn largest_context_tokens() -> usize {
+        [Self::Goals, Self::Small, Self::Chat, Self::Consolidate]
+            .into_iter()
+            .map(|class| class.budget().context_tokens())
+            .fold(0, usize::max)
+    }
+
     pub(crate) const fn budget(self) -> WorkloadBudget {
         match self {
             Self::Chat => WorkloadBudget {

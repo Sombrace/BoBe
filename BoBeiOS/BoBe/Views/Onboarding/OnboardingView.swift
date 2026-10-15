@@ -15,7 +15,6 @@ struct OnboardingView: View {
         switch self.model.step {
         case .welcome: return self.awake ? .idle : .waking
         case .find: return .watching
-        case .reach: return .eager
         case .hear: return .listening
         case .ready: return .happy
         }
@@ -25,7 +24,7 @@ struct OnboardingView: View {
         switch self.model.step {
         case .welcome: 172
         case .find: 84
-        case .reach, .hear, .ready: 132
+        case .hear, .ready: 132
         }
     }
 
@@ -58,8 +57,7 @@ struct OnboardingView: View {
             BobeCharacter(
                 mood: self.mood,
                 size: self.faceSize,
-                palette: self.theme.avatar,
-                wantsAttention: self.model.step == .reach
+                palette: self.theme.avatar
             )
             .padding(.top, self.model.step == .find ? 6 : 28)
             .animation(BobeMotion.soft, value: self.faceSize)
@@ -67,7 +65,6 @@ struct OnboardingView: View {
                 switch self.model.step {
                 case .welcome: WelcomeStep(model: self.model)
                 case .find: FindStep(model: self.model)
-                case .reach: ReachStep(model: self.model)
                 case .hear: HearStep(model: self.model)
                 case .ready: ReadyStep(model: self.model)
                 }

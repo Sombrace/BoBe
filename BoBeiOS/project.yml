@@ -12,6 +12,7 @@ settings:
     SWIFT_VERSION: "6.0"
     IPHONEOS_DEPLOYMENT_TARGET: "26.0"
     TARGETED_DEVICE_FAMILY: "1"
+    ARCHS: arm64
     ENABLE_PREVIEWS: YES
     SWIFT_STRICT_CONCURRENCY: complete
     SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
@@ -60,7 +61,7 @@ targets:
         group: Shared
       - path: ../BoBeMacUI/BoBe/Design/BobeMaterial.swift
         group: Shared
-      - path: ../BoBeMacUI/BoBe/Theme/ThemeConfig.swift
+      - path: ../BoBeMacUI/BoBe/Design/Theme/ThemeConfig.swift
         group: Shared
       - path: ../BoBeMacUI/BoBe/Utilities/Localization.swift
         group: Shared

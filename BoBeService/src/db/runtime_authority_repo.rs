@@ -20,23 +20,6 @@ pub(crate) async fn claim(
     paths: &crate::util::paths::DataPaths,
     schema_version: i64,
 ) -> Result<RuntimeIdentity, AppError> {
-    load_identity(pool, paths, schema_version, false).await
-}
-
-pub(crate) async fn claim_and_start(
-    pool: &SqlitePool,
-    paths: &crate::util::paths::DataPaths,
-    schema_version: i64,
-) -> Result<RuntimeIdentity, AppError> {
-    load_identity(pool, paths, schema_version, true).await
-}
-
-async fn load_identity(
-    pool: &SqlitePool,
-    paths: &crate::util::paths::DataPaths,
-    schema_version: i64,
-    register_start: bool,
-) -> Result<RuntimeIdentity, AppError> {
     let mut transaction = pool.begin().await?;
     let proposed_authority = Uuid::new_v4();
     let incarnation = Uuid::new_v4();
@@ -45,15 +28,11 @@ async fn load_identity(
 
     sqlx::query(
         "INSERT OR IGNORE INTO runtime_authority
-         (singleton, authority_id, authority_epoch, data_root,
-          last_incarnation_id, last_started_at, last_daemon_version)
-         VALUES (1, ?, 1, ?, ?, ?, ?)",
+         (singleton, authority_id, authority_epoch, data_root)
+         VALUES (1, ?, 1, ?)",
     )
     .bind(proposed_authority.as_bytes().as_slice())
     .bind(&data_root)
-    .bind(incarnation.as_bytes().as_slice())
-    .bind(started_at.to_rfc3339())
-    .bind(env!("CARGO_PKG_VERSION"))
     .execute(&mut *transaction)
     .await?;
 
@@ -65,20 +44,6 @@ async fn load_identity(
     .await?;
     let runtime_authority_id = Uuid::from_slice(&authority_bytes)
         .map_err(|error| AppError::Internal(format!("invalid runtime authority UUID: {error}")))?;
-
-    if register_start {
-        sqlx::query(
-            "UPDATE runtime_authority
-             SET last_incarnation_id = ?, last_started_at = ?,
-                 last_daemon_version = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE singleton = 1",
-        )
-        .bind(incarnation.as_bytes().as_slice())
-        .bind(started_at.to_rfc3339())
-        .bind(env!("CARGO_PKG_VERSION"))
-        .execute(&mut *transaction)
-        .await?;
-    }
     transaction.commit().await?;
 
     if stored_root != data_root {
@@ -117,12 +82,8 @@ mod tests {
     async fn authority_is_stable_and_incarnation_changes() {
         let pool = crate::db::test_helpers::in_memory_pool().await;
         let paths = paths();
-        let first = claim_and_start(&pool, &paths, 1)
-            .await
-            .expect("first claim");
-        let second = claim_and_start(&pool, &paths, 1)
-            .await
-            .expect("second load");
+        let first = claim(&pool, &paths, 1).await.expect("first claim");
+        let second = claim(&pool, &paths, 1).await.expect("second claim");
         assert_eq!(first.runtime_authority_id, second.runtime_authority_id);
         assert_eq!(first.runtime_authority_epoch, 1);
         assert_eq!(second.runtime_authority_epoch, 1);

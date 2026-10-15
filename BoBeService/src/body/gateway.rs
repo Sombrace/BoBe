@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 use arc_swap::ArcSwap;
 use axum::extract::ws::Message;
 use opusic_c::{Channels as OpusChannels, Decoder as OpusDecoder, SampleRate as OpusSampleRate};
-use serde::Serialize;
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -17,12 +16,12 @@ use super::outbound::{
 };
 use super::protocol::{
     AUDIO_FRAME_DURATION_MS, AdapterMediaHeader, AdapterMediaKind, AdapterOutbound,
-    BodyBatteryState, BodyHealthReport, CAPTURE_CHANNELS, CAPTURE_CODEC, CAPTURE_SAMPLE_RATE_HZ,
-    MAX_LEASE_LIFETIME_MS, MAX_PLAYBACK_CREDIT_MS, MEDIA_FLAG_DISCONTINUITY, OfferDecision,
-    PROTOCOL_MAJOR, PlaybackCredit, RouteDescriptor, SPEAKER_CHANNELS, SPEAKER_CODEC,
-    SPEAKER_PCM_BYTES, SPEAKER_SAMPLE_RATE_HZ, ThemeSet, UpdateStateReport,
+    CAPTURE_CHANNELS, CAPTURE_CODEC, CAPTURE_SAMPLE_RATE_HZ, MAX_LEASE_LIFETIME_MS,
+    MAX_PLAYBACK_CREDIT_MS, MEDIA_FLAG_DISCONTINUITY, OfferDecision, PROTOCOL_MAJOR,
+    PlaybackCredit, RouteDescriptor, SPEAKER_CHANNELS, SPEAKER_CODEC, SPEAKER_PCM_BYTES,
+    SPEAKER_SAMPLE_RATE_HZ, ThemeSet, UpdateStateReport,
 };
-use super::update::{OfferManifest, UpdateOffer};
+use super::update::UpdateOffer;
 use crate::config::{BodyTheme, Config};
 use crate::models::ids::new_turn_id;
 use crate::runtime::response_streamer::StreamDelivery;
@@ -327,24 +326,7 @@ pub(crate) struct BodyGateway {
     wake_arbitrator: crate::body::wake_arbitrator::WakeArbitrator,
     clock_origin: Instant,
     update_offer: Option<Arc<UpdateOffer>>,
-    update_statuses: Mutex<HashMap<String, BodyUpdateStatus>>,
     pub(super) sensor_states: Mutex<SensorStates>,
-}
-
-#[derive(Debug, Clone, Default, Serialize)]
-pub(crate) struct BodyUpdateStatus {
-    #[serde(skip)]
-    generation: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) health: Option<BodyHealthReport>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) battery: Option<BodyBatteryState>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) offered_manifest: Option<OfferManifest>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) offered_at_generation: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) update_state: Option<UpdateStateReport>,
 }
 
 struct LeaseReleaseGuard {
@@ -397,23 +379,8 @@ impl BodyGateway {
             wake_arbitrator: crate::body::wake_arbitrator::WakeArbitrator::default(),
             clock_origin: Instant::now(),
             update_offer,
-            update_statuses: Mutex::new(HashMap::new()),
             sensor_states: Mutex::new(HashMap::new()),
         })
-    }
-
-    fn lock_update_statuses(&self) -> std::sync::MutexGuard<'_, HashMap<String, BodyUpdateStatus>> {
-        self.update_statuses
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    pub(crate) fn update_statuses(&self) -> HashMap<String, BodyUpdateStatus> {
-        self.lock_update_statuses().clone()
-    }
-
-    pub(crate) fn configured_offer_build(&self) -> Option<u32> {
-        self.update_offer.as_ref().map(|offer| offer.build_number())
     }
 
     fn is_current_body(&self, device_id: &str, generation: u64) -> bool {
@@ -423,63 +390,12 @@ impl BodyGateway {
             .is_some_and(|body| body.generation == generation)
     }
 
-    fn with_current_update_status(
+    pub(crate) fn classify_offer(
         &self,
         device_id: &str,
         generation: u64,
-        update: impl FnOnce(&mut BodyUpdateStatus),
-    ) -> bool {
-        if !self.is_current_body(device_id, generation) {
-            return false;
-        }
-        let mut statuses = self.lock_update_statuses();
-        let Some(status) = statuses.get_mut(device_id) else {
-            return false;
-        };
-        if status.generation != generation {
-            return false;
-        }
-        update(status);
-        true
-    }
-
-    fn remove_update_status(&self, device_id: &str, generation: u64) {
-        let mut statuses = self.lock_update_statuses();
-        if statuses
-            .get(device_id)
-            .is_some_and(|status| status.generation == generation)
-        {
-            statuses.remove(device_id);
-        }
-    }
-
-    pub(crate) fn record_battery_state(
-        &self,
-        device_id: &str,
-        generation: u64,
-        battery: BodyBatteryState,
-    ) -> bool {
-        self.with_current_update_status(device_id, generation, |status| {
-            status.battery = Some(battery);
-        })
-    }
-
-    pub(crate) fn record_health_report(
-        &self,
-        device_id: &str,
-        generation: u64,
-        health: BodyHealthReport,
+        build_number: u32,
     ) -> OfferDecision {
-        let build_number = health.build_number;
-        if !self.with_current_update_status(device_id, generation, |status| {
-            status.health = Some(health);
-        }) {
-            return OfferDecision::StaleConnection;
-        }
-        self.classify_offer(device_id, generation, build_number)
-    }
-
-    fn classify_offer(&self, device_id: &str, generation: u64, build_number: u32) -> OfferDecision {
         let Some(offer) = self.update_offer.as_ref() else {
             return OfferDecision::NotConfigured;
         };
@@ -522,11 +438,6 @@ impl BodyGateway {
             send_message_confirmed(&sender, Message::Text(offer.envelope().to_owned().into()))
                 .await;
         if delivered {
-            self.with_current_update_status(device_id, generation, |status| {
-                status.offered_manifest = Some(offer.manifest().clone());
-                status.offered_at_generation = Some(generation);
-                status.update_state = None;
-            });
             tracing::info!(
                 device_id,
                 connection_generation = generation,
@@ -557,20 +468,15 @@ impl BodyGateway {
         &self,
         device_id: &str,
         generation: u64,
-        report: UpdateStateReport,
+        report: &UpdateStateReport,
     ) {
-        let phase = report.phase.clone();
-        let progress_percent = report.progress_percent;
-        let reason = report.reason.clone();
-        if self.with_current_update_status(device_id, generation, |status| {
-            status.update_state = Some(report);
-        }) {
+        if self.is_current_body(device_id, generation) {
             tracing::info!(
                 device_id,
                 connection_generation = generation,
-                phase,
-                progress_percent,
-                reason = reason.as_deref().unwrap_or(""),
+                phase = report.phase.as_str(),
+                progress_percent = report.progress_percent,
+                reason = report.reason.as_deref().unwrap_or(""),
                 "body.update_state"
             );
         } else {
@@ -764,13 +670,6 @@ impl BodyGateway {
                 sensors,
             },
         );
-        self.lock_update_statuses().insert(
-            device_id.clone(),
-            BodyUpdateStatus {
-                generation,
-                ..BodyUpdateStatus::default()
-            },
-        );
         drop(state);
         if let Some(previous) = previous {
             previous.disconnect.cancel();
@@ -813,9 +712,6 @@ impl BodyGateway {
         let (route, connection) = {
             let mut state = self.lock_state();
             let connection = state.bodies.remove(endpoint_id);
-            if let Some(body) = connection.as_ref() {
-                self.remove_update_status(endpoint_id, body.generation);
-            }
             let route = state
                 .lease
                 .as_ref()
@@ -842,7 +738,6 @@ impl BodyGateway {
                 return;
             }
             state.bodies.remove(device_id);
-            self.remove_update_status(device_id, generation);
             state
                 .lease
                 .as_ref()

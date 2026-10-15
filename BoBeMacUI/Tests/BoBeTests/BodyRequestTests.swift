@@ -42,7 +42,7 @@ struct BodyRequestTests {
         #expect(bundle.type == .bodyRequest)
         #expect(bundle.eventId == nil)
         let payload = try bundle.payload.decode(as: BodyRequestPayload.self)
-        #expect(payload == BodyRequestPayload(requestId: "breq_1", action: BodyRequestWire.screenRead, deadlineMs: 20_000))
+        #expect(payload == BodyRequestPayload(requestId: "breq_1", action: BodyRequestWire.screenRead))
     }
 
     @Test

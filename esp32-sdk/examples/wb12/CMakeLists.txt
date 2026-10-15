@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
 
-# A consuming project can live anywhere and point to an SDK checkout.
 if(NOT ESP_BOBE_SDK_PATH AND DEFINED ENV{ESP_BOBE_SDK_PATH})
     set(ESP_BOBE_SDK_PATH "$ENV{ESP_BOBE_SDK_PATH}")
 endif()

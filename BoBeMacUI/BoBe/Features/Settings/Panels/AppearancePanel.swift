@@ -314,15 +314,8 @@ private struct PhysicalBodyThemeCard: View {
         .accessibilityLabel(self.cardAccessibilityLabel)
         .accessibilityHint(L10n.tr("settings.appearance.body.theme.accessibility_hint"))
         .accessibilityAddTraits(self.isSelected ? .isSelected : [])
-        .scaleEffect(
-            self.isHovered && !self.isDisabled && !BobeMotion.isReduced
-                ? 1.02
-                : 1.0
-        )
-        .animation(
-            BobeMotion.isReduced ? nil : .easeOut(duration: 0.15),
-            value: self.isHovered
-        )
+        .scaleEffect(BobeMotion.hoverScale(self.isHovered && !self.isDisabled))
+        .animation(BobeMotion.hover, value: self.isHovered)
         .onHover { self.isHovered = $0 }
     }
 

@@ -210,14 +210,13 @@ struct ProviderAuthenticationTests {
     }
 
     @Test
-    func modelsRetainProfileAndOptionalMetadata() throws {
+    func modelsRetainOptionalMetadata() throws {
         let data = Data("""
         {"profile":"relay","models":[{"id":"model","name":"Model","vision":true,
         "context_window":128000,"default_reasoning_effort":"medium",
         "supported_reasoning_efforts":["low","medium"]}]}
         """.utf8)
         let result = try JSONDecoder().decode(ProviderModelsResponse.self, from: data)
-        #expect(result.profile == "relay")
         let model = try #require(result.models.first)
         #expect(model.contextWindow == 128_000)
         #expect(model.supportedReasoningEfforts == ["low", "medium"])

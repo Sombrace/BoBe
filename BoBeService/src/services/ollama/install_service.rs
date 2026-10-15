@@ -198,11 +198,10 @@ impl OllamaInstallService {
             self.binary_manager
                 .validate_ollama_binary(binary_path)
                 .await?;
+            self.ollama_manager
+                .ensure_daemon_running(binary_path)
+                .await?;
         }
-
-        self.ollama_manager
-            .ensure_daemon_running(binary_path.as_deref(), true)
-            .await?;
 
         if *cancel_rx.borrow() {
             return Err(AppError::Canceled("Install canceled".into()));

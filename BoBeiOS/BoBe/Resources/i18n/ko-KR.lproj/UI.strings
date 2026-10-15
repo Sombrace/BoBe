@@ -3,7 +3,6 @@
 "phone.common.dismiss" = "닫기";
 "phone.common.done" = "완료";
 "phone.common.maybe_later" = "다음에 할게요";
-"phone.common.not_now" = "나중에";
 "phone.common.open_settings" = "설정 열기";
 "phone.onboarding.progress_format" = "%d / %d단계";
 "phone.welcome.title" = "안녕하세요, BoBe예요";
@@ -30,9 +29,6 @@
 "phone.where.title" = "코드는 어디 있나요?";
 "phone.where.mac" = "Mac: 설정 › 기기 › iPhone 연결";
 "phone.where.linux" = "Linux:";
-"phone.reach.title" = "알림을 보내도 될까요?";
-"phone.reach.body" = "중요할 때만 보낼게요.";
-"phone.reach.allow" = "알림 허용";
 "phone.hear.title" = "목소리로 대화할까요?";
 "phone.hear.body" = "버튼을 누른 채로 말하세요.";
 "phone.hear.allow" = "마이크 허용";
@@ -85,7 +81,6 @@
 "phone.talk.permission" = "설정에서 마이크와 음성 인식을 켜세요.";
 "phone.settings.title" = "설정";
 "phone.settings.address" = "주소";
-"phone.settings.notifications" = "알림";
 "phone.settings.voice" = "음성";
 "phone.settings.unpair" = "이 iPhone 연결 해제";
 "phone.settings.unpair.title" = "이 iPhone의 연결을 해제할까요?";

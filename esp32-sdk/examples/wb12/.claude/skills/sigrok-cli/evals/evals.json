@@ -107,7 +107,7 @@
       "expectations": [
         "Requires observed VID/PID, revision, USB speed and location",
         "Requires primary-source libsigrok profile evidence",
-        "Uses the electrical reference without importing TN077-specific assumptions",
+        "Uses the skill's electrical guidance without importing TN077-specific assumptions",
         "Does not reuse TN077 voltage or identity assumptions"
       ]
     },

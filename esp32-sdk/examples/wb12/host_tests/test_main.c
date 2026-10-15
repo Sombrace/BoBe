@@ -74,7 +74,7 @@ static void test_media_framing(void)
         BOBE_PROTOCOL_UNSUPPORTED
     );
     memcpy(encoded, golden, sizeof(encoded));
-    encoded[1] = 0x7F;
+    encoded[1] = 0x03;
     CHECK(
         bobe_media_header_decode(encoded, sizeof(encoded), &decoded) ==
         BOBE_PROTOCOL_UNSUPPORTED
@@ -123,24 +123,6 @@ static void test_media_payloads(void)
             BOBE_SPEAKER_FRAME_SAMPLES * sizeof(int16_t)
         ) == BOBE_PROTOCOL_OK
     );
-    header.kind = BOBE_MEDIA_OPUS;
-    CHECK(bobe_media_validate_payload(&header, 1) == BOBE_PROTOCOL_OK);
-    CHECK(bobe_media_validate_payload(&header, 512) == BOBE_PROTOCOL_OK);
-    CHECK(
-        bobe_media_validate_payload(&header, 0) ==
-        BOBE_PROTOCOL_RANGE_ERROR
-    );
-    CHECK(
-        bobe_media_validate_payload(&header, 513) ==
-        BOBE_PROTOCOL_RANGE_ERROR
-    );
-    header.kind = BOBE_MEDIA_DIAGNOSTIC;
-    CHECK(bobe_media_validate_payload(&header, 0) == BOBE_PROTOCOL_OK);
-    CHECK(bobe_media_validate_payload(&header, 1024) == BOBE_PROTOCOL_OK);
-    CHECK(
-        bobe_media_validate_payload(&header, 1025) ==
-        BOBE_PROTOCOL_TOO_LARGE
-    );
     header.kind = (bobe_media_kind_t)99;
     CHECK(
         bobe_media_validate_payload(&header, 1) ==
@@ -172,11 +154,12 @@ static void test_control_parser(void)
     CHECK(parse(welcome_whitespace, &message) == BOBE_PROTOCOL_OK);
 
     const char duplicate[] =
-        "{\"type\":\"ping\",\"type\":\"volume.set\","
-        "\"protocol_major\":1,\"nonce\":1,\"percent\":50}";
+        "{\"type\":\"error\",\"type\":\"sensor.ack\","
+        "\"protocol_major\":1,\"code\":\"x\",\"message\":\"y\"}";
     CHECK(parse(duplicate, &message) == BOBE_PROTOCOL_MALFORMED);
     const char trailing[] =
-        "{\"type\":\"ping\",\"protocol_major\":1,\"nonce\":1}{}";
+        "{\"type\":\"error\",\"protocol_major\":1,"
+        "\"code\":\"x\",\"message\":\"y\"}{}";
     CHECK(parse(trailing, &message) == BOBE_PROTOCOL_MALFORMED);
     const char nul_escape[] =
         "{\"type\":\"welcome\",\"protocol_major\":1,\"protocol_minor\":1,"
@@ -184,7 +167,8 @@ static void test_control_parser(void)
         "\"controller_epoch\":1}";
     CHECK(parse(nul_escape, &message) == BOBE_PROTOCOL_MALFORMED);
     const char raw_nul[] =
-        "{\"type\":\"ping\",\"protocol_major\":1,\"nonce\":1}\0junk";
+        "{\"type\":\"error\",\"protocol_major\":1,"
+        "\"code\":\"x\",\"message\":\"y\"}\0junk";
     CHECK(
         bobe_protocol_parse_control(
             raw_nul,
@@ -202,7 +186,8 @@ static void test_control_parser(void)
     );
 
     const char wrong_major[] =
-        "{\"type\":\"ping\",\"protocol_major\":2,\"nonce\":1}";
+        "{\"type\":\"error\",\"protocol_major\":2,"
+        "\"code\":\"x\",\"message\":\"y\"}";
     CHECK(
         parse(wrong_major, &message) ==
         BOBE_PROTOCOL_VERSION_MISMATCH
@@ -212,17 +197,18 @@ static void test_control_parser(void)
     CHECK(parse(unknown, &message) == BOBE_PROTOCOL_UNSUPPORTED);
     CHECK(message.kind == BOBE_CONTROL_UNKNOWN);
     const char fractional[] =
-        "{\"type\":\"ping\",\"protocol_major\":1,\"nonce\":1.5}";
+        "{\"type\":\"theme.set\",\"protocol_major\":1,"
+        "\"theme_id\":\"solar-crown\",\"state_version\":1.5}";
     CHECK(parse(fractional, &message) == BOBE_PROTOCOL_MALFORMED);
     const char imprecise[] =
-        "{\"type\":\"ping\",\"protocol_major\":1,"
-        "\"nonce\":9007199254740992}";
+        "{\"type\":\"theme.set\",\"protocol_major\":1,"
+        "\"theme_id\":\"solar-crown\",\"state_version\":9007199254740992}";
     CHECK(parse(imprecise, &message) == BOBE_PROTOCOL_MALFORMED);
     const char maximum_exact[] =
-        "{\"type\":\"ping\",\"protocol_major\":1,"
-        "\"nonce\":9007199254740991}";
+        "{\"type\":\"theme.set\",\"protocol_major\":1,"
+        "\"theme_id\":\"solar-crown\",\"state_version\":9007199254740991}";
     CHECK(parse(maximum_exact, &message) == BOBE_PROTOCOL_OK);
-    CHECK(message.data.ping.nonce == UINT64_C(9007199254740991));
+    CHECK(message.data.theme.state_version == UINT64_C(9007199254740991));
 
     const char short_heartbeat[] =
         "{\"type\":\"welcome\",\"protocol_major\":1,\"protocol_minor\":1,"
@@ -352,21 +338,6 @@ static void test_control_parser(void)
         "\"turn_id\":\"turn\"}";
     CHECK(parse(turn, &message) == BOBE_PROTOCOL_OK);
     CHECK(message.data.turn.state == BOBE_TURN_THINKING);
-    const char revoke[] =
-        "{\"type\":\"claim.revoke\",\"protocol_major\":1}";
-    CHECK(parse(revoke, &message) == BOBE_PROTOCOL_OK);
-    CHECK(message.kind == BOBE_CONTROL_CLAIM_REVOKE);
-    const char revoke_extra[] =
-        "{\"type\":\"claim.revoke\",\"protocol_major\":1,\"force\":true}";
-    CHECK(parse(revoke_extra, &message) == BOBE_PROTOCOL_MALFORMED);
-
-    const char volume[] =
-        "{\"type\":\"volume.set\",\"protocol_major\":1,\"percent\":100}";
-    CHECK(parse(volume, &message) == BOBE_PROTOCOL_OK);
-    CHECK(message.data.volume.percent == 100);
-    const char volume_high[] =
-        "{\"type\":\"volume.set\",\"protocol_major\":1,\"percent\":101}";
-    CHECK(parse(volume_high, &message) == BOBE_PROTOCOL_RANGE_ERROR);
 }
 
 static void test_control_builders(void)
@@ -608,20 +579,6 @@ static void test_control_builders(void)
     );
     CHECK(strstr(json, "\"type\":\"audio.playback.failed\"") != NULL);
     CHECK(strstr(json, "\"reason\":\"physical_playback_timeout\"") != NULL);
-    CHECK(
-        bobe_protocol_build_pong(
-            json,
-            sizeof(json),
-            UINT64_C(9007199254740991)
-        ) == BOBE_PROTOCOL_OK
-    );
-    CHECK(
-        bobe_protocol_build_pong(
-            json,
-            sizeof(json),
-            UINT64_C(9007199254740992)
-        ) == BOBE_PROTOCOL_INVALID_ARGUMENT
-    );
 }
 
 static void test_state_machine(void)

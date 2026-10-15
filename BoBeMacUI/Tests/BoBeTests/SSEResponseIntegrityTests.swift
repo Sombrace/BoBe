@@ -7,9 +7,7 @@ struct SSEResponseIntegrityTests {
     @Test
     @MainActor
     func terminalDeltaReplacesIncompleteStreamWithAuthoritativeResponse() async throws {
-        let store = BobeStore.shared
-        store.clearMessages()
-        defer { store.clearMessages() }
+        let store = BobeStore()
 
         await store.processBundle(try Self.bundle(delta: "Hel", done: false))
         await store.processBundle(try Self.bundle(delta: "Hello, complete response", done: true))
@@ -24,9 +22,7 @@ struct SSEResponseIntegrityTests {
     @Test
     @MainActor
     func ambientReplyEventWaitsForVisibleLiveContent() async throws {
-        let store = BobeStore.shared
-        store.clearMessages()
-        defer { store.clearMessages() }
+        let store = BobeStore()
 
         await store.processBundle(try Self.bundle(id: "assistant-2", delta: " \n", done: false))
         #expect(store.latestLiveBobeMessageId == nil)
@@ -38,9 +34,7 @@ struct SSEResponseIntegrityTests {
     @Test
     @MainActor
     func recoverableChatErrorPreservesInterruptedResponse() async throws {
-        let store = BobeStore.shared
-        store.clearMessages()
-        defer { store.clearMessages() }
+        let store = BobeStore()
 
         await store.processBundle(try Self.bundle(id: "assistant-3", delta: "Partial response", done: false))
         await store.processBundle(try Self.errorBundle(id: "assistant-3"))
@@ -93,9 +87,7 @@ struct SSEResponseIntegrityTests {
     @Test
     @MainActor
     func canonicalReplacementFreezesPendingDeltaBeforeAwaitingSnapshot() async throws {
-        let store = BobeStore.shared
-        store.clearMessages()
-        defer { store.clearMessages() }
+        let store = BobeStore()
 
         await store.processBundle(try Self.bundle(id: "assistant-pending", delta: "Visible partial", done: false))
         #expect(store.textDeltaFlushTask != nil)
@@ -116,9 +108,7 @@ struct SSEResponseIntegrityTests {
     @Test
     @MainActor
     func canonicalReplacementDropsEmptyStreamingPlaceholder() async throws {
-        let store = BobeStore.shared
-        store.clearMessages()
-        defer { store.clearMessages() }
+        let store = BobeStore()
 
         await store.processBundle(try Self.bundle(id: "assistant-empty", delta: " \n", done: false))
 
@@ -165,8 +155,34 @@ struct SSEResponseIntegrityTests {
 
         #expect(event.eventId == nil)
         #expect(event.runtimeIncarnationId == nil)
-        #expect(event.audience == nil)
         #expect(event.type == .textDelta)
+    }
+
+    @Test
+    func eventStreamDecoderReadsOnlyDataLines() throws {
+        for line in ["", ": keep-alive", "event: message", "id: 7"] {
+            #expect(try DaemonClient.decodeEvent(ProviderLoginPhase.self, from: line) == nil)
+        }
+
+        let bundle = try #require(try DaemonClient.decodeEvent(
+            StreamBundle.self,
+            from: #"data: {"event_id":7,"type":"indicator","message_id":"","payload":{"indicator":"THINKING"}}"#
+        ))
+        #expect(bundle.eventId == 7)
+        #expect(bundle.type == .indicator)
+        #expect(try bundle.payload.decode(as: IndicatorPayload.self).indicator == .thinking)
+
+        let snapshot = try #require(try DaemonClient.decodeEvent(
+            LocalRuntimeSnapshot.self,
+            from: #"data: {"status":"complete","error":null,"runtime":{"percent":100},"chat_model":{"status":"done","percent":100}}"#
+        ))
+        #expect(snapshot.status == .complete)
+        #expect(snapshot.chatModel.percent == 100)
+
+        #expect(try DaemonClient.decodeEvent(ProviderLoginPhase.self, from: #"data: {"phase":"completed"}"#) == .completed)
+        #expect(throws: DecodingError.self) {
+            try DaemonClient.decodeEvent(StreamBundle.self, from: "data: {\"type\":")
+        }
     }
 
     @Test
@@ -194,9 +210,6 @@ struct SSEResponseIntegrityTests {
 
         #expect(event.type == .snapshotRequired)
         #expect(event.runtimeIncarnationId == incarnation)
-        #expect(event.audience == "owner")
-        #expect(payload.from == 3)
-        #expect(payload.to == 8)
         #expect(payload.resumeAfter == 12)
         #expect(payload.snapshotRequired)
     }

@@ -7,7 +7,6 @@
 #include "bobe_policy.h"
 #include "bobe_power.h"
 #include "bobe_protocol.h"
-#include "bobe_recovery_seed.h"
 #include "bobe_storage.h"
 #include "bobe_identity.h"
 #include "bobe_device_config.h"
@@ -1130,26 +1129,6 @@ static bool execute_effect(
         ESP_LOGE(TAG, "OTA confirmation deadline expired; rolling back");
         result = esp_ota_mark_app_invalid_rollback_and_reboot();
         break;
-    case BOBE_POLICY_EFFECT_CLAIM_REVOKE:
-        result = bobe_transport_stop();
-        if (result == ESP_ERR_INVALID_STATE) {
-            result = ESP_OK;
-        }
-        if (result == ESP_OK) {
-            result = bobe_storage_invalidate_claim();
-        }
-        if (result == ESP_OK) {
-            const esp_err_t cleanup_result =
-                bobe_storage_erase_claim_secrets();
-            if (cleanup_result != ESP_OK) {
-                ESP_LOGW(
-                    TAG,
-                    "claim revoked but secret cleanup failed: %s",
-                    esp_err_to_name(cleanup_result)
-                );
-            }
-        }
-        break;
     case BOBE_POLICY_EFFECT_UPDATE_INSTALL:
         result = start_update_install(&effect->data.update);
         has_result = result != ESP_OK;
@@ -1597,12 +1576,6 @@ esp_err_t bobe_core_start(void)
     );
     core.reset_reason = (uint32_t)esp_reset_reason();
     ESP_RETURN_ON_ERROR(nvs_flash_init(), TAG, "initialize NVS; stored data preserved on failure");
-#if defined(CONFIG_BOBE_ENABLE_DEV_WIFI_BOOTSTRAP)
-    const esp_err_t seed_result = bobe_recovery_seed_private_state();
-    if (seed_result != ESP_OK && seed_result != ESP_ERR_NOT_SUPPORTED) {
-        return seed_result;
-    }
-#endif
     ESP_RETURN_ON_ERROR(
         detect_pending_ota(),
         TAG,

@@ -4,64 +4,36 @@ struct VoiceSetupStepView: View {
     let onContinue: () -> Void
 
     @Environment(\.theme) private var theme
-    @State private var pipeline = VoicePipeline.shared
+    @State private var installer = VoiceModelInstaller.shared
     @State private var phase: Phase = .checking
     @State private var errorMessage: String?
     @State private var installTask: Task<Void, Never>?
     @State private var installGeneration: UInt64 = 0
-    @State private var preparingModels = false
     @State private var cancelingInstall = false
 
     enum Phase {
         case checking, idle, installing, complete, failed
     }
 
-    private var status: VoiceInstallSnapshot? {
-        self.pipeline.installSnapshot
+    private var showsVoiceModel: Bool {
+        VoiceTtsPreference.shared.backend == .serverPocket
+            && self.installer.status(of: .pocketTts) != .unknown
     }
 
-    private var allReady: Bool {
-        self.pipeline.modelPreparation == .ready
-    }
-
-    private var selectedTtsBackend: VoiceTtsBackend {
-        VoiceTtsPreference.shared.backend
-    }
-
-    private var visibleDaemonModels: [VoiceModelProgress] {
-        guard self.selectedTtsBackend == .serverPocket else { return [] }
-        return (self.status?.models ?? []).filter { $0.kind == VoiceWire.modelKindTts }
-    }
-
-    private var sttLabel: String {
-        switch self.pipeline.sttStatus {
-        case .notLoaded: return L10n.tr("setup.voice.stt_label.waiting")
-        case .downloading:
-            let percent = self.pipeline.sttLoadProgress?.percent ?? 0
+    private var hearingLabel: String {
+        switch self.installer.selectedSttStatus {
+        case .unknown, .missing:
+            return L10n.tr("setup.voice.stt_label.waiting")
+        case let .downloading(percent, _, _):
             return String(
                 format: L10n.tr("setup.voice.stt_label.progress_format"),
-                percent
+                percent ?? 0
             )
-        case .ready: return L10n.tr("setup.voice.stt_label.ready")
-        case let .failed(msg): return String(format: L10n.tr("setup.voice.stt_label.failed_format"), msg)
+        case .installed:
+            return L10n.tr("setup.voice.stt_label.ready")
+        case let .failed(message):
+            return String(format: L10n.tr("setup.voice.stt_label.failed_format"), message)
         }
-    }
-
-    private var sttModel: VoiceModelProgress {
-        let status = switch self.pipeline.sttStatus {
-        case .ready: "already installed"
-        case .downloading: "downloading"
-        case .failed: "failed"
-        case .notLoaded: "pending"
-        }
-        return VoiceModelProgress(
-            kind: "stt",
-            label: L10n.tr("setup.voice.model.stt"),
-            status: status,
-            bytesDownloaded: 0,
-            bytesTotal: nil,
-            percent: self.pipeline.sttLoadProgress?.percent
-        )
     }
 
     var body: some View {
@@ -106,39 +78,39 @@ struct VoiceSetupStepView: View {
 
     private var installPrompt: some View {
         VStack(spacing: 10) {
-            ForEach(Array(self.visibleDaemonModels.enumerated()), id: \.element.id) { index, model in
-                VoiceModelRow(model: model)
-                    .setupStagger(index)
+            if self.showsVoiceModel {
+                VoiceModelRow(role: .voice, status: self.installer.status(of: .pocketTts))
+                    .setupStagger(0)
             }
-            VoiceModelRow(model: self.sttModel)
-                .setupStagger(self.visibleDaemonModels.count)
+            VoiceModelRow(role: .hearing, status: self.installer.selectedSttStatus)
+                .setupStagger(self.showsVoiceModel ? 1 : 0)
         }
     }
 
     private var progressList: some View {
         VStack(spacing: 12) {
-            ForEach(self.visibleDaemonModels, id: \.id) { model in
-                VoiceModelRow(model: model)
+            if self.showsVoiceModel {
+                VoiceModelRow(role: .voice, status: self.installer.status(of: .pocketTts))
             }
             HStack(spacing: 10) {
-                switch self.pipeline.sttStatus {
-                case .ready:
+                switch self.installer.selectedSttStatus {
+                case .installed:
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(self.theme.colors.secondary)
-                case .downloading, .notLoaded:
+                case .unknown, .missing, .downloading:
                     BobeSpinner(size: 14)
                 case .failed:
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(self.theme.colors.primary)
                 }
-                Text(self.sttLabel)
+                Text(self.hearingLabel)
                     .bobeTextStyle(.setupBody)
                     .foregroundStyle(self.theme.colors.textMuted)
                 Spacer()
             }
             .padding(.horizontal, 4)
         }
-        .task { await self.poll() }
+        .task { await self.awaitInstall() }
     }
 
     private var completeSummary: some View {
@@ -193,11 +165,10 @@ struct VoiceSetupStepView: View {
                 self.installGeneration &+= 1
                 self.installTask?.cancel()
                 self.installTask = nil
-                self.preparingModels = false
                 self.phase = .idle
                 self.cancelingInstall = true
                 Task {
-                    await self.cancelAll()
+                    await self.installer.cancel()
                     self.cancelingInstall = false
                 }
             }
@@ -228,41 +199,19 @@ struct VoiceSetupStepView: View {
         self.errorMessage = nil
         self.phase = .checking
         let generation = self.installGeneration
-        await self.pipeline.refreshDaemonState()
+        await self.installer.refresh()
         guard !Task.isCancelled, generation == self.installGeneration else { return }
-        if self.pipeline.sttStatus == .notLoaded { self.pipeline.bootstrapSttPresence() }
-        guard let s = self.status else {
-            self.errorMessage = L10n.tr("setup.voice.daemon_unreachable")
-            self.phase = .failed
-            return
-        }
-        if self.allReady {
-            self.phase = .complete
-        } else if s.isRunning || self.pipeline.sttStatus == .downloading {
-            self.phase = .installing
-            Task { await self.pipeline.ensureSttLoaded() }
-        } else if case let .failed(message) = self.pipeline.modelPreparation {
-            self.errorMessage = message
-            self.phase = .failed
-        } else {
-            self.phase = .idle
-        }
+        self.show(self.installer.outcome)
+        if self.phase == .installing { self.installer.resume() }
     }
 
     private func kickoff() async {
         guard self.phase != .installing else { return }
         self.installGeneration &+= 1
         let generation = self.installGeneration
-        self.preparingModels = true
-        defer { if generation == self.installGeneration { self.preparingModels = false } }
         self.phase = .installing
-        VoiceSetupPreference.setDeferred(false)
-        async let stt: Void = self.pipeline.ensureSttLoaded()
         do {
-            try await self.pipeline.prepareSelectedTts()
-            await stt
-            guard !Task.isCancelled, generation == self.installGeneration else { return }
-            await self.refreshStatus()
+            try await self.installer.installSelected()
         } catch {
             guard !Task.isCancelled, generation == self.installGeneration else { return }
             self.errorMessage = error.localizedDescription
@@ -270,53 +219,25 @@ struct VoiceSetupStepView: View {
         }
     }
 
-    private func cancelAll() async {
-        let client = DaemonClient(endpoint: self.pipeline.daemonStateSelection.endpoint)
-        async let daemon: Void = {
-            try? await client.cancelVoiceInstall()
-        }()
-        async let stt: Void = self.pipeline.cancelSttLoading()
-        _ = await (daemon, stt)
+    private func awaitInstall() async {
+        guard let outcome = await self.installer.settled(),
+              !Task.isCancelled,
+              self.phase == .installing
+        else { return }
+        self.show(outcome)
     }
 
-    private func poll() async {
-        while !Task.isCancelled, self.phase == .installing {
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled, self.phase == .installing else { return }
-            if self.preparingModels { continue }
-            if case let .failed(msg) = self.pipeline.sttStatus {
-                self.errorMessage = msg
-                await self.cancelAll()
-                guard !Task.isCancelled, self.phase == .installing else { return }
-                self.phase = .failed
-                return
-            }
-            await self.pipeline.refreshDaemonState()
-            guard !Task.isCancelled, self.phase == .installing else { return }
-            if self.preparingModels { continue }
-            guard let s = self.status else {
-                self.errorMessage = L10n.tr("setup.voice.daemon_unreachable")
-                self.phase = .failed
-                return
-            }
-            if self.allReady {
-                self.phase = .complete
-                return
-            }
-            switch s.status {
-            case .failed:
-                self.errorMessage = s.error ?? L10n.tr("setup.voice.poll_failure")
-                self.phase = .failed; return
-            case .canceled:
-                self.phase = .idle; return
-            case .idle, .complete:
-                if self.pipeline.modelPreparation == .missing {
-                    self.phase = .idle
-                    return
-                }
-            case .running:
-                continue
-            }
+    private func show(_ outcome: VoiceInstallOutcome) {
+        switch outcome {
+        case .installing:
+            self.phase = .installing
+        case .ready:
+            self.phase = .complete
+        case .stopped:
+            self.phase = .idle
+        case let .failed(message):
+            self.errorMessage = message
+            self.phase = .failed
         }
     }
 }

@@ -5,10 +5,7 @@ CREATE TABLE IF NOT EXISTS runtime_authority (
     authority_epoch INTEGER NOT NULL DEFAULT 1 CHECK (authority_epoch >= 1),
     data_root TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    last_incarnation_id BLOB,
-    last_started_at TEXT,
-    last_daemon_version TEXT
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE TABLE IF NOT EXISTS runtime_initialization (
@@ -17,20 +14,16 @@ CREATE TABLE IF NOT EXISTS runtime_initialization (
         'provider_required',
         'personalization_required',
         'ready'
-    )),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    ))
 );
 
 CREATE TABLE IF NOT EXISTS runtime_markers (
-    key TEXT PRIMARY KEY NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    key TEXT PRIMARY KEY NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS bobe_schema (
     singleton INTEGER PRIMARY KEY NOT NULL CHECK (singleton = 1),
-    version INTEGER NOT NULL CHECK (version >= 1),
-    applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    daemon_version TEXT NOT NULL
+    version INTEGER NOT NULL CHECK (version >= 1)
 );
 
 
@@ -39,11 +32,9 @@ CREATE TABLE IF NOT EXISTS conversations (
     channel_id BLOB NOT NULL DEFAULT X'00000000000000000000000000000000',
     state TEXT NOT NULL DEFAULT 'pending',
     closed_at TEXT,
-    summary TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
-CREATE INDEX IF NOT EXISTS ix_conversations_state ON conversations(state);
 CREATE INDEX IF NOT EXISTS ix_conversations_state_closed_at ON conversations(state, closed_at);
 CREATE INDEX IF NOT EXISTS ix_conversations_state_updated_at ON conversations(state, updated_at);
 
@@ -56,7 +47,6 @@ CREATE TABLE IF NOT EXISTS conversation_turns (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
-CREATE INDEX IF NOT EXISTS ix_conversation_turns_conversation_id ON conversation_turns(conversation_id);
 CREATE INDEX IF NOT EXISTS ix_conversation_turns_role_created_at ON conversation_turns(role, created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_conversation_turns_conversation_role_created_at
     ON conversation_turns(conversation_id, role, created_at DESC);
@@ -70,7 +60,6 @@ CREATE TABLE IF NOT EXISTS message_requests (
     content TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'queued'
         CHECK (status IN ('queued', 'running', 'completed', 'failed')),
-    failure_reason TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -134,8 +123,7 @@ CREATE TABLE IF NOT EXISTS agent_schedules (
 CREATE INDEX IF NOT EXISTS ix_agent_schedules_due ON agent_schedules(enabled,next_run_at);
 
 CREATE TABLE IF NOT EXISTS agent_work_tombstones (
-    source_key TEXT PRIMARY KEY NOT NULL,
-    retired_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    source_key TEXT PRIMARY KEY NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS runtime_cadences (
@@ -183,8 +171,7 @@ CREATE TABLE IF NOT EXISTS conversation_presentations (
 );
 
 CREATE TABLE IF NOT EXISTS message_request_tombstones (
-    request_id BLOB PRIMARY KEY NOT NULL,
-    retired_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    request_id BLOB PRIMARY KEY NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS souls (
@@ -196,7 +183,6 @@ CREATE TABLE IF NOT EXISTS souls (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
-CREATE INDEX IF NOT EXISTS ix_souls_name ON souls(name);
 
 CREATE TABLE IF NOT EXISTS user_profiles (
     id BLOB PRIMARY KEY NOT NULL,
@@ -207,7 +193,6 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
-CREATE INDEX IF NOT EXISTS ix_user_profiles_name ON user_profiles(name);
 
 CREATE TABLE IF NOT EXISTS endpoints (
     id TEXT PRIMARY KEY NOT NULL,
@@ -220,35 +205,26 @@ CREATE TABLE IF NOT EXISTS endpoints (
     capabilities_json TEXT NOT NULL DEFAULT '{}',
     observed_capabilities_json TEXT NOT NULL DEFAULT '{}',
     revoked_at TEXT,
-    revocation_reason TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS ix_endpoints_kind_revoked_at ON endpoints(kind, revoked_at);
-CREATE UNIQUE INDEX IF NOT EXISTS ix_endpoints_certificate_active
-    ON endpoints(certificate_sha256) WHERE revoked_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS endpoint_credentials (
     id TEXT PRIMARY KEY NOT NULL,
     endpoint_id TEXT NOT NULL REFERENCES endpoints(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL CHECK (kind IN ('bearer', 'body_certificate', 'public_key')),
+    kind TEXT NOT NULL CHECK (kind IN ('bearer', 'body_certificate')),
     lookup_id TEXT UNIQUE,
     verifier BLOB,
     certificate_sha256 BLOB UNIQUE,
-    public_key BLOB,
     issued_authority_epoch INTEGER CHECK (issued_authority_epoch >= 1),
     generation INTEGER NOT NULL DEFAULT 1 CHECK (generation >= 1),
-    not_before TEXT,
-    expires_at TEXT,
     last_used_at TEXT,
     revoked_at TEXT,
-    revocation_reason TEXT,
-    replaced_by TEXT REFERENCES endpoint_credentials(id),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     CHECK (
         (kind = 'bearer' AND lookup_id IS NOT NULL AND verifier IS NOT NULL)
         OR (kind = 'body_certificate' AND certificate_sha256 IS NOT NULL)
-        OR (kind = 'public_key' AND public_key IS NOT NULL)
     )
 );
 CREATE INDEX IF NOT EXISTS ix_endpoint_credentials_endpoint_active
@@ -260,26 +236,11 @@ CREATE TABLE IF NOT EXISTS endpoint_scope_grants (
     endpoint_id TEXT NOT NULL REFERENCES endpoints(id) ON DELETE CASCADE,
     scope TEXT NOT NULL,
     granted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    granted_by TEXT NOT NULL,
     revoked_at TEXT,
     PRIMARY KEY (endpoint_id, scope, granted_at)
 );
 CREATE INDEX IF NOT EXISTS ix_endpoint_scope_grants_active
     ON endpoint_scope_grants(endpoint_id, scope) WHERE revoked_at IS NULL;
-
-CREATE TABLE IF NOT EXISTS security_audit_events (
-    id BLOB PRIMARY KEY NOT NULL,
-    event_kind TEXT NOT NULL,
-    endpoint_id TEXT REFERENCES endpoints(id) ON DELETE SET NULL,
-    credential_id TEXT REFERENCES endpoint_credentials(id) ON DELETE SET NULL,
-    source_summary TEXT,
-    details_json TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-CREATE INDEX IF NOT EXISTS ix_security_audit_events_created_at
-    ON security_audit_events(created_at DESC);
-CREATE INDEX IF NOT EXISTS ix_security_audit_events_endpoint_created_at
-    ON security_audit_events(endpoint_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS cooldown_state (
     id BLOB PRIMARY KEY NOT NULL,

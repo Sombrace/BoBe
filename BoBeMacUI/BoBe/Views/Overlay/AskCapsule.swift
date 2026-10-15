@@ -129,7 +129,7 @@ struct AskCapsule: View {
             Button(action: self.submit) {
                 Image(systemName: self.isSteering ? "arrow.turn.down.right" : "arrow.up")
                     .font(.system(size: 13, weight: .bold))
-                    .contentTransition(.symbolEffect(.replace))
+                    .contentTransition(BobeMotion.symbolReplace)
                     .foregroundStyle(self.hasText ? self.theme.onAccent : self.theme.colors.textMuted.opacity(0.6))
                     .frame(width: 34, height: 34)
                     .background(

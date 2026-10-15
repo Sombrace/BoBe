@@ -7,27 +7,13 @@ use super::goals_service::GoalsService;
 
 const SAMPLE_GOAL_SEEDED_MARKER: &str = "sample_goal_seeded_v1";
 
-#[derive(Debug)]
-pub(crate) struct SeedResult {
-    pub(crate) created: u32,
-    pub(crate) skipped: u32,
-    pub(crate) errors: u32,
-}
-
 pub(crate) async fn seed_sample_goal(
     pool: &sqlx::SqlitePool,
     goals_service: &GoalsService,
-) -> Result<SeedResult, AppError> {
-    let mut result = SeedResult {
-        created: 0,
-        skipped: 0,
-        errors: 0,
-    };
-
+) -> Result<(), AppError> {
     if marker_exists(pool).await? {
         debug!("goals_seeding.skipped_completed");
-        result.skipped += 1;
-        return Ok(result);
+        return Ok(());
     }
 
     let claimed = sqlx::query("INSERT OR IGNORE INTO runtime_markers (key) VALUES (?1)")
@@ -37,8 +23,7 @@ pub(crate) async fn seed_sample_goal(
         .rows_affected()
         == 1;
     if !claimed {
-        result.skipped += 1;
-        return Ok(result);
+        return Ok(());
     }
 
     let mut doc = GoalDoc::new(
@@ -55,21 +40,16 @@ They're plain Markdown files under BoBe's configurable data root, so you can edi
             .to_string();
 
     match goals_service.create(doc).await {
-        Ok(saved) => {
-            info!(goal_id = %saved.id, "goals_seeding.created");
-            result.created += 1;
-        }
+        Ok(saved) => info!(goal_id = %saved.id, "goals_seeding.created"),
         Err(e) => {
             sqlx::query("DELETE FROM runtime_markers WHERE key = ?1")
                 .bind(SAMPLE_GOAL_SEEDED_MARKER)
                 .execute(pool)
                 .await?;
             warn!(error = %e, "goals_seeding.create_failed");
-            result.errors += 1;
         }
     }
-
-    Ok(result)
+    Ok(())
 }
 
 async fn marker_exists(pool: &sqlx::SqlitePool) -> Result<bool, AppError> {
@@ -89,13 +69,13 @@ mod tests {
 
     async fn fixture() -> (std::path::PathBuf, sqlx::SqlitePool, GoalsService) {
         let root = std::env::temp_dir().join(format!("bobe-goal-seed-{}", uuid::Uuid::new_v4()));
-        let database = root.join("data.sqlite3");
-        let (pool, _) = crate::bootstrap::database::connect_and_apply_schema(&format!(
-            "sqlite:{}",
-            database.display()
-        ))
-        .await
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        let paths = crate::util::paths::DataPaths::resolve(
+            &root,
+            &format!("sqlite:{}", root.join("data.sqlite3").display()),
+        )
         .unwrap();
+        let (pool, _) = crate::bootstrap::database::open(&paths).await.unwrap();
         let service = GoalsService::new(crate::services::goals::file_store::GoalFileStore::new(
             root.join("goals"),
         ));
@@ -105,14 +85,14 @@ mod tests {
     #[tokio::test]
     async fn sample_goal_is_seeded_only_once_even_after_goals_are_deleted() {
         let (root, pool, service) = fixture().await;
-        assert_eq!(seed_sample_goal(&pool, &service).await.unwrap().created, 1);
+        seed_sample_goal(&pool, &service).await.unwrap();
+        assert!(marker_exists(&pool).await.unwrap());
         assert!(service.list_active().await.unwrap().is_empty());
-        assert_eq!(
-            service.list_all().await.unwrap()[0].status,
-            crate::models::types::GoalStatus::Paused
-        );
+        let seeded = service.list_all().await.unwrap();
+        assert_eq!(seeded.len(), 1);
+        assert_eq!(seeded[0].status, crate::models::types::GoalStatus::Paused);
         assert_eq!(service.delete_all().await.unwrap(), 1);
-        assert_eq!(seed_sample_goal(&pool, &service).await.unwrap().skipped, 1);
+        seed_sample_goal(&pool, &service).await.unwrap();
         assert!(service.list_all().await.unwrap().is_empty());
         pool.close().await;
         tokio::fs::remove_dir_all(root).await.unwrap();

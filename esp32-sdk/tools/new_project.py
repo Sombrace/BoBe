@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Create a small consumer project without copying SDK sources or private data."""
-
 from __future__ import annotations
 
 import argparse
@@ -105,7 +103,7 @@ def create_project(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Create a small consumer project without copying SDK sources or private data.")
     parser.add_argument("name")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--template", choices=tuple(TEMPLATES), default="text-terminal")

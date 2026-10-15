@@ -3,7 +3,6 @@
 "phone.common.dismiss" = "Fermer";
 "phone.common.done" = "Terminé";
 "phone.common.maybe_later" = "Plus tard";
-"phone.common.not_now" = "Pas maintenant";
 "phone.common.open_settings" = "Ouvrir Réglages";
 "phone.onboarding.progress_format" = "Étape %d sur %d";
 "phone.welcome.title" = "Bonjour, je suis BoBe";
@@ -30,9 +29,6 @@
 "phone.where.title" = "Où est le code ?";
 "phone.where.mac" = "Mac : Réglages › Appareils › Associer un iPhone";
 "phone.where.linux" = "Linux :";
-"phone.reach.title" = "Puis-je vous joindre ?";
-"phone.reach.body" = "Seulement quand c’est important.";
-"phone.reach.allow" = "Autoriser les notifications";
 "phone.hear.title" = "Parler à voix haute ?";
 "phone.hear.body" = "Maintenez le bouton et parlez.";
 "phone.hear.allow" = "Autoriser le micro";
@@ -85,7 +81,6 @@
 "phone.talk.permission" = "Activez Micro et Reconnaissance vocale dans Réglages.";
 "phone.settings.title" = "Réglages";
 "phone.settings.address" = "Adresse";
-"phone.settings.notifications" = "Notifications";
 "phone.settings.voice" = "Voix";
 "phone.settings.unpair" = "Dissocier cet iPhone";
 "phone.settings.unpair.title" = "Dissocier cet iPhone ?";

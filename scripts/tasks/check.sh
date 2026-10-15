@@ -45,7 +45,6 @@ python3 scripts/check-standalone-update-manifest.py
 (
     cd BoBeMacUI
     ../.tools/bin/swiftlint lint --quiet
-    swift build -c debug --target PairingSmoke
 )
 ./scripts/check-standalone-install.sh
 BOBE_SKIP_TOOL_CHECK=1 "$TASK_DIR/xcode.sh"
@@ -63,6 +62,17 @@ xcodebuild \
     --require-mach-o BoBeMacUI/.build/xcode-derived/Build/Products/Debug/BoBe.app/Contents/MacOS/BoBe
 ./scripts/check-swift-runtime-artifacts.sh \
     BoBeMacUI/.build/xcode-derived/Build/Products/Debug/BoBe.app
+
+"$TASK_DIR/build-pairing-ios.sh"
+(cd BoBeiOS && ../.tools/bin/xcodegen generate --quiet)
+xcodebuild \
+    -project BoBeiOS/BoBe.xcodeproj \
+    -scheme BoBe \
+    -configuration Debug \
+    -destination 'generic/platform=iOS Simulator' \
+    -derivedDataPath BoBeiOS/.build/xcode-derived \
+    CODE_SIGNING_ALLOWED=NO \
+    build
 
 if [[ -d BoBeService/target ]]; then
     target_kib="$(du -sk BoBeService/target | awk '{print $1}')"

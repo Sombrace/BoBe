@@ -13,7 +13,6 @@ use crate::util::sse::factories::{
     end_of_turn_event, error_event, text_delta_event, tool_call_complete_event,
     tool_call_start_event,
 };
-use crate::voice::telemetry::HIST_LLM_TTFT_MS;
 
 const STALL_THRESHOLD: Duration = Duration::from_millis(800);
 
@@ -247,9 +246,6 @@ impl StreamAccumulator {
         let first_token_ms = self
             .first_token_time
             .map(|t| (t - self.start_time).as_secs_f64() * MILLIS_PER_SECOND);
-        if let Some(ttft) = first_token_ms {
-            metrics::histogram!(HIST_LLM_TTFT_MS).record(ttft);
-        }
 
         StreamResult {
             message_id: self.msg_id,

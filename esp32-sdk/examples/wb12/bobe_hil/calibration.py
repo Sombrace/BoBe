@@ -37,8 +37,6 @@ def expiry(value: Any) -> str | None:
 
 
 def load_camera_calibration(root: Path | None = None) -> dict[str, Any]:
-    """Load optical calibration data: identity, ROI and comparison thresholds."""
-
     value = load_calibration(
         calibration_root(root) / "camera.json",
         "camera calibration",
@@ -74,8 +72,6 @@ def load_camera_calibration(root: Path | None = None) -> dict[str, Any]:
 
 
 def load_audio_calibration(root: Path | None = None) -> dict[str, Any]:
-    """Load acoustic calibration data: device names, rate and thresholds."""
-
     value = load_calibration(
         calibration_root(root) / "audio.json",
         "audio calibration",

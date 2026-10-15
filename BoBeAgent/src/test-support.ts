@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { TestContext } from "node:test";
@@ -32,11 +32,9 @@ export async function fixture(t: TestContext): Promise<{ root: string; workspace
   await mkdir(relative, { recursive: true, mode: 0o700 });
   const root = resolve(relative);
   const workspace = join(root, "workspace");
-  const skills = join(root, "skills");
+  const skills = join(root, "skills/learned");
   await mkdir(workspace, { mode: 0o700 });
-  await mkdir(skills, { mode: 0o700 });
-  await mkdir(join(skills, "chat"), { mode: 0o700 });
-  await copyFile(new URL("../assets/chat.md", import.meta.url), join(skills, "chat/SKILL.md"));
+  await mkdir(skills, { recursive: true, mode: 0o700 });
   const cleanup: (() => Promise<void>)[] = [];
   cleanups.set(root, cleanup);
   t.after(async () => {
@@ -59,19 +57,19 @@ export function configuration(paths: { root: string; workspace: string; skills: 
     skill_directories: [paths.skills],
     profiles: { test: { kind: "open_ai", api_key: "fixture-api-key", auth_method: "api_key" } },
     routes: { chat: { ...route }, goals: { ...route }, consolidate: { ...route } },
-    tools: [], capability_instructions: "Owner-controlled test context.", mcp: { servers: {} },
+    tools: [], capabilities: { memory: true, goals: true }, mcp: { servers: {} },
     enabled_tools: [...toolNames],
   };
 }
 
-export const fixtureModel: Model<Api> = {
+const fixtureModel: Model<Api> = {
   id: "fixture-model", name: "Controlled SDK test model", api: "openai-completions",
   provider: "bobe-profile:test", baseUrl: "http://127.0.0.1:1/v1",
   input: ["text", "image"], reasoning: true, contextWindow: 100_000, maxTokens: 4_096,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 
-export interface ScriptResponse {
+interface ScriptResponse {
   text?: string;
   thinking?: string;
   tools?: { id: string; name: string; arguments: { [key: string]: Json } }[];
@@ -81,7 +79,7 @@ export interface ScriptResponse {
   outputTokens?: number;
 }
 
-export type ModelScript = (
+type ModelScript = (
   context: TranscriptContext, options: SimpleStreamOptions | undefined, model: Model<Api>,
 ) => ScriptResponse | Promise<ScriptResponse>;
 
@@ -174,10 +172,11 @@ export async function host(
   t: TestContext, config: Initialize, script: ModelScript,
   call: HostConnection["call"] = async () => ({ success: true, value: {} }),
   modelLimits: { contextWindow?: number; maxTokens?: number } = {},
+  processCapacity?: number,
 ): Promise<{ worker: WorkerHost; notifications: Notification[]; profiles: ModelProfiles; processes:ProcessFixture }> {
   const notifications: Notification[] = [];
   let profiles: ModelProfiles | undefined;
-  const processes = new ProcessFixture(params => worker.notification("process_event", params),config.execution?.process_concurrency);
+  const processes = new ProcessFixture(params => worker.notification("process_event", params), processCapacity);
   const worker = new WorkerHost({
     call: (method, params, signal) => method === "process" ? processes.invoke(params) : call(method, params, signal),
     notify: value => notifications.push(value),

@@ -9,12 +9,10 @@ enum BodyRequestWire {
 struct BodyRequestPayload: Codable, Sendable, Equatable {
     let requestId: String
     let action: String
-    let deadlineMs: UInt64
 
     enum CodingKeys: String, CodingKey {
         case requestId = "request_id"
         case action
-        case deadlineMs = "deadline_ms"
     }
 }
 

@@ -7,7 +7,8 @@ pub(crate) struct CheckinScheduler {
     interval_minutes: Option<u64>,
     jitter_minutes: i32,
     enabled: bool,
-    last_checkin: Option<DateTime<Utc>>,
+    fired_slot: Option<DateTime<Utc>>,
+    next_slot: Option<DateTime<Utc>>,
     next_checkin: Option<DateTime<Utc>>,
     next_interval_checkin: Option<DateTime<Utc>>,
 }
@@ -32,7 +33,8 @@ impl CheckinScheduler {
             interval_minutes,
             jitter_minutes: jitter_minutes as i32,
             enabled,
-            last_checkin: None,
+            fired_slot: None,
+            next_slot: None,
             next_checkin: None,
             next_interval_checkin: None,
         }
@@ -67,12 +69,18 @@ impl CheckinScheduler {
         self.interval_minutes = interval_minutes;
         self.jitter_minutes = jitter_minutes as i32;
         self.enabled = enabled;
+        self.next_slot = None;
         self.next_checkin = None;
         self.next_interval_checkin = None;
+        self.refresh_schedules(Utc::now());
         info!(enabled, "checkin_scheduler.reconfigured");
     }
 
     pub(crate) fn should_checkin(&mut self) -> bool {
+        self.should_checkin_at(Utc::now())
+    }
+
+    fn should_checkin_at(&mut self, now: DateTime<Utc>) -> bool {
         if !self.enabled {
             return false;
         }
@@ -80,13 +88,11 @@ impl CheckinScheduler {
             return false;
         }
 
-        let now = Utc::now();
         self.refresh_schedules(now);
 
         if !self.times.is_empty()
             && let Some(next) = self.next_checkin
             && now >= next
-            && self.last_checkin.is_none_or(|last| last < next)
         {
             info!(
                 trigger_type = "scheduled_time",
@@ -112,10 +118,12 @@ impl CheckinScheduler {
     }
 
     pub(crate) fn mark_checkin_done(&mut self) {
-        let now = Utc::now();
-        self.last_checkin = Some(now);
+        self.mark_checkin_done_at(Utc::now());
+    }
 
-        if !self.times.is_empty() {
+    fn mark_checkin_done_at(&mut self, now: DateTime<Utc>) {
+        if !self.times.is_empty() && self.next_checkin.is_some_and(|next| now >= next) {
+            self.fired_slot = self.next_slot;
             self.schedule_next_checkin(now);
         }
         if self.interval_minutes.is_some() {
@@ -157,10 +165,12 @@ impl CheckinScheduler {
 
     fn schedule_next_checkin(&mut self, after: DateTime<Utc>) {
         if self.times.is_empty() {
+            self.next_slot = None;
             self.next_checkin = None;
             return;
         }
 
+        let after = self.fired_slot.map_or(after, |slot| slot.max(after));
         let local_now = after.with_timezone(&Local);
         let today = local_now.date_naive();
         let local_time = local_now.time();
@@ -185,6 +195,7 @@ impl CheckinScheduler {
             }
         }
 
+        self.next_slot = next_time;
         if let Some(ref mut t) = next_time
             && self.jitter_minutes > 0
         {
@@ -213,5 +224,68 @@ impl CheckinScheduler {
 
         self.next_interval_checkin = Some(next_time);
         debug!(next = %next_time.format("%Y-%m-%d %H:%M:%S"), "checkin_scheduler.scheduled_interval");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{NaiveDate, TimeZone};
+
+    use super::*;
+
+    fn local(day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
+        let naive = NaiveDate::from_ymd_opt(2026, 1, day)
+            .and_then(|date| date.and_hms_opt(hour, minute, 0))
+            .unwrap();
+        Local
+            .from_local_datetime(&naive)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn an_early_jittered_checkin_fires_its_slot_once() {
+        let mut scheduler = CheckinScheduler::new(&["09:00".into()], None, 0, true);
+        scheduler.schedule_next_checkin(local(15, 8, 0));
+        assert_eq!(scheduler.next_slot, Some(local(15, 9, 0)));
+        scheduler.next_checkin = Some(local(15, 8, 57));
+
+        assert!(scheduler.should_checkin_at(local(15, 8, 57)));
+        scheduler.mark_checkin_done_at(local(15, 8, 57));
+
+        assert_eq!(scheduler.next_slot, Some(local(16, 9, 0)));
+        assert!(!scheduler.should_checkin_at(local(15, 9, 5)));
+    }
+
+    #[test]
+    fn an_interval_checkin_keeps_the_pending_slot() {
+        let mut scheduler = CheckinScheduler::new(&["14:00".into()], Some(60), 5, true);
+        scheduler.schedule_next_checkin(local(15, 12, 0));
+        scheduler.next_checkin = Some(local(15, 13, 57));
+        scheduler.next_interval_checkin = Some(local(15, 13, 30));
+
+        assert!(scheduler.should_checkin_at(local(15, 13, 30)));
+        scheduler.mark_checkin_done_at(local(15, 13, 30));
+
+        assert_eq!(scheduler.next_checkin, Some(local(15, 13, 57)));
+        assert_eq!(scheduler.next_slot, Some(local(15, 14, 0)));
+        assert!(!scheduler.should_checkin_at(local(15, 13, 31)));
+        assert!(scheduler.should_checkin_at(local(15, 13, 57)));
+    }
+
+    #[test]
+    fn a_rescheduled_slot_after_reconfiguration_does_not_fire_again() {
+        let mut scheduler = CheckinScheduler::new(&["09:00".into(), "14:00".into()], None, 0, true);
+        scheduler.schedule_next_checkin(local(15, 8, 0));
+        scheduler.next_checkin = Some(local(15, 8, 56));
+        assert!(scheduler.should_checkin_at(local(15, 8, 56)));
+        scheduler.mark_checkin_done_at(local(15, 8, 56));
+
+        scheduler.next_slot = None;
+        scheduler.next_checkin = None;
+        scheduler.refresh_schedules(local(15, 8, 58));
+
+        assert_eq!(scheduler.next_slot, Some(local(15, 14, 0)));
     }
 }

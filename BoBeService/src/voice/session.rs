@@ -40,8 +40,7 @@ impl VoiceDefaults {
     pub(crate) fn from_config(config: &crate::config::Config) -> Self {
         Self {
             enabled: config.voice.enabled,
-            persona: crate::speech::providers::pocket::migrate_voice(&config.voice.persona)
-                .to_owned(),
+            persona: config.voice.persona.clone(),
             speed: config.voice.speed,
         }
     }
@@ -84,7 +83,6 @@ pub(crate) struct VoiceCaptureState {
 pub(crate) struct TurnInFlight {
     pub(crate) turn_id: String,
     pub(crate) join: JoinHandle<()>,
-    pub(crate) started_at: Instant,
     pub(crate) playback_complete: Option<oneshot::Sender<()>>,
     pub(crate) script: std::sync::Arc<crate::voice::spoken::SpokenScript>,
 }
@@ -125,7 +123,7 @@ mod tests {
     fn session() -> VoiceSession {
         let defaults = VoiceDefaults {
             enabled: true,
-            persona: "af_heart".into(),
+            persona: "alba".into(),
             speed: 1.0,
         };
         let plan = crate::speech::SpeechPlan::body_v1(&defaults);
@@ -139,7 +137,6 @@ mod tests {
         TurnInFlight {
             turn_id: turn_id.into(),
             join: tokio::spawn(async {}),
-            started_at: Instant::now(),
             playback_complete: None,
             script: std::sync::Arc::default(),
         }

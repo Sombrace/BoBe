@@ -21,8 +21,6 @@ SUBPROTOCOL = "bobe.body.v1"
 MEDIA_HEADER = struct.Struct(">BBHIIQ")
 MEDIA_MICROPHONE_PCM = 0x01
 MEDIA_SPEAKER_PCM = 0x02
-MEDIA_OPUS = 0x03
-MEDIA_DIAGNOSTIC = 0x04
 MEDIA_FLAG_DISCONTINUITY = 0x01
 MICROPHONE_PAYLOAD_BYTES = 320 * 2
 SPEAKER_SAMPLES_PER_FRAME = 480
@@ -131,14 +129,12 @@ def parse_media(message: str | bytes) -> tuple[dict[str, int], bytes]:
     )
     if (major != PROTOCOL_MAJOR or stream_id == 0
             or flags & ~MEDIA_FLAG_DISCONTINUITY
-            or kind not in {MEDIA_MICROPHONE_PCM, MEDIA_SPEAKER_PCM, MEDIA_OPUS, MEDIA_DIAGNOSTIC}):
+            or kind not in {MEDIA_MICROPHONE_PCM, MEDIA_SPEAKER_PCM}):
         raise ValueError("BodyLink media header is invalid")
     payload = message[MEDIA_HEADER.size:]
     valid_size = {
         MEDIA_MICROPHONE_PCM: len(payload) == MICROPHONE_PAYLOAD_BYTES,
         MEDIA_SPEAKER_PCM: len(payload) == SPEAKER_PAYLOAD_BYTES,
-        MEDIA_OPUS: 0 < len(payload) <= 512,
-        MEDIA_DIAGNOSTIC: len(payload) <= 1024,
     }[kind]
     if not valid_size:
         raise ValueError("BodyLink media payload size is invalid")
@@ -155,13 +151,12 @@ def parse_media(message: str | bytes) -> tuple[dict[str, int], bytes]:
     )
 
 
-def challenge_ids(nonce: str) -> dict[str, str | int]:
+def challenge_ids(nonce: str) -> dict[str, str]:
     digest = hashlib.sha256(f"bodylink:{nonce}".encode()).hexdigest()
     return {
         "session_id": f"hil-session-{digest[:16]}",
         "lease_id": f"hil-lease-{digest[16:32]}",
         "turn_id": f"hil-turn-{digest[32:48]}",
-        "ping_nonce": int(digest[48:61], 16),
     }
 
 
@@ -301,12 +296,6 @@ class BodyLinkSession:
             heartbeat_interval_ms=10000,
             controller_epoch=self.config.controller_epoch,
         )
-
-    async def ping(self) -> None:
-        await self.send_control("ping", nonce=self.ids["ping_nonce"])
-        pong = await self.receive_control("pong")
-        if pong.get("nonce") != self.ids["ping_nonce"]:
-            raise ValueError("BodyLink pong nonce does not match")
 
     async def voice_roundtrip(self) -> None:
         request = await self.receive_control("capture.request", timeout=60.0)
@@ -531,9 +520,10 @@ class BodyLinkSession:
 
     async def run(self) -> None:
         await self.handshake()
-        await self.ping()
         if self.config.scenario == "voice-roundtrip":
             await self.voice_roundtrip()
+        else:
+            await self.receive_control("health.report")
 
 
 def server_ssl_context() -> ssl.SSLContext:

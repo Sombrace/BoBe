@@ -17,7 +17,6 @@ pub(crate) mod session;
 pub(crate) mod sinks;
 pub(crate) mod spoken;
 pub(crate) mod synthesis;
-pub(crate) mod telemetry;
 pub(crate) mod text_prep;
 pub(crate) mod transcript_in;
 pub(crate) mod turn_flow;

@@ -123,7 +123,7 @@ struct MCPServersPanel: View {
         }
         .task {
             await self.loadConfig()
-            await self.store.loadIfNeeded()
+            await self.store.refresh()
         }
         .onDisappear { self.store.cancelToast() }
     }

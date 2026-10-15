@@ -710,7 +710,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             if config.server.api_token.expose_secret().is_empty() {
                 config.server.api_token = secrecy::SecretString::from(owner_token::ensure(&paths)?);
             }
-            let (pool, identity) = bootstrap::initialize_storage(&paths, false).await?;
+            let (pool, identity) = bootstrap::initialize_storage(&paths).await?;
             let initialization_state = db::runtime_initialization_repo::ensure(&pool).await?;
             let report = serde_json::json!({
                 "schema": "bobe.cli.v1",
@@ -1781,7 +1781,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     } else {
                         let paths = loaded.paths.prepare_root()?;
                         let _locks = util::runtime_lock::RuntimeLocks::acquire(&paths)?;
-                        let (pool, identity) = bootstrap::initialize_storage(&paths, false).await?;
+                        let (pool, identity) = bootstrap::initialize_storage(&paths).await?;
                         pool.close().await;
                         let backup = ops::backup::create(
                             &paths,
@@ -1801,7 +1801,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 }
                 BackupCommands::Verify { path } => {
                     let manifest =
-                        ops::backup::verify(&path, bootstrap::database::CURRENT_SCHEMA_VERSION)
+                        ops::backup::verify(&path, &bootstrap::database::SUPPORTED_SCHEMA_VERSIONS)
                             .await?;
                     println!(
                         "Backup verified: authority {} epoch {}, schema {}",
@@ -1815,7 +1815,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     ops::backup::verify_restore_topology(
                         &path,
                         &paths,
-                        bootstrap::database::CURRENT_SCHEMA_VERSION,
+                        &bootstrap::database::SUPPORTED_SCHEMA_VERSIONS,
                     )
                     .await?;
                     let home = std::env::var_os("HOME")
@@ -1850,7 +1850,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                             &path,
                             &paths,
                             &loaded.config_file,
-                            bootstrap::database::CURRENT_SCHEMA_VERSION,
+                            &bootstrap::database::SUPPORTED_SCHEMA_VERSIONS,
                         )
                         .await?;
                         drop(locks);
@@ -1981,7 +1981,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                             &backup,
                             &paths,
                             &loaded.config_file,
-                            bootstrap::database::CURRENT_SCHEMA_VERSION,
+                            &bootstrap::database::SUPPORTED_SCHEMA_VERSIONS,
                         )
                         .await?;
                         drop(recovery_locks);
@@ -2092,9 +2092,9 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     } else {
                         util::runtime_lock::RuntimeLocks::acquire(&paths)?
                     };
-                    let (pool, identity) = bootstrap::initialize_storage(&paths, false).await?;
+                    let (pool, identity) = bootstrap::initialize_storage(&paths).await?;
                     pool.close().await;
-                    if identity.schema_version != update.database_schema {
+                    if !update.supports_database_schema(identity.schema_version) {
                         return Err(error::AppError::Conflict(
                             "live database is incompatible with the candidate update".into(),
                         ));
@@ -2107,7 +2107,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                         identity.schema_version,
                     )
                     .await?;
-                    ops::backup::verify(&backup, bootstrap::database::CURRENT_SCHEMA_VERSION)
+                    ops::backup::verify(&backup, &bootstrap::database::SUPPORTED_SCHEMA_VERSIONS)
                         .await?;
                     ops::update::write_journal(
                         &journal_path,
@@ -2205,7 +2205,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                             &backup,
                             &paths,
                             &loaded.config_file,
-                            bootstrap::database::CURRENT_SCHEMA_VERSION,
+                            &bootstrap::database::SUPPORTED_SCHEMA_VERSIONS,
                         )
                         .await?;
                         drop(rollback_locks);
@@ -2264,6 +2264,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     "agent_harness": "pi",
                     "agent_version": "1.2.0",
                     "database_schema": bootstrap::database::CURRENT_SCHEMA_VERSION,
+                    "database_schema_min": bootstrap::database::OLDEST_UPGRADABLE_SCHEMA_VERSION,
                     "attach_protocol_min": constants::attach::PROTOCOL_MIN,
                     "attach_protocol_max": constants::attach::PROTOCOL_MAX,
                 });
@@ -2820,7 +2821,7 @@ fn emit_report<T: serde::Serialize>(json: bool, report: &T, human: String) {
 
 fn render_status(report: &ops::status::StatusReport) -> String {
     if let Some(readiness) = &report.readiness {
-        if readiness.status == "ready" {
+        if readiness.status == api::readiness::ReadinessStatus::Ready {
             return format!(
                 "BoBe is ready at {}\nAuthority: {} epoch {}\nIncarnation: {}\nDaemon: {}  Schema: {}",
                 report.target,

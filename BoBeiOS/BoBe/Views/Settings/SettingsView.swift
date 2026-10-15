@@ -4,7 +4,6 @@ import UIKit
 struct SettingsView: View {
     @Bindable var model: PhoneModel
     @State private var confirmsUnpair = false
-    @State private var notifications: PhonePermission = .unknown
     @State private var voice = PhonePermissions.voice()
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -43,7 +42,6 @@ struct SettingsView: View {
                 .listRowBackground(self.theme.colors.surface)
 
                 Section {
-                    LabeledContent(L10n.tr("phone.settings.notifications"), value: self.describe(self.notifications))
                     LabeledContent(L10n.tr("phone.settings.voice"), value: self.describe(self.voice))
                     Button(L10n.tr("phone.common.open_settings")) {
                         if let url = URL(string: UIApplication.openSettingsURLString) {
@@ -83,7 +81,6 @@ struct SettingsView: View {
                 }
             }
             .task {
-                self.notifications = await PhonePermissions.notifications()
                 self.voice = PhonePermissions.voice()
             }
         }

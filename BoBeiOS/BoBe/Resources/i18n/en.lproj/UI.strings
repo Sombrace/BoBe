@@ -3,7 +3,6 @@
 "phone.common.dismiss" = "Dismiss";
 "phone.common.done" = "Done";
 "phone.common.maybe_later" = "Maybe later";
-"phone.common.not_now" = "Not now";
 "phone.common.open_settings" = "Open Settings";
 "phone.onboarding.progress_format" = "Step %d of %d";
 "phone.welcome.title" = "Hi, I’m BoBe";
@@ -30,9 +29,6 @@
 "phone.where.title" = "Where’s the code?";
 "phone.where.mac" = "Mac: Settings › Devices › Pair iPhone";
 "phone.where.linux" = "Linux:";
-"phone.reach.title" = "Can I reach you?";
-"phone.reach.body" = "Only when it matters.";
-"phone.reach.allow" = "Allow notifications";
 "phone.hear.title" = "Talk out loud?";
 "phone.hear.body" = "Hold the button and speak.";
 "phone.hear.allow" = "Allow microphone";
@@ -85,7 +81,6 @@
 "phone.talk.permission" = "Turn on Microphone and Speech Recognition in Settings.";
 "phone.settings.title" = "Settings";
 "phone.settings.address" = "Address";
-"phone.settings.notifications" = "Notifications";
 "phone.settings.voice" = "Voice";
 "phone.settings.unpair" = "Unpair this iPhone";
 "phone.settings.unpair.title" = "Unpair this iPhone?";

@@ -472,15 +472,6 @@ static void process_text_message(const uint8_t *data, size_t length)
         return;
     }
 
-    if (message.kind == BOBE_CONTROL_PING) {
-        char pong[128];
-        if (bobe_protocol_build_pong(pong, sizeof(pong), message.data.ping.nonce) != BOBE_PROTOCOL_OK ||
-            !enqueue_control(pong, strlen(pong), true)) {
-            fail_connection(ESP_ERR_TIMEOUT);
-        }
-        return;
-    }
-
     const bobe_transport_event_t event = {
         .kind = BOBE_TRANSPORT_CONTROL,
         .generation = atomic_load(&connection_generation),

@@ -393,6 +393,19 @@ mod tests {
     }
 
     #[test]
+    fn database_url_in_the_home_directory_is_expanded() {
+        let Some(home) = std::env::home_dir() else {
+            return;
+        };
+        let paths = DataPaths::resolve(root(), "sqlite:~/bobe/data.db?mode=rwc").expect("paths");
+        assert_eq!(
+            paths.database_url(),
+            format!("sqlite:{}?mode=rwc", home.join("bobe/data.db").display())
+        );
+        assert_eq!(paths.database_file(), Some(home.join("bobe/data.db")));
+    }
+
+    #[test]
     fn prepare_agent_root_creates_private_authority_directory() {
         use std::os::unix::fs::PermissionsExt;
 

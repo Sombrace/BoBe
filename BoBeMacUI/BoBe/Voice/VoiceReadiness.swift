@@ -60,6 +60,11 @@ enum VoiceSetupPreference {
 
 @MainActor
 extension VoicePipeline {
+    var activeSttLanguage: String {
+        let language = SettingsStore.shared.settings?.voiceSttLanguage ?? ""
+        return language.isEmpty ? "en" : language
+    }
+
     var effectiveLanguage: String {
         self.sessionSttLanguage ?? self.activeSttLanguage
     }
@@ -107,6 +112,7 @@ extension VoicePipeline {
     }
 
     func refreshSttPreferenceState() {
+        self.sttStatusLanguage = self.activeSttLanguage
         if VoiceSttPreferenceStore.shared.preference == .daemon {
             self.sttStatus = self.daemonSttReady ? .ready : .notLoaded
             return
@@ -140,44 +146,9 @@ extension VoicePipeline {
         }
     }
 
-    var modelPreparation: VoiceModelPreparation {
-        let backend = VoiceTtsPreference.shared.backend
-        let preference = VoiceSttPreferenceStore.shared.preference
-        guard backend.speaks(self.effectiveLanguage) else {
-            return .failed(L10n.tr("settings.voice.language_unsupported", backend.shortName,
-                                   VoiceLanguages.displayName(for: self.effectiveLanguage)))
-        }
-        let ttsReady = backend == .serverPocket
-            ? self.installSnapshot?.ttsReady == true
-            : FluidAudioSupertonicModelPresence.isInstalled()
-        let sttReady = preference.speechRecognitionReady(
-            endpointReady: preference.usesEndpointEngine && self.sttStatus == .ready,
-            daemonReady: self.daemonSttReady
-        )
-        let failure: String?
-        if case let .failed(message) = self.sttStatus, !sttReady {
-            failure = message
-        } else if backend == .serverPocket,
-                  self.installSnapshot?.status == .failed, !ttsReady {
-            failure = self.installSnapshot?.error ?? L10n.tr("setup.voice.poll_failure")
-        } else {
-            failure = nil
-        }
-        return .resolve(
-            snapshotAvailable: self.installSnapshot != nil,
-            ttsReady: ttsReady,
-            sttReady: sttReady,
-            installing: (backend == .serverPocket && self.installSnapshot?.isRunning == true)
-                || (preference.usesEndpointEngine && self.sttStatus == .downloading),
-            failure: failure
-        )
-    }
-
     public var readiness: VoiceReadiness {
-        if self.voiceEnabled == false { return .disabledByUser }
-        if self.permission == .denied || self.permission == .restricted { return .permissionMissing }
-        return self.modelPreparation.resolveReadiness(
-            voiceEnabled: self.voiceEnabled,
+        VoiceModelInstaller.shared.preparation.resolveReadiness(
+            voiceEnabled: SettingsStore.shared.settings?.voiceEnabled,
             permissionMissing: self.permission == .denied || self.permission == .restricted
         )
     }
@@ -188,40 +159,8 @@ extension VoicePipeline {
         self.daemonStateSelection = selection
         self.refreshDaemonTask?.cancel()
         self.refreshDaemonTask = nil
-        self.installPollTask?.cancel()
-        self.installPollTask = nil
         self.installSnapshot = nil
-        self.voiceEnabled = nil
         self.daemonSttReady = false
-    }
-
-    func startDaemonTtsInstall() async throws {
-        self.synchronizeDaemonSelection()
-        let selection = self.daemonStateSelection
-        let client = DaemonClient(endpoint: selection.endpoint)
-        try await client.startVoiceInstall(kind: VoiceWire.modelKindTts)
-        guard EndpointStore.shared.selection == selection else { return }
-        if let refresh = self.refreshDaemonTask { await refresh.value }
-        guard EndpointStore.shared.selection == selection else { return }
-        self.monitorDaemonInstall()
-    }
-
-    func monitorDaemonInstall() {
-        guard self.installPollTask == nil else { return }
-        let selection = self.daemonStateSelection
-        self.installPollTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                if self.daemonStateSelection == selection { self.installPollTask = nil }
-            }
-            while !Task.isCancelled, EndpointStore.shared.selection == selection {
-                let revision = self.installSnapshotRevision
-                await self.refreshDaemonState()
-                guard !Task.isCancelled, EndpointStore.shared.selection == selection else { return }
-                if revision != self.installSnapshotRevision, self.installSnapshot?.isTerminal == true { return }
-                do { try await Task.sleep(for: .seconds(1)) } catch { return }
-            }
-        }
     }
 
     public func refreshDaemonState() async {
@@ -234,10 +173,10 @@ extension VoicePipeline {
         let client = DaemonClient(endpoint: selection.endpoint)
         let task = Task { @MainActor in
             async let install: VoiceInstallSnapshot? = try? await client.voiceInstallStatus()
-            async let settings: DaemonSettings? = try? await client.getSettings()
             async let attach: AttachResult? =
                 try? await EndpointAttachService.shared.attachConfiguredEndpoint(selection: selection)
-            let (installRes, settingsRes, attachRes) = await (install, settings, attach)
+            async let settings: Void = SettingsStore.shared.refresh()
+            let (installRes, attachRes, _) = await (install, attach, settings)
             guard EndpointStore.shared.selection == selection else { return }
             if let attachRes {
                 self.daemonSttReady = attachRes.hello.capabilities.stt == .ready
@@ -246,7 +185,6 @@ extension VoicePipeline {
                 self.installSnapshot = installRes
                 self.installSnapshotRevision &+= 1
             }
-            if let settingsRes { self.applySettings(settingsRes) }
         }
         self.refreshDaemonTask = task
         await task.value
@@ -258,23 +196,15 @@ extension VoicePipeline {
             return
         }
         self.refreshDaemonTask = nil
-        if self.installSnapshot?.isRunning == true { self.monitorDaemonInstall() }
+        self.reconcileVoiceSettings()
+        VoiceModelInstaller.shared.monitorIfInstalling()
     }
 
-    func applySettings(_ settings: DaemonSettings) {
-        self.voiceEnabled = settings.voiceEnabled
-        self.showPartialCaption = settings.voiceShowPartialCaption
-        self.voicePersona = settings.voicePersona
-        self.voiceSpeed = settings.voiceSpeed
-        let language = settings.voiceSttLanguage
-        if !language.isEmpty, language != self.activeSttLanguage {
-            self.activeSttLanguage = language
-            let engineId = self.preferredSttEngineId(for: language)
-            let key = Self.sttReadinessKey(engineId: engineId, language: language)
-            self.sttStatus = self.loadedSttKeys.contains(key)
-                || (engineId != VoiceSttEngineId.appleSpeechAnalyzer
-                    && self.modelIsInstalled(for: language)) ? .ready : .notLoaded
+    func reconcileVoiceSettings() {
+        if self.sttStatusLanguage != self.activeSttLanguage {
+            self.refreshSttPreferenceState()
         }
+        guard let settings = SettingsStore.shared.settings else { return }
         let delayMs = Self.eouDelayMs(for: settings.voicePauseSensitivity)
         let nemotron = self.nemotronStt
         let parakeet = self.parakeetStt

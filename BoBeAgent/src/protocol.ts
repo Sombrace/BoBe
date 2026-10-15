@@ -36,17 +36,12 @@ export function validate<T extends TSchema>(schema: T, value: unknown, label: st
 
 const strict = { additionalProperties: false };
 export const toolNames = ["read", "bash", "edit", "write", "grep", "find", "ls", "subagent", "background_jobs"] as const;
-export type ToolName = typeof toolNames[number];
-const toolNameSchema = Type.Union([
-  Type.Literal("read"), Type.Literal("bash"), Type.Literal("edit"), Type.Literal("write"),
-  Type.Literal("grep"), Type.Literal("find"), Type.Literal("ls"), Type.Literal("subagent"),
-  Type.Literal("background_jobs"),
-]);
+const toolNameSchema = Type.Enum(toolNames);
 const text = Type.String();
 const nonempty = Type.String({ minLength: 1 });
 const nullableText = Type.Union([text, Type.Null()]);
 const strings = Type.Array(text);
-export const thinkingSchema = Type.Union([
+const thinkingSchema = Type.Union([
   Type.Literal("off"), Type.Literal("minimal"), Type.Literal("low"),
   Type.Literal("medium"), Type.Literal("high"), Type.Literal("xhigh"), Type.Literal("max"),
 ]);
@@ -89,7 +84,9 @@ const domainToolSchema = Type.Object({
   description: nonempty,
   parameters: Type.Record(text, Type.Unknown()),
 }, strict);
-export type DomainTool = Static<typeof domainToolSchema>;
+
+const personaSchema = Type.Object({ souls: strings, profiles: strings }, strict);
+export type Persona = Static<typeof personaSchema>;
 
 const workloadBudgetSchema = Type.Object({
   wall_clock: Type.Object({
@@ -103,7 +100,6 @@ export const initializeSchema = Type.Object({
   execution: Type.Object({
     model_concurrency: Type.Integer({ minimum: 2, maximum: 32 }),
     foreground_reserve: Type.Integer({ minimum: 1, maximum: 31 }),
-    process_concurrency: Type.Integer({ minimum: 4, maximum: 256 }),
     tool_concurrency: Type.Integer({ minimum: 1, maximum: 64 }),
     live_channels: Type.Integer({ minimum: 1, maximum: 32 }),
     idle_channel_seconds: Type.Integer({ minimum: 30, maximum: 86400 }),
@@ -126,7 +122,7 @@ export const initializeSchema = Type.Object({
     small: Type.Optional(routeSchema),
   }, strict),
   tools: Type.Array(domainToolSchema),
-  capability_instructions: text,
+  capabilities: Type.Object({ memory: Type.Boolean(), goals: Type.Boolean() }, strict),
   mcp: mcpSchema,
   enabled_tools: Type.Array(toolNameSchema, { uniqueItems: true }),
 }, strict);
@@ -134,18 +130,17 @@ export type Initialize = Static<typeof initializeSchema>;
 
 export const chatSchema = Type.Object({
   session_key: Type.Optional(Type.String({ format: "uuid" })),
-  run_id: Type.Optional(Type.Union([Type.String({ format: "uuid" }), Type.Null()])),
-  goal_id: Type.Optional(Type.Union([Type.String({ format: "uuid" }), Type.Null()])),
   priority: Type.Optional(Type.Union([Type.Literal("interactive"), Type.Literal("background")])),
   text,
   channel: Type.Union([Type.Literal("text"), Type.Literal("voice")]),
   context: text,
   memory_context: Type.Optional(text),
+  persona: Type.Optional(personaSchema),
 }, strict);
 export type Chat = Static<typeof chatSchema>;
 
 export const auxiliarySchema = Type.Object({
-  class: Type.Union([Type.Literal("goals"), Type.Literal("consolidate"), Type.Literal("small")]),
+  class: Type.Union([Type.Literal("consolidate"), Type.Literal("small")]),
   job: Type.Object({
     job_id: nonempty,
     kind: nonempty,
@@ -188,25 +183,25 @@ export const taskBudgetSchema = Type.Object({
 }, strict);
 export type TaskBudget = Static<typeof taskBudgetSchema>;
 export const backgroundSchema = Type.Object({
-  session_key: Type.Optional(Type.String({ format: "uuid" })),
-  goal_id: Type.Optional(Type.Union([Type.String({ format: "uuid" }),Type.Null()])),
   job_id: Type.String({ format: "uuid" }),
   title: nonempty,
   task: nonempty,
   context: text,
   memory_context: text,
+  persona: personaSchema,
   attempt: Type.Integer({ minimum: 1 }),
   route: routeSchema,
-  budget: Type.Optional(taskBudgetSchema),
+  budget: Type.Object({
+    timeout_seconds: Type.Integer({ minimum: 1, maximum: 86400 }),
+    max_turns: Type.Integer({ minimum: 1, maximum: 512 }),
+  }, strict),
 }, strict);
 export type BackgroundRequest = Static<typeof backgroundSchema>;
 export const domainResultSchema = Type.Union([
   Type.Object({ success: Type.Literal(true), value: Type.Unknown() }, strict),
   Type.Object({
     success: Type.Literal(false),
-    error: Type.Optional(text),
-    message: Type.Optional(text),
-    value: Type.Optional(Type.Unknown()),
+    value: Type.Object({ ok: Type.Literal(false), error: text }, strict),
   }, strict),
 ]);
 
@@ -230,7 +225,7 @@ export type Notification =
   | { method: "auth_event"; params: { profile: string; phase: AuthPhase } };
 
 export type Request = { id: number; method: string; params: JsonObject };
-export type Reply = { id: number; result: Json } | { id: number; error: { message: string } };
+type Reply = { id: number; result: Json } | { id: number; error: { message: string } };
 
 export function parseEnvelope(value: unknown): Request | Reply {
   const envelope = object(value);

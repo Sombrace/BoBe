@@ -1293,16 +1293,6 @@ static void handle_control(
             );
         }
         break;
-    case BOBE_CONTROL_VOLUME_SET: {
-        bobe_policy_effect_t *effect = append_effect(
-            effects,
-            BOBE_POLICY_EFFECT_AUDIO_SET_VOLUME
-        );
-        if (effect != NULL) {
-            effect->data.volume = control->data.volume.percent;
-        }
-        break;
-    }
     case BOBE_CONTROL_UPDATE_OFFER:
         if (context->state.lifecycle != BOBE_LIFECYCLE_ONLINE ||
             context->state.turn != BOBE_TURN_IDLE) {
@@ -1339,27 +1329,6 @@ static void handle_control(
             );
         }
         break;
-    case BOBE_CONTROL_CLAIM_REVOKE:
-        if (context->state.lifecycle == BOBE_LIFECYCLE_ONLINE &&
-            context->state.turn == BOBE_TURN_IDLE) {
-            reset_active_turn(
-                context,
-                effects,
-                BOBE_POLICY_REASON_NONE,
-                false
-            );
-            bobe_policy_effect_t *const effect = append_effect(
-                effects,
-                BOBE_POLICY_EFFECT_CLAIM_REVOKE
-            );
-            begin_operation(
-                context,
-                effect,
-                BOBE_POLICY_OPERATION_CLAIM_REVOKE
-            );
-        }
-        break;
-    case BOBE_CONTROL_PING:
     case BOBE_CONTROL_WELCOME:
     case BOBE_CONTROL_INPUT_RESULT:
     case BOBE_CONTROL_DISPLAY_TEXT:
@@ -2332,26 +2301,6 @@ static void handle_effect_result(
     case BOBE_POLICY_OPERATION_OTA_CONFIRM:
         if (event->data.effect_result.result == BOBE_POLICY_RESULT_OK) {
             context->ota_confirm_deadline_us = 0;
-        }
-        break;
-    case BOBE_POLICY_OPERATION_CLAIM_REVOKE:
-        if (event->data.effect_result.result == BOBE_POLICY_RESULT_OK) {
-            context->transport_configured = false;
-            context->transport_connected = false;
-            (void)set_lifecycle(
-                context,
-                BOBE_LIFECYCLE_UNPROVISIONED,
-                effects
-            );
-            bobe_policy_effect_t *const effect = append_effect(
-                effects,
-                BOBE_POLICY_EFFECT_CONNECTIVITY_OPEN_PROVISIONING
-            );
-            begin_operation(
-                context,
-                effect,
-                BOBE_POLICY_OPERATION_PROVISIONING_OPEN
-            );
         }
         break;
     case BOBE_POLICY_OPERATION_UPDATE_INSTALL:

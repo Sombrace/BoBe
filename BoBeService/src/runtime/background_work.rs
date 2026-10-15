@@ -5,9 +5,9 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+use crate::agent::PiRuntime;
 use crate::db::agent_job_repo::{AgentJobRepo, JobStatus};
 use crate::error::AppError;
-use crate::provider::AgentRuntime;
 use crate::runtime::run_registry::{RunKind, RunRegistry};
 use crate::runtime::session::RuntimeSession;
 
@@ -15,7 +15,7 @@ const MAX_ACTIVE: usize = 2;
 
 pub(crate) struct BackgroundWork {
     pub(crate) jobs: Arc<AgentJobRepo>,
-    runtime: Arc<dyn AgentRuntime>,
+    runtime: Arc<PiRuntime>,
     session: Arc<RuntimeSession>,
     personal_data: Arc<RwLock<()>>,
     initialization:
@@ -48,7 +48,7 @@ impl BackgroundWork {
 
     pub(crate) fn new(
         jobs: Arc<AgentJobRepo>,
-        runtime: Arc<dyn AgentRuntime>,
+        runtime: Arc<PiRuntime>,
         session: Arc<RuntimeSession>,
         personal_data: Arc<RwLock<()>>,
         initialization: Arc<

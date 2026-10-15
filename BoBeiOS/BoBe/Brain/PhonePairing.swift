@@ -30,10 +30,7 @@ enum PhonePairing {
                 return BrainPairing(
                     record: BrainRecord(
                         origins: [origin] + invite.origins.filter { $0 != origin },
-                        pin: pin,
-                        endpointId: outcome.endpointId,
-                        authorityId: outcome.runtimeAuthorityId,
-                        authorityEpoch: outcome.runtimeAuthorityEpoch
+                        pin: pin
                     ),
                     credential: outcome.credential
                 )

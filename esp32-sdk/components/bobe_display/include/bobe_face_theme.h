@@ -5,19 +5,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/*
- * Face themes are static descriptors held in flash. Switching a theme never
- * allocates.
- */
-
 #define BOBE_FACE_MAX_DECOR 9U
 #define BOBE_FACE_MAX_DECOR_ARCS 2U
 
-/* Sentinel colour resolved to the live accent at render time. */
 #define BOBE_FACE_RGB_ACCENT UINT32_C(0xFF000000)
-/* Sentinel colour meaning "draw nothing". */
 #define BOBE_FACE_RGB_NONE UINT32_C(0xFF000001)
-/* Sentinel radius meaning "fully rounded". */
 #define BOBE_FACE_RADIUS_CIRCLE INT16_C(0x7FFF)
 
 #define BOBE_FACE_CLOSED_EYE_HEIGHT 5
@@ -34,11 +26,8 @@ typedef enum {
 } bobe_face_align_t;
 
 typedef enum {
-    /* Production eye: iris derived from the eye height. */
     BOBE_FACE_EYE_DERIVED = 0,
-    /* Concept eye: explicit iris and pupil diameters. */
     BOBE_FACE_EYE_FIXED,
-    /* Solid eye with gloss dots and no iris. */
     BOBE_FACE_EYE_GLOSS,
 } bobe_face_eye_style_t;
 
@@ -73,7 +62,6 @@ typedef struct {
     int16_t iris;
     int16_t pupil;
     int16_t highlight;
-    /* Gloss offsets are centres relative to the eye origin. */
     int16_t pupil_dx;
     int16_t pupil_dy;
     int16_t highlight_dx;

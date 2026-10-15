@@ -2,6 +2,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use crate::constants::voice_wire::TTS_OUTPUT_SAMPLE_RATE;
 use crate::error::AppError;
 
 pub(super) struct WavOutput {
@@ -25,7 +26,9 @@ impl WavOutput {
     }
 
     pub(super) fn append(&mut self, pcm: &[f32]) -> Result<(), AppError> {
-        if self.finished || self.samples as usize + pcm.len() > 24_000 * 600 {
+        if self.finished
+            || self.samples as usize + pcm.len() > TTS_OUTPUT_SAMPLE_RATE as usize * 600
+        {
             return Err(AppError::Validation(
                 "Voice preview exceeds the ten-minute audio limit".into(),
             ));
@@ -56,8 +59,9 @@ impl WavOutput {
         self.file.write_all(&16_u32.to_le_bytes())?;
         self.file.write_all(&1_u16.to_le_bytes())?;
         self.file.write_all(&1_u16.to_le_bytes())?;
-        self.file.write_all(&24_000_u32.to_le_bytes())?;
-        self.file.write_all(&48_000_u32.to_le_bytes())?;
+        self.file.write_all(&TTS_OUTPUT_SAMPLE_RATE.to_le_bytes())?;
+        self.file
+            .write_all(&(TTS_OUTPUT_SAMPLE_RATE * 2).to_le_bytes())?;
         self.file.write_all(&2_u16.to_le_bytes())?;
         self.file.write_all(&16_u16.to_le_bytes())?;
         self.file.write_all(b"data")?;

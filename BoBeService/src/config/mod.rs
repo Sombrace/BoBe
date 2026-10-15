@@ -186,10 +186,6 @@ impl Config {
         normalize_optional_path(&mut config.server.tls_key_path, config_root);
         if config.database.url.trim().is_empty() {
             config.database.url = format!("sqlite:{}/data/bobrust.db", config.data_dir);
-        } else if config.database.url.contains('~') {
-            config.database.url = crate::util::paths::expand_tilde(&config.database.url)
-                .to_string_lossy()
-                .into_owned();
         }
 
         config.providers.remember_routes(&config.routes)?;

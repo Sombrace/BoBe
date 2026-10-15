@@ -6,20 +6,12 @@ struct VoiceModelCard: View {
     let purpose: String
     let sizeHint: String
     let location: String?
-    let status: Status
+    let status: VoiceModelStatus
     var onInstall: (() async -> Void)?
     var onUninstall: (() async -> Void)?
 
     @State private var isWorking = false
     @Environment(\.theme) private var theme
-
-    enum Status: Equatable {
-        case installed
-        case missing
-        case downloading(bytesDownloaded: UInt64, bytesTotal: UInt64?, percent: Int?)
-        case failed(String)
-        case unknown
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -58,7 +50,7 @@ struct VoiceModelCard: View {
                 Spacer()
                 self.actionButtons
             }
-            if case let .downloading(_, _, percent) = self.status {
+            if case let .downloading(percent, _, _) = self.status {
                 ProgressView(value: Double(percent ?? 0), total: 100)
                     .progressViewStyle(.linear)
                     .tint(self.theme.colors.primary)
@@ -153,7 +145,7 @@ struct VoiceModelCard: View {
         switch self.status {
         case .installed: return L10n.tr("settings.voice.model.status.installed")
         case .missing: return L10n.tr("settings.voice.model.status.missing")
-        case let .downloading(down, total, percent):
+        case let .downloading(percent, down, total):
             if let percent {
                 return L10n.tr("settings.voice.model.status.downloading_percent_format", percent)
             }

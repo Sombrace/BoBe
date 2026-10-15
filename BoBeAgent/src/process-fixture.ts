@@ -36,7 +36,7 @@ export class ProcessFixture {
       child.stdin.on("error", () => {});
       try { await once(child, "spawn"); }
       catch (error) { this.processes.delete(id); throw error; }
-      return { process_id: id, pid: child.pid ?? 0 };
+      return { process_id: id };
     }
     const active = this.processes.get(id);
     if (params.action === "stop") {
@@ -59,7 +59,10 @@ export class ProcessFixture {
   private kill(child: ChildProcessWithoutNullStreams): void {
     if (!child.pid) return;
     try { process.kill(-child.pid, "SIGKILL"); }
-    catch (error) { if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error; }
+    catch (error) {
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      if (code !== "ESRCH" && code !== "EPERM") throw error;
+    }
   }
 
   async close(): Promise<void> {

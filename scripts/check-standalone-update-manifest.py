@@ -32,15 +32,22 @@ def add_bytes(bundle: tarfile.TarFile, name: str, data: bytes) -> None:
     bundle.addfile(info, io.BytesIO(data))
 
 
-def create_archive(path: pathlib.Path, omitted: str | None = None) -> dict[str, object]:
+def create_archive(
+    path: pathlib.Path,
+    omitted: str | None = None,
+    **overrides: object,
+) -> dict[str, object]:
     compatibility = {
         "schema": 1,
         "version": "9.8.7",
         "platform": "linux-x86_64",
         "database_schema": 2,
+        "database_schema_min": 1,
         "attach_protocol_min": 1,
         "attach_protocol_max": 1,
     }
+    compatibility.update(overrides)
+    compatibility = {key: value for key, value in compatibility.items() if value is not None}
     with tarfile.open(path, "w:gz") as bundle:
         add_bytes(
             bundle,
@@ -74,6 +81,7 @@ def main() -> None:
             "version": compatibility["version"],
             "platform": compatibility["platform"],
             "database_schema": compatibility["database_schema"],
+            "database_schema_min": compatibility["database_schema_min"],
             "attach_protocol_min": compatibility["attach_protocol_min"],
             "attach_protocol_max": compatibility["attach_protocol_max"],
             "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
@@ -81,6 +89,20 @@ def main() -> None:
         }
         assert manifest == expected
         assert encoded == json.dumps(expected, separators=(",", ":")).encode()
+
+        for overrides, reason in (
+            ({"database_schema_min": None}, "missing: database_schema_min"),
+            ({"database_schema_min": "1"}, "database_schema_min must be an integer"),
+            ({"database_schema_min": 3}, "database_schema_min must not exceed database_schema"),
+        ):
+            incompatible = directory / "incompatible.tar.gz"
+            create_archive(incompatible, **overrides)
+            try:
+                module.inspect_archive(incompatible)
+            except SystemExit as error:
+                assert reason in str(error), error
+            else:
+                raise AssertionError(f"archive with {overrides} was accepted")
 
         unsafe = directory / "unsafe.tar.gz"
         with tarfile.open(unsafe, "w:gz") as bundle:

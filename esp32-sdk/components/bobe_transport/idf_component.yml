@@ -1,7 +1,7 @@
 version: "0.2.0"
 files:
   exclude: ["**/*"]
-  include: ["CMakeLists.txt", "README.md", "idf_component.yml", "*.c", "*.h", "include/**/*.h"]
+  include: ["CMakeLists.txt", "idf_component.yml", "*.c", "*.h", "include/**/*.h"]
 description: "Authenticated BodyLink WebSocket transport with bounded queues"
 dependencies:
   idf: ">=6.0.2,<6.2"

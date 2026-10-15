@@ -122,19 +122,6 @@ pub(crate) async fn list_goals(
     }))
 }
 
-pub(crate) async fn get_goal(
-    State(state): State<Arc<AppState>>,
-    Path(goal_id): Path<GoalId>,
-) -> Result<Json<GoalResponse>, AppError> {
-    let doc = state
-        .services
-        .goals_service
-        .get(goal_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("Goal {goal_id} not found")))?;
-    Ok(Json(GoalResponse::from(&doc)))
-}
-
 pub(crate) async fn create_goal(
     State(state): State<Arc<AppState>>,
     Json(body): Json<GoalCreateRequest>,

@@ -6,9 +6,6 @@ enum AmbientBubbleDismissalStyle: String {
 }
 
 struct AmbientBubbleTransition: ViewModifier {
-    static let fadeDurationSeconds: TimeInterval = 0.16
-    static let stardustDurationSeconds: TimeInterval = 0.56
-
     let style: AmbientBubbleDismissalStyle
     let progress: Double
 

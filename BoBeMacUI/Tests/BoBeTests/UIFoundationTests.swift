@@ -92,18 +92,6 @@ struct UIFoundationTests {
 
     @Test
     @MainActor
-    func bodyAdapterCommandRouterRejectsSurfaceCommands() async {
-        let router = BobeCommandRouter(isBodyAdapterOnly: true)
-
-        #expect(router.showOverlay() == .unavailable)
-        #expect(router.hideOverlay() == .unavailable)
-        #expect(router.openSettings() == .unavailable)
-        #expect(router.stopSpeaking() == .unavailable)
-        #expect(await router.toggleLogicalMicrophoneMute() == .unavailable)
-    }
-
-    @Test
-    @MainActor
     func commandTitlesReflectOnboardingPolicy() {
         let defaults = UserDefaults.standard
         let key = SetupWindowManager.onboardingCompletedKey
@@ -207,9 +195,10 @@ struct UIFoundationTests {
         #expect(accessibilityStatus?.isEmpty == false)
         #expect(controller.statusItem?.button?.image?.isTemplate == true)
         #expect(controller.statusItem?.menu != nil)
-        #expect(controller.menuItemTitles.last == L10n.tr("tray.quit"))
-        #expect(controller.menuItemTitles.contains(L10n.tr("tray.settings")))
-        #expect(controller.menuItemTitles.count { !$0.isEmpty } == 4)
+        let titles = controller.statusItem?.menu?.items.map(\.title) ?? []
+        #expect(titles.last == L10n.tr("tray.quit"))
+        #expect(titles.contains(L10n.tr("tray.settings")))
+        #expect(titles.count { !$0.isEmpty } == 4)
     }
 
     @Test
@@ -399,7 +388,7 @@ struct UIFoundationTests {
         var resume: CheckedContinuation<Void, Never>?
         let store = BobeStore(currentSelection: { selection }, sendRequest: { _, _, _ in
             await withCheckedContinuation { resume = $0 }
-            return SendMessageResponse(messageId: "old", requestStatus: "running", replayed: false)
+            return SendMessageResponse(messageId: "old", replayed: false)
         })
         let send = Task { await store.sendMessage("old authority") }
         while resume == nil { await Task.yield() }
@@ -418,7 +407,7 @@ struct UIFoundationTests {
     func aQueuedMessageAndAnActiveTurnDoNotDisableTheComposer() async {
         let selection = EndpointSelection(generation: 1, profileID: UUID(), authorityID: UUID(), endpoint: .unavailable)
         let store = BobeStore(currentSelection: { selection }, sendRequest: { _, _, _ in
-            SendMessageResponse(messageId: "queued", requestStatus: "queued", replayed: false)
+            SendMessageResponse(messageId: "queued", replayed: false)
         })
         store.updateState {
             $0.daemonConnected = true

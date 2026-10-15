@@ -28,7 +28,6 @@
       "execution": {
         "model_concurrency": 4,
         "foreground_reserve": 1,
-        "process_concurrency": 64,
         "tool_concurrency": 8,
         "live_channels": 8,
         "idle_channel_seconds": 900,
@@ -43,7 +42,7 @@
       },
       "data_root": "/authority",
       "workspace": "/authority/workspace",
-      "skill_directories": ["/authority/skills"],
+      "skill_directories": ["/authority/skills/learned"],
       "profiles": {
         "openai": {
           "kind": "open_ai",
@@ -67,19 +66,26 @@
           "parameters": {"type": "object", "properties": {}, "additionalProperties": false}
         }
       ],
-      "capability_instructions": "Rust owns durable domain state.",
+      "capabilities": {"memory": true, "goals": true},
       "mcp": {"servers": {}},
       "enabled_tools": ["read", "bash", "edit", "write", "grep", "find", "ls", "subagent", "background_jobs"]
     }
   },
   "initialize_response": {
     "id": 1,
-    "result": {"protocol_version": 1, "harness": "pi", "version": "1.2.0"}
+    "result": {"protocol_version": 1, "harness": "pi"}
   },
   "chat_request": {
     "id": 2,
     "method": "chat",
-    "params": {"session_key": "00000000-0000-0000-0000-000000000000", "text": "Hello.", "channel": "voice", "context": ""}
+    "params": {
+      "session_key": "00000000-0000-0000-0000-000000000000",
+      "text": "Hello.",
+      "channel": "voice",
+      "context": "",
+      "memory_context": "Owner memory.",
+      "persona": {"souls": ["Speak plainly."], "profiles": ["The owner is learning Spanish."]}
+    }
   },
   "domain_tool_request": {
     "id": -1,

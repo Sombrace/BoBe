@@ -293,8 +293,6 @@ def apply(
     *,
     root: Path | None = None,
 ) -> dict[str, Any]:
-    """Apply one router-side impairment lease bounded by a self-healing TTL."""
-
     if profile == "clean":
         return clear(root)
     if profile not in NETWORK_PROFILES:

@@ -1,72 +1,107 @@
 # BoBe ESP32 SDK
 
-Build a BoBe surface from an ESP32: a keyboard, a small text display, a button, a
-sensor node or a voice companion. Devices own their hardware and real-time I/O;
-the BoBe daemon owns conversation, memory, model execution and tools. Device code
-does not depend on the daemon's Rust, Swift or TypeScript build. The complete
-WonderBoy WB-12 application and its hardware-in-the-loop (HIL) tools are in
-[`examples/wb12`](examples/wb12/README.md).
+ESP-IDF components and examples for BoBe devices: a voice body, a keyboard or
+text display, buttons and sensors. A device owns its hardware and real-time
+input and output. The BoBe daemon owns conversation, memory, models and tools,
+and the device reaches it over [BodyLink](docs/bodylink.md). Install and run the
+daemon first ([main README](../README.md)). Device code is C11 with
+C++-compatible headers; Python runs only on your computer. Run the commands
+below from `esp32-sdk/`.
 
-Device components are C11 with C++-compatible APIs. Python runs on the developer's
-computer for project creation, certificate and key validation, flashing and
-inspection; its `cryptography` package never reaches firmware. On Intel macOS,
-current `cryptography` releases build from source and need Rust, a C compiler and
-OpenSSL development libraries.
+## Start here
 
-Run the commands below from `esp32-sdk/`. The [main README](../README.md) covers
-installing and running the daemon.
-
-## Choose an entry point
-
-| Application | Start here | Requirements |
+| Example | What it does | Needs |
 |---|---|---|
-| Keyboard, text screen or application actions | [text_terminal](examples/text_terminal/README.md) | Network; the serial console works as a first UI |
-| Sensors and an optional button | [sensor_node](examples/sensor_node/README.md) | Network |
-| Wire format in existing firmware | [bobe_protocol](components/bobe_protocol/README.md) | Portable C11/C++; also builds on a desktop |
-| Bounded text assembly for a small display | [bobe_text](components/bobe_text/README.md) | Caller-owned buffer; any renderer |
-| Full voice companion | [wb12](examples/wb12/README.md) | The documented ESP32-S3 board |
+| [`examples/text_terminal`](examples/text_terminal) | Serial console as keyboard and text display, plus action and sensor commands | Wi-Fi |
+| [`examples/sensor_node`](examples/sensor_node) | Reports uptime and free memory every 10 s; optional button | Wi-Fi |
+| [`examples/protocol`](examples/protocol) | Logs encoded BodyLink messages; no network | Any ESP32 |
+| [`examples/wb12`](examples/wb12/README.md) | Complete voice body | A WonderBoy WB-12 |
 
-The lightweight client needs no PSRAM, I2S, LVGL or speech models. ESP32,
-ESP32-C3, ESP32-C6 and ESP32-S3 are build targets; voice targets ESP32-S3. A build
-does not qualify an untested board's peripherals.
+| Component | Use | Header |
+|---|---|---|
+| `bobe_client` | Text, actions and sensors over one BodyLink connection | `esp_bobe_client.h` |
+| `bobe_text` | Collects `display.text` into a fixed buffer for any renderer | `bobe_text_view.h` |
+| `bobe_protocol` | Portable BodyLink codec and signed-update parser; also builds on a desktop | `bobe_protocol.h` |
+| `bobe_sdk` | Complete ESP32-S3 voice runtime | `esp_bobe_sdk.h` |
 
-## Create a project
+The other components make up the voice runtime, which needs an ESP32-S3 with
+PSRAM. `bobe_client` needs no PSRAM, audio, display or speech models and builds
+for ESP32, ESP32-C3, ESP32-C6 and ESP32-S3. `bobe_protocol` builders write into
+your buffer and return `BOBE_PROTOCOL_TOO_LARGE` when the JSON does not fit. A
+build does not prove a board works.
 
-With Git, CMake and `uv`, create a project outside this checkout:
+## Build and flash an example
+
+You need Git, CMake and [uv](https://docs.astral.sh/uv/).
 
 ```sh
 tools/bootstrap.sh
+tools/idf.sh -C examples/text_terminal set-target esp32c3
+tools/idf.sh -C examples/text_terminal menuconfig
+tools/idf.sh -C examples/text_terminal build
+tools/idf.sh -C examples/text_terminal -p PORT flash monitor
+```
+
+`tools/bootstrap.sh` installs ESP-IDF 6.1 under `.deps/`, never globally;
+`BOBE_IDF_VERSION=6.0.2` selects the version the WB-12 uses, and `idf.py` works
+directly too. `uv run --locked python tools/doctor.py` reports what is missing.
+On Intel Macs, `cryptography` builds from source and needs Rust, a C compiler
+and OpenSSL headers.
+
+Set Wi-Fi under **Example Connection Configuration**; the sensor node's button
+(off by default; check the pinout first) is under **BoBe sensor example**. Only
+the last command flashes. The examples use Espressif's example Wi-Fi helper and
+SNTP; a product brings its own network and the trusted clock TLS needs. In the
+text terminal, type a message and press Enter; `/action ID LABEL` sends a button
+press and `/sensor NAME VALUE UNIT` a sample.
+
+## Create a project
+
+```sh
 uv run --locked python tools/new_project.py my_keyboard \
   --template text-terminal --target esp32c3 --output ../../my_keyboard
-tools/idf.sh -C ../../my_keyboard menuconfig
 tools/idf.sh -C ../../my_keyboard build
 ```
 
-Other templates are `sensor-node`, `protocol` and `wb12`. The generator never
-overwrites a destination and copies only a small application, not SDK sources,
-credentials, build output or the WB-12 lab tools.
+Templates are `text-terminal`, `sensor-node`, `protocol` and `wb12`. The
+generator copies only the small application, never SDK sources, credentials or
+build output, and never overwrites a directory. The project uses this checkout
+by path; `--git URL --ref COMMIT` pins a commit of this repository instead (not
+for `wb12`). To add the client to existing firmware, declare it in
+`main/idf_component.yml`:
 
-ESP-IDF **6.1** is the default; the WB-12 wrapper defaults to the tested **6.0.2**.
-`BOBE_IDF_VERSION` selects either. Tools, Python environments and components stay
-in the checkout; existing ESP-IDF users can run `idf.py` directly.
+```yaml
+dependencies:
+  bobe_client:
+    git: https://github.com/Sombrace/BoBe.git
+    path: esp32-sdk/components/bobe_client
+    version: COMMIT
+```
+
+Use `path:` alone for a local checkout. Sibling components resolve from the same
+revision; commit `dependencies.lock`. The SDK is not in the ESP Component Registry.
 
 ## Enroll and connect
 
-Text, actions and sensors need a daemon with **BodyLink minor 2**; voice-only
-bodies and the Swift speech adapter use minor 1.
+A device connects only with an owner-issued claim and an enrollment that grants
+its capabilities. Text, actions and sensors need BodyLink minor 2.
 
-1. Boot the application and read its persistent device ID from the serial log.
-2. Obtain an owner-issued BodyLink claim with the endpoint, CA, client
-   certificate and key, device ID and controller epoch (the WB-12 provisioning
-   tools use this format).
-3. Import it into the application's ignored private directory:
+1. Boot the application and copy its `device_id` from the serial log.
+2. Get a claim: a JSON file with `device_id`, `endpoint_uri` (`wss://`),
+   `trust_kid`, `controller_epoch`, `server_ca_pem`, `client_cert_pem` and
+   `client_key_pem`. For development, `examples/wb12/tools/generate_bodylink_pki.sh`
+   creates one along with the daemon's TLS settings; see
+   [provision and enroll](examples/wb12/README.md#provision-and-enroll).
+3. Import it into the application's ignored `private/` directory (the claim must
+   be mode 600):
 
    ```sh
-   uv run --locked python tools/import_claim.py /private/path/claim.json \
-     --project ../../my_keyboard
+   uv run --locked python tools/import_claim.py /secure/path/claim.json \
+     --project examples/text_terminal
    ```
 
-4. Enroll the certificate and grant capabilities in BoBe:
+4. Enroll the client certificate (the SHA-256 of its DER bytes) with the
+   capabilities the device may use:
 
    ```sh
    bobe endpoint enroll DEVICE_ID --kind physical_body --label "Desk keyboard" \
@@ -74,79 +109,90 @@ bodies and the Swift speech adapter use minor 1.
      --capabilities '{"text_input":true,"text_output":true,"actions":true,"sensors":true}'
    ```
 
-   A sensor-only device needs `{"sensors":true}`, plus `"actions":true` for its
-   button. Reported capabilities never expand owner grants.
-5. Configure Wi-Fi in `menuconfig`, rebuild and flash explicitly through ESP-IDF.
+   A sensor node needs `{"sensors":true}`, plus `"actions":true` for its button.
+   [BodyLink](docs/bodylink.md#handshake-and-grants) explains minors and grants.
+5. Rebuild and flash. `bobe endpoint list` shows grants and what the device
+   reported; `bobe endpoint revoke DEVICE_ID` cuts it off.
 
-The client neither owns Wi-Fi nor erases NVS. Examples use Espressif's network
-helper and SNTP; products may supply their own network and trusted time. TLS
-verification, pinned enrollment and controller-epoch checks always stay on.
-
-## Use components directly
-
-Point the ESP-IDF Component Manager at a local checkout:
-
-```yaml
-dependencies:
-  bobe_client:
-    path: /path/to/BoBe/esp32-sdk/components/bobe_client
-```
-
-or at a pinned commit of this repository:
-
-```yaml
-dependencies:
-  bobe_client:
-    git: https://github.com/Sombrace/BoBe.git
-    path: esp32-sdk/components/bobe_client
-    version: YOUR_PINNED_COMMIT
-```
-
-Sibling components resolve from the same revision. Keep `dependencies.lock`. The
-components are not in the public ESP Component Registry.
+The client never configures Wi-Fi or erases NVS. Keep claims out of Git and logs.
 
 ## Interaction API
 
-Initialize `esp_bobe_client_config_t` with real capabilities and an event callback,
-then call `esp_bobe_client_start()` after network and clock setup. Send input with
-`esp_bobe_send_text`, `esp_bobe_send_action`, `esp_bobe_report_number` and
-`esp_bobe_report_boolean`.
+[`examples/text_terminal/main/main.c`](examples/text_terminal/main/main.c) is a complete client.
 
-Give each human request its own UUID and keep it until resolved. A successful send
-means queued locally; `input.result` reports acceptance and completion. Offline
-input is never replayed automatically. Sensor samples update telemetry without
-starting a model turn.
+- Run one client per chip. Initialize NVS, then call `esp_bobe_client_init()`
+  with the device's real capabilities and its event handler; a NULL `device_id`
+  or `credentials` uses the device ID or claim stored in NVS. Call
+  `esp_bobe_client_start()` after the network is up and the clock is valid, and
+  serialize init, start and stop.
+- Send whole entries, not keystrokes, with `esp_bobe_send_text`,
+  `esp_bobe_send_action`, `esp_bobe_cancel_input`, `esp_bobe_report_number` and
+  `esp_bobe_report_boolean`. `esp_bobe_request_id()` fills a 37-byte buffer; keep
+  the ID until `input.result` settles it.
+- `ESP_OK` means queued on the device. Nothing is sent while disconnected,
+  replayed after a reconnect or retried under a new ID; ask the person first.
+- An event is valid only during the callback: copy what you keep, return quickly
+  and never call `esp_bobe_client_stop()` from it.
+- `bobe_text_view` keeps response text in a buffer you own of at least 5 bytes.
+  Call `bobe_text_view_init()` once, then `bobe_text_view_apply()` for each
+  `display.text` from one task, and render `view.buffer` when it returns
+  `BOBE_TEXT_APPLIED`. When full it drops the oldest whole characters and sets
+  `truncated`.
 
-Text arrives as bounded UTF-8 `display.text` chunks; `bobe_text_view` handles
-sequence gaps, duplicates, new requests and fixed-size storage. Callbacks borrow
-data and must not block; copy or queue it for the UI task. Voice bodies can use
-the same send APIs on their connection; see
-[porting](docs/porting.md#combining-voice-and-other-interactions).
+## Port a voice body
 
-## Development
+Start from [`examples/wb12`](examples/wb12) and replace its
+`components/bobe_board_port`, `components/bobe_device_config` and
+`sdkconfig*.defaults`. The project `CMakeLists.txt` includes
+`cmake/esp_bobe_sdk.cmake` before ESP-IDF's `project.cmake`. `main` requires
+`bobe_sdk` and the board port and calls `esp_bobe_start()` once; it holds board
+power and schedules startup, so `ESP_OK` means scheduled, not ready.
+
+| Provide | Contents |
+|---|---|
+| `bobe_board.h` | Early power hold, buttons, battery, temperature, backlight, shutdown, and the public update key as NUL-terminated PEM (length includes the NUL) |
+| `bobe_board_audio.h` | Two I2S controllers: a 16 kHz microphone read as 32-bit Philips slots (upper 16 bits used) and a 24 kHz PCM16 speaker; the port sets pins, clock inversion, channel and slot width |
+| `bobe_board_display.h` | An RGB565 panel with asynchronous transfer completion, its orientation and byte order; the SDK owns LVGL and flushing |
+| `bobe_device_config.h` | Model, label, hostname prefix, mDNS name, display size and update image limit |
+
+The first three headers are in [`components/bobe_board/include`](components/bobe_board/include).
+Audio is mono; a shared full-duplex codec needs its own driver. The face needs a
+landscape panel at least 240 px wide. Give incompatible hardware its own model
+string, because updates match by model.
+
+To add text, actions or sensors to a voice body, enable
+`CONFIG_BOBE_ENABLE_TEXT_INPUT`, `CONFIG_BOBE_ENABLE_TEXT_OUTPUT`,
+`CONFIG_BOBE_ENABLE_ACTION_INPUT` or `CONFIG_BOBE_ENABLE_SENSOR_REPORTS`, call
+`esp_bobe_set_event_handler()` before `esp_bobe_start()`, and use the client send
+functions over the voice connection. Text output reaches your callback, not the
+face. The device then needs a minor-2 enrollment with those grants.
+
+## Checks and hardware validation
 
 ```sh
-uv run --locked python tools/doctor.py --project examples/text_terminal
 cmake -S . -B build -DESP_BOBE_SANITIZE=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 tools/check.sh
 ```
 
-`tools/check.sh` needs the prepared WB-12 dependencies and ESP-IDF, and its camera
-checks need macOS. The portable C/C++ and Python tests run on Linux without a
-board. From the repository root, `scripts/check-bodylink-contract.sh` compares the
-Rust, Swift and SDK wire contracts; none of these checks flash a device.
+The CMake build runs the portable C and C++ tests on Linux or macOS.
+`tools/check.sh` adds the Python tests, type checks, the device contract test and
+the WB-12 host and UI tests; build `examples/wb12` once first so its managed
+components exist. From the repository root, `scripts/check-bodylink-contract.sh`
+compares the C, Rust and Swift BodyLink constants. None of these flash a device.
 
-Read [architecture](docs/architecture.md), [porting](docs/porting.md),
-[BodyLink 1.2](docs/bodylink-v1.2.md) and [validation](docs/validation.md). WB-12
-[snapshot builds](examples/wb12/tools/README.md) record the BoBe commit in
-firmware provenance.
+Passing checks do not qualify a board. On the real board, with the intended
+firmware and a current daemon, try enrollment and revocation, every button, the
+display, microphone and speaker, push-to-talk, reconnects after Wi-Fi loss, a
+daemon restart and a reboot without duplicated turns, a signed update with
+rollback, power hold, battery level and temperature. Back up the flash and
+identity first. Secure Boot and flash encryption burn eFuses irreversibly and
+are never part of a build. The WB-12 has [HIL tools](examples/wb12/hil/README.md).
 
 ## License
 
-First-party code and documentation are MIT-licensed, copyright The BoBe Authors;
-see [LICENSE](LICENSE) and the repository's [trademark policy](../TRADEMARKS.md).
-Third-party code keeps its own licenses and notices. Factory firmware, recovered
-assets and recovery images are not covered by this license and are not in this
-repository.
+MIT, copyright The BoBe Authors; see [LICENSE](LICENSE) and the repository's
+[trademark policy](../TRADEMARKS.md). Third-party components keep their own
+licenses and notices. Factory firmware, recovered assets and recovery images are
+not covered by this license and are not in this repository.

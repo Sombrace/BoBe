@@ -33,9 +33,51 @@ enum BobeMotion {
         self.isReduced ? nil : .interpolatingSpring(mass: 1, stiffness: 180, damping: 20)
     }
 
+    @MainActor static var disclose: Animation? {
+        self.isReduced ? nil : .spring(response: 0.32, dampingFraction: 0.9)
+    }
+
+    @MainActor static var hover: Animation? {
+        self.isReduced ? nil : .easeOut(duration: 0.15)
+    }
+
+    @MainActor static var follow: Animation? {
+        self.isReduced ? nil : .linear(duration: 0.12)
+    }
+
+    @MainActor static var spin: Animation? {
+        self.isReduced ? nil : .linear(duration: 0.85).repeatForever(autoreverses: false)
+    }
+
+    @MainActor static var recede: Animation {
+        self.isReduced ? .easeOut(duration: 0.16) : .easeIn(duration: 0.56)
+    }
+
+    @MainActor static var restore: Animation {
+        .easeOut(duration: self.isReduced ? 0.1 : 0.14)
+    }
+
+    @MainActor static var windowFadeSeconds: TimeInterval {
+        self.isReduced ? 0 : 0.18
+    }
+
+    @MainActor static var symbolReplace: ContentTransition {
+        self.isReduced ? .identity : .symbolEffect(.replace)
+    }
+
     @MainActor
     static func stagger(_ index: Int, step: Double = 0.04) -> Animation? {
         self.standard?.delay(Double(index) * step)
+    }
+
+    @MainActor
+    static func drift(_ index: Int) -> Animation? {
+        self.isReduced ? nil : .easeOut(duration: 2.4).delay(Double(index) * 0.5)
+    }
+
+    @MainActor
+    static func hoverScale(_ isHovered: Bool) -> CGFloat {
+        isHovered && !self.isReduced ? 1.02 : 1
     }
 }
 
@@ -68,8 +110,8 @@ extension AnyTransition {
     }
 
     @MainActor
-    static func bobePop(anchor: UnitPoint = .center) -> AnyTransition {
+    static func bobePop(anchor: UnitPoint = .center, scale: CGFloat = 0.82) -> AnyTransition {
         guard !BobeMotion.isReduced else { return .opacity }
-        return .scale(scale: 0.82, anchor: anchor).combined(with: .opacity)
+        return .scale(scale: scale, anchor: anchor).combined(with: .opacity)
     }
 }

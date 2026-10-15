@@ -5,7 +5,9 @@ use axum::response::IntoResponse;
 use serde::Serialize;
 use std::sync::Arc;
 
+use crate::api::readiness::Readiness;
 use crate::app_state::AppState;
+use crate::db::runtime_authority_repo::RuntimeIdentity;
 use crate::runtime::session::RuntimeStatus;
 
 #[derive(Debug, Serialize)]
@@ -13,9 +15,6 @@ pub(crate) struct HealthResponse {
     status: &'static str,
     services: ServiceHealth,
     version: &'static str,
-    bodies: std::collections::HashMap<String, crate::body::gateway::BodyUpdateStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    body_offer_build: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -43,64 +42,46 @@ pub(crate) async fn health_check(State(state): State<Arc<AppState>>) -> Json<Hea
             body_link: state.body.gateway.health_status(),
         },
         version: env!("CARGO_PKG_VERSION"),
-        bodies: state.body.gateway.update_statuses(),
-        body_offer_build: state.body.gateway.configured_offer_build(),
     })
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ReadinessResponse {
-    status: &'static str,
+    #[serde(flatten)]
+    readiness: Readiness,
     runtime_authority_id: uuid::Uuid,
     runtime_authority_epoch: i64,
     runtime_incarnation_id: uuid::Uuid,
     daemon_version: &'static str,
     schema_version: i64,
-    initialization_state: crate::db::runtime_initialization_repo::InitializationState,
     started_at: chrono::DateTime<chrono::Utc>,
-    blocking_reasons: Vec<&'static str>,
+}
+
+impl ReadinessResponse {
+    pub(crate) fn new(readiness: Readiness, identity: &RuntimeIdentity) -> Self {
+        Self {
+            readiness,
+            runtime_authority_id: identity.runtime_authority_id,
+            runtime_authority_epoch: identity.runtime_authority_epoch,
+            runtime_incarnation_id: identity.runtime_incarnation_id,
+            daemon_version: identity.daemon_version,
+            schema_version: identity.schema_version,
+            started_at: identity.started_at,
+        }
+    }
 }
 
 pub(crate) async fn readiness(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let db_ok = sqlx::query("SELECT 1")
-        .fetch_one(&state.infra.db)
-        .await
-        .is_ok();
-    let identity = &state.infra.identity;
-    let initialization_state = **state.infra.initialization.load();
-    let (status, blocking_reasons) = readiness_state(db_ok, initialization_state);
-    let response = ReadinessResponse {
-        status,
-        runtime_authority_id: identity.runtime_authority_id,
-        runtime_authority_epoch: identity.runtime_authority_epoch,
-        runtime_incarnation_id: identity.runtime_incarnation_id,
-        daemon_version: identity.daemon_version,
-        schema_version: identity.schema_version,
-        initialization_state,
-        started_at: identity.started_at,
-        blocking_reasons,
+    let readiness = Readiness::check(&state.infra).await;
+    let status = if readiness.status.is_serving() {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
     };
     (
-        if db_ok {
-            StatusCode::OK
-        } else {
-            StatusCode::SERVICE_UNAVAILABLE
-        },
-        Json(response),
+        status,
+        Json(ReadinessResponse::new(readiness, &state.infra.identity)),
     )
-}
-
-fn readiness_state(
-    database_available: bool,
-    initialization_state: crate::db::runtime_initialization_repo::InitializationState,
-) -> (&'static str, Vec<&'static str>) {
-    if !database_available {
-        return ("not_ready", vec!["database_unavailable"]);
-    }
-    if initialization_state != crate::db::runtime_initialization_repo::InitializationState::Ready {
-        return ("initializing", vec!["initialization_incomplete"]);
-    }
-    ("ready", Vec::new())
 }
 
 #[derive(Debug, serde::Deserialize, Serialize)]
@@ -220,30 +201,4 @@ pub(crate) async fn get_status(
             .get_status(principal.conversation_channel()),
         version: env!("CARGO_PKG_VERSION"),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::runtime_initialization_repo::InitializationState;
-
-    #[test]
-    fn operational_readiness_requires_completed_initialization() {
-        assert_eq!(
-            readiness_state(true, InitializationState::ProviderRequired),
-            ("initializing", vec!["initialization_incomplete"])
-        );
-        assert_eq!(
-            readiness_state(true, InitializationState::PersonalizationRequired),
-            ("initializing", vec!["initialization_incomplete"])
-        );
-        assert_eq!(
-            readiness_state(true, InitializationState::Ready),
-            ("ready", Vec::new())
-        );
-        assert_eq!(
-            readiness_state(false, InitializationState::Ready),
-            ("not_ready", vec!["database_unavailable"])
-        );
-    }
 }

@@ -53,6 +53,8 @@ pub(crate) struct AgentJob {
     pub(crate) updated_at: String,
 }
 
+pub(crate) const MAX_CONTEXT_BYTES: usize = 16 * 1024;
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct JobInput {
@@ -184,7 +186,7 @@ impl AgentJobRepo {
             || input.title.len() > 160
             || input.task.trim().is_empty()
             || input.task.len() > 32 * 1024
-            || input.context.len() > 16 * 1024
+            || input.context.len() > MAX_CONTEXT_BYTES
         {
             return Err(AppError::Validation("background work requires a title (1-160 bytes), task (1-32768 bytes) and bounded context (16384 bytes)".into()));
         }

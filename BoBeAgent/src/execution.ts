@@ -9,7 +9,7 @@ import type { Initialize, TaskBudget } from "./protocol.js";
 
 export type Workload = keyof Initialize["workload_budgets"];
 export type ExecutionPriority = "interactive" | "background";
-export type ExecutionLimits = Initialize["execution"];
+type ExecutionLimits = Initialize["execution"];
 type Budget = Initialize["workload_budgets"][Workload];
 
 interface Waiter {

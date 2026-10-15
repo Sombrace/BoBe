@@ -219,6 +219,106 @@ struct VoiceWsEndpointTests {
         }
     }
 
+    @Suite("Voice install outcome")
+    struct VoiceInstallOutcomeTests {
+        @Test
+        @MainActor
+        func inFlightInstallIsNeverSettled() {
+            #expect(VoiceInstallOutcome.resolve(
+                installing: true, snapshotRunning: nil,
+                preparation: .failed("old failure"), sttStatus: .failed("old failure")
+            ) == .installing)
+        }
+
+        @Test
+        @MainActor
+        func missingSnapshotMeansDaemonUnreachable() {
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: nil,
+                preparation: .preparing, sttStatus: .notLoaded
+            ) == .failed(L10n.tr("setup.voice.daemon_unreachable")))
+        }
+
+        @Test
+        @MainActor
+        func readyModelsWinOverStaleRecognitionFailure() {
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: false,
+                preparation: .ready, sttStatus: .failed("stale")
+            ) == .ready)
+        }
+
+        @Test
+        @MainActor
+        func recognitionFailureEndsInstallEvenWhileVoiceDownloads() {
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: true,
+                preparation: .installing, sttStatus: .failed("hearing failed")
+            ) == .failed("hearing failed"))
+        }
+
+        @Test
+        @MainActor
+        func runningDownloadsKeepInstalling() {
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: true,
+                preparation: .installing, sttStatus: .ready
+            ) == .installing)
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: false,
+                preparation: .installing, sttStatus: .downloading
+            ) == .installing)
+        }
+
+        @Test
+        @MainActor
+        func stoppedDownloadsReturnToTheChoice() {
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: false,
+                preparation: .missing, sttStatus: .notLoaded
+            ) == .stopped)
+        }
+
+        @Test
+        @MainActor
+        func retryAfterFailedDownloadWaitsForStatusFetchedAfterTheRequest() {
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: false,
+                preparation: .failed("download failed"), sttStatus: .ready,
+                snapshotRevision: 4, staleThrough: 4
+            ) == .installing)
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: true,
+                preparation: .installing, sttStatus: .ready,
+                snapshotRevision: 5, staleThrough: 4
+            ) == .installing)
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: false,
+                preparation: .failed("download failed again"), sttStatus: .ready,
+                snapshotRevision: 6, staleThrough: 4
+            ) == .failed("download failed again"))
+        }
+
+        @Test
+        @MainActor
+        func firstInstallIgnoresIdleStatusFromBeforeTheRequest() {
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: false,
+                preparation: .missing, sttStatus: .ready,
+                snapshotRevision: 1, staleThrough: 1
+            ) == .installing)
+        }
+
+        @Test
+        @MainActor
+        func preparationFailureIsReported() {
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: false,
+                preparation: .failed("voice failed"), sttStatus: .ready
+            ) == .failed("voice failed"))
+        }
+    }
+
     @Test
     func httpsBecomesWss() throws {
         let url = try #require(URL(string: "https://example.test:8443"))

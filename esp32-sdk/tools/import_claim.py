@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Import an owner-issued BodyLink claim into one project's ignored private directory."""
-
 from __future__ import annotations
 
 import argparse
@@ -121,7 +119,7 @@ def import_claim(claim_path: Path, project: Path) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Import an owner-issued BodyLink claim into one project's ignored private directory.")
     parser.add_argument("claim", type=Path)
     parser.add_argument("--project", type=Path, required=True)
     args = parser.parse_args()

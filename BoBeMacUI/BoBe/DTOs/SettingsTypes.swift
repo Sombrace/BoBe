@@ -122,12 +122,10 @@ struct SendMessageRequest: Codable, Sendable {
 
 struct SendMessageResponse: Codable, Sendable {
     let messageId: String
-    let requestStatus: String
     let replayed: Bool
 
     enum CodingKeys: String, CodingKey {
         case messageId = "message_id"
-        case requestStatus = "request_status"
         case replayed
     }
 }
@@ -139,26 +137,10 @@ enum InitializationStateWire: String, Codable, Sendable, Equatable {
 }
 
 struct ReadinessResponse: Codable, Sendable {
-    let status: String
-    let runtimeAuthorityId: UUID
-    let runtimeAuthorityEpoch: Int
     let runtimeIncarnationId: UUID
-    let daemonVersion: String
-    let schemaVersion: Int
-    let initializationState: InitializationStateWire
-    let startedAt: String
-    let blockingReasons: [String]
 
     enum CodingKeys: String, CodingKey {
-        case status
-        case runtimeAuthorityId = "runtime_authority_id"
-        case runtimeAuthorityEpoch = "runtime_authority_epoch"
         case runtimeIncarnationId = "runtime_incarnation_id"
-        case daemonVersion = "daemon_version"
-        case schemaVersion = "schema_version"
-        case initializationState = "initialization_state"
-        case startedAt = "started_at"
-        case blockingReasons = "blocking_reasons"
     }
 }
 
@@ -179,7 +161,6 @@ struct InitializationAdvanceRequest: Codable, Sendable {
 }
 
 struct HealthResponse: Codable, Sendable {
-    let status: String
     let services: HealthServices
 }
 

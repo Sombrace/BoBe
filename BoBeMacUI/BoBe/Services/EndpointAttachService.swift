@@ -83,7 +83,7 @@ actor EndpointAttachService {
         switch http.statusCode {
         case 200 ... 299:
             let hello = try JSONDecoder().decode(HelloResponse.self, from: data)
-            try self.verify(
+            try Self.verify(
                 hello,
                 expectedAuthorityId: expectedAuthorityId,
                 expectedAuthorityEpoch: expectedAuthorityEpoch
@@ -98,7 +98,7 @@ actor EndpointAttachService {
         }
     }
 
-    private func verify(
+    static func verify(
         _ hello: HelloResponse,
         expectedAuthorityId: UUID?,
         expectedAuthorityEpoch: Int?
@@ -106,7 +106,7 @@ actor EndpointAttachService {
         guard hello.negotiatedProtocol >= AttachWire.protocolMin,
               hello.negotiatedProtocol <= AttachWire.protocolMax
         else { throw AttachError.protocolIncompatible }
-        guard hello.readiness.state == "ready" else {
+        guard hello.readiness.state.isServing else {
             throw AttachError.notReady(reasons: hello.readiness.blockingReasons)
         }
         if let expected = expectedAuthorityId, expected != hello.runtimeAuthorityId {

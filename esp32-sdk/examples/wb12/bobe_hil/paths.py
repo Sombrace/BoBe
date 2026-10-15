@@ -36,22 +36,16 @@ def sha256_file(path: Path) -> str:
 
 
 def private_root(override: Path | None = None) -> Path:
-    """Repository-local private configuration root for HIL hardware."""
-
     return HIL_PRIVATE_ROOT if override is None else Path(override)
 
 
 def regular_file(path: Path, description: str) -> Path:
-    """Reject symbolic links and non-regular files before reading them."""
-
     if path.is_symlink() or not path.is_file():
         raise ValueError(f"{description} is unavailable or is not a regular file")
     return path
 
 
 def private_key_file(path: Path, description: str) -> Path:
-    """Require 0600-style modes on real private key material."""
-
     regular_file(path, description)
     if path.stat().st_mode & 0o077:
         raise ValueError(
@@ -62,8 +56,6 @@ def private_key_file(path: Path, description: str) -> Path:
 
 @contextmanager
 def exclusive_device_access(name: str, *, root: Path | None = None) -> Iterator[Path]:
-    """Serialize access to one physical device across processes."""
-
     lock_root = private_root(root)
     lock_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     lock_path = lock_root / f"{name}.lock"

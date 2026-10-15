@@ -29,5 +29,3 @@ typedef struct {
 
 const bobe_storage_slot_keys_t *bobe_storage_slot_keys(uint8_t slot);
 esp_err_t bobe_storage_load_active_slot(uint8_t *slot);
-esp_err_t bobe_storage_invalidate_claim(void);
-esp_err_t bobe_storage_erase_claim_secrets(void);

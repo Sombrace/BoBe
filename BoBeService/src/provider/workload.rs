@@ -22,3 +22,18 @@ impl WorkerClass {
         self.budget().wall_clock
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuxiliaryClass {
+    Small,
+    Consolidate,
+}
+
+impl AuxiliaryClass {
+    pub(crate) const fn worker_class(self) -> WorkerClass {
+        match self {
+            Self::Small => WorkerClass::Small,
+            Self::Consolidate => WorkerClass::Consolidate,
+        }
+    }
+}

@@ -1,16 +1,26 @@
 import Foundation
 import os
 
-private let lock = OSAllocatedUnfairLock<Bundle?>(initialState: nil)
+struct LocalizationCatalog: Sendable {
+    let localeId: String
+    let bundle: Bundle
+}
+
+private let lock = OSAllocatedUnfairLock<LocalizationCatalog?>(initialState: nil)
 
 enum L10n {
     static func setLocaleOverride(_ localeId: String?) {
-        let bundle = self.resolveBundle(for: localeId)
-        lock.withLock { $0 = bundle }
+        let catalog = localeId.flatMap(self.catalog(for:))
+        lock.withLock { $0 = catalog }
+    }
+
+    static var locale: Locale {
+        let localeId = lock.withLock { $0?.localeId }
+        return Locale(identifier: localeId ?? Bundle.appResources.preferredLocalizations.first ?? "en")
     }
 
     static func tr(_ key: String, _ args: CVarArg...) -> String {
-        let bundle = lock.withLock { $0 } ?? Bundle.appResources
+        let bundle = lock.withLock { $0?.bundle } ?? Bundle.appResources
         var format = NSLocalizedString(
             key,
             tableName: "UI",
@@ -34,13 +44,13 @@ enum L10n {
         return String(format: format, locale: .current, arguments: args)
     }
 
-    private static func resolveBundle(for localeId: String?) -> Bundle? {
-        guard let localeId, !localeId.isEmpty else { return nil }
+    static func catalog(for localeId: String) -> LocalizationCatalog? {
+        guard !localeId.isEmpty else { return nil }
         let candidates = [localeId, localeId.lowercased(), String(localeId.prefix(2))]
         for candidate in candidates {
             if let url = Bundle.appResources.url(forResource: candidate, withExtension: "lproj"),
                let bundle = Bundle(url: url) {
-                return bundle
+                return LocalizationCatalog(localeId: localeId, bundle: bundle)
             }
         }
         return nil

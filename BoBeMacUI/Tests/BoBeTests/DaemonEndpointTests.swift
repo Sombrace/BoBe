@@ -181,18 +181,63 @@ struct DaemonEndpointTests {
         #expect(response.negotiatedProtocol == 1)
         #expect(response.capabilities.stt == .unsupported)
         #expect(response.initializationState == .ready)
+        #expect(response.readiness.state == .ready)
     }
 
     @Test
-    func readinessResponseDecodesDaemonIdentityAndInitialization() throws {
+    func attachAcceptsARuntimeStillSettingUpButRefusesAnUnavailableOne() throws {
+        let ready = try Self.hello(readiness: "ready", reasons: [])
+        #expect(ready.readiness.state == .ready)
+        try EndpointAttachService.verify(ready, expectedAuthorityId: nil, expectedAuthorityEpoch: nil)
+
+        let settingUp = try Self.hello(readiness: "initializing", reasons: ["initialization_incomplete"])
+        #expect(settingUp.readiness.state == .initializing)
+        #expect(settingUp.initializationState == .providerRequired)
+        try EndpointAttachService.verify(settingUp, expectedAuthorityId: nil, expectedAuthorityEpoch: nil)
+
+        for (state, decoded) in [("not_ready", ReadinessStateWire.notReady), ("paused", .unknown)] {
+            let unavailable = try Self.hello(readiness: state, reasons: ["database_unavailable"])
+            #expect(unavailable.readiness.state == decoded)
+            let refusal = #expect(throws: AttachError.self) {
+                try EndpointAttachService.verify(
+                    unavailable,
+                    expectedAuthorityId: nil,
+                    expectedAuthorityEpoch: nil
+                )
+            }
+            guard case let .notReady(reasons)? = refusal else {
+                Issue.record("expected a not-ready refusal for \(state)")
+                continue
+            }
+            #expect(reasons == ["database_unavailable"])
+        }
+    }
+
+    private static func hello(readiness state: String, reasons: [String]) throws -> HelloResponse {
+        let object: [String: Any] = [
+            "runtime_authority_id": "11111111-2222-3333-4444-555555555555",
+            "runtime_authority_epoch": 1,
+            "daemon_version": "0.1.0",
+            "negotiated_protocol": 1,
+            "deployment_mode": "loopback",
+            "initialization_state": state == "ready" ? "ready" : "provider_required",
+            "readiness": ["state": state, "blocking_reasons": reasons],
+            "capabilities": ["stt": "unsupported"],
+            "granted_scopes": EndpointAttachService.requiredScopes,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        return try JSONDecoder().decode(HelloResponse.self, from: data)
+    }
+
+    @Test
+    func readinessResponseDecodesRuntimeIncarnation() throws {
         let data = try #require(
             """
             {"status":"ready","runtime_authority_id":"11111111-2222-3333-4444-555555555555","runtime_authority_epoch":1,"runtime_incarnation_id":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","daemon_version":"0.1.0","schema_version":1,"initialization_state":"provider_required","started_at":"2026-07-29T00:00:00Z","blocking_reasons":[]}
             """.data(using: .utf8)
         )
         let response = try JSONDecoder().decode(ReadinessResponse.self, from: data)
-        #expect(response.initializationState == .providerRequired)
-        #expect(response.runtimeAuthorityEpoch == 1)
+        #expect(response.runtimeIncarnationId == UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
     }
 
     @Test

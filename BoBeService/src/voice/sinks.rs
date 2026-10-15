@@ -76,19 +76,26 @@ pub(crate) async fn emit_filler(
     let Some(pcm) = library.get(kind) else {
         return;
     };
-    let sample_rate = library.sample_rate();
-    let Some(mut encoder) = make_opus_encoder(sample_rate) else {
+    let Some(frames) = filler_frames(&pcm, library.sample_rate()) else {
         return;
     };
-    let mut chunk_id: u64 = 0;
-    for packet in encode_pcm_with(&mut encoder, &pcm, sample_rate) {
-        let framed = encode_tts_frame(chunk_id, FLAG_FILLER, &packet);
-        chunk_id = chunk_id.saturating_add(1);
+    for framed in frames {
         if !output.audio(framed).await {
             warn!(%run_id, "voice.sink_emit_send_failed");
             return;
         }
     }
+}
+
+pub(crate) fn filler_frames(pcm: &[f32], sample_rate: u32) -> Option<Vec<Vec<u8>>> {
+    let mut encoder = make_opus_encoder(sample_rate)?;
+    Some(
+        encode_pcm_with(&mut encoder, pcm, sample_rate)
+            .iter()
+            .zip(0_u64..)
+            .map(|(packet, chunk_id)| encode_tts_frame(chunk_id, FLAG_FILLER, packet))
+            .collect(),
+    )
 }
 
 pub(crate) fn filler_for_tool(tool_name: &str) -> FillerKind {
@@ -114,6 +121,17 @@ mod tests {
         assert_eq!(filler_for_tool("read_file"), FillerKind::ToolReadFile);
         assert_eq!(filler_for_tool("bash"), FillerKind::ToolGeneric);
         assert_eq!(filler_for_tool("anything_else"), FillerKind::ToolGeneric);
+    }
+
+    #[test]
+    fn filler_frames_are_numbered_filler_packets() {
+        let frames = filler_frames(&[0.0; 960], 24_000).unwrap();
+        assert_eq!(frames.len(), 2);
+        for (chunk_id, frame) in (0_u64..).zip(&frames) {
+            let decoded = crate::speech::protocol::decode_tts_frame(frame).unwrap();
+            assert_eq!(decoded.chunk_id, chunk_id);
+            assert_eq!(decoded.flags, FLAG_FILLER);
+        }
     }
 
     #[tokio::test]

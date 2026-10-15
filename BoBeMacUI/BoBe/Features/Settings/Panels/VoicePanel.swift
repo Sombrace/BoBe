@@ -1,21 +1,5 @@
 import SwiftUI
 
-private enum VoiceInstallTarget {
-    case daemonTts
-    case clientStt(language: String)
-}
-
-private enum VoiceModelPaths {
-    static var pocket: String {
-        DaemonConfig.managedDataDirectory
-            .appendingPathComponent("models", isDirectory: true)
-            .appendingPathComponent(VoiceWire.pocketTtsModelDir, isDirectory: true)
-            .path
-    }
-    static let parakeet = "~/Library/Application Support/FluidAudio/Models/parakeet-eou-streaming/"
-    static let nemotron = "~/Library/Application Support/FluidAudio/Models/nemotron-multilingual/"
-}
-
 struct VoicePanel: View {
     @Environment(VoicePipeline.self) private var pipeline
     @Environment(SettingsStore.self) private var store
@@ -23,15 +7,9 @@ struct VoicePanel: View {
     @State private var ttsPreference = VoiceTtsPreference.shared
     @State private var sttPreference = VoiceSttPreferenceStore.shared
     @State private var remoteSpeechConsent = RemoteSpeechConsent.shared
-    @State private var isReinstalling = false
+    @State private var installer = VoiceModelInstaller.shared
     @State private var installError: String?
-    @State private var clientTtsInstalled = FluidAudioSupertonicModelPresence.isInstalled()
-    @State private var statusPollTask: Task<Void, Never>?
     @Environment(\.theme) private var theme
-
-    private var installStatus: VoiceInstallSnapshot? {
-        self.pipeline.installSnapshot
-    }
 
     var body: some View {
         ScrollView {
@@ -79,7 +57,6 @@ struct VoicePanel: View {
             await self.loadAll()
         }
         .onDisappear {
-            self.statusPollTask?.cancel()
             self.store.cancelToast()
         }
     }
@@ -108,7 +85,7 @@ struct VoicePanel: View {
                     BobeMenuPicker(
                         selection: self.store.binding(\.voiceSttLanguage, fallback: "en"),
                         options: VoiceLanguages.all,
-                        label: VoiceLanguages.displayName(for:),
+                        label: { VoiceLanguages.menuTitle(for: $0) },
                         width: 240
                     )
                 }
@@ -256,9 +233,9 @@ struct VoicePanel: View {
                         name: L10n.tr("settings.voice.model.supertonic.name"),
                         purpose: L10n.tr("settings.voice.model.supertonic.purpose"),
                         sizeHint: L10n.tr("settings.voice.model.supertonic.size"),
-                        location: "~/.cache/fluidaudio/Models/supertonic-3/",
-                        status: self.clientTtsInstalled ? .installed : .missing,
-                        onInstall: { await self.prepareClientTts() },
+                        location: VoiceModel.supertonicTts.installPath,
+                        status: self.installer.status(of: .supertonicTts),
+                        onInstall: { await self.install(.supertonicTts) },
                         onUninstall: nil
                     )
                 }
@@ -270,10 +247,10 @@ struct VoicePanel: View {
                     purpose: L10n.tr("settings.voice.model.tts.purpose"),
                     sizeHint: L10n.tr("settings.voice.model.tts.size"),
                     location: self.expertMode.isEnabled && DaemonConfig.endpoint.daemonFilesystemIsLocalToApp
-                        ? VoiceModelPaths.pocket
+                        ? VoiceModel.pocketTts.installPath
                         : nil,
-                    status: self.pocketStatus,
-                    onInstall: { await self.installSingle(.daemonTts) },
+                    status: self.installer.status(of: .pocketTts),
+                    onInstall: { await self.install(.pocketTts) },
                     onUninstall: nil
                 )
 
@@ -284,16 +261,11 @@ struct VoicePanel: View {
                     purpose: L10n.tr("settings.voice.model.stt_en.purpose"),
                     sizeHint: L10n.tr("settings.voice.model.stt_en.size"),
                     location: self.expertMode.isEnabled
-                        ? VoiceModelPaths.parakeet
+                        ? VoiceModel.englishStt.installPath
                         : nil,
-                    status: self.parakeetStatus,
-                    onInstall: { await self.installSingle(.clientStt(language: "en")) },
-                    onUninstall: {
-                        await self.uninstall(
-                            path: VoiceModelPaths.parakeet,
-                            sttLanguage: "en"
-                        )
-                    }
+                    status: self.installer.status(of: .englishStt),
+                    onInstall: { await self.install(.englishStt) },
+                    onUninstall: { await self.installer.uninstall(.englishStt) }
                 )
 
                 VoiceModelCard(
@@ -303,21 +275,11 @@ struct VoicePanel: View {
                     purpose: L10n.tr("settings.voice.model.stt_multi.purpose"),
                     sizeHint: L10n.tr("settings.voice.model.stt_multi.size"),
                     location: self.expertMode.isEnabled
-                        ? VoiceModelPaths.nemotron
+                        ? VoiceModel.multilingualStt.installPath
                         : nil,
-                    status: self.nemotronStatus,
-                    onInstall: {
-                        let language = self.store.settings?.voiceSttLanguage ?? "zh"
-                        await self.installSingle(.clientStt(
-                            language: language == "en" ? "zh" : language
-                        ))
-                    },
-                    onUninstall: {
-                        await self.uninstall(
-                            path: VoiceModelPaths.nemotron,
-                            sttLanguage: "zh"
-                        )
-                    }
+                    status: self.installer.status(of: .multilingualStt),
+                    onInstall: { await self.install(.multilingualStt) },
+                    onUninstall: { await self.installer.uninstall(.multilingualStt) }
                 )
 
                 if self.expertMode.isEnabled {
@@ -335,16 +297,16 @@ struct VoicePanel: View {
                 }
 
                 HStack(spacing: 8) {
-                    Button(self.isReinstalling
+                    Button(self.installer.isPreparingTts
                         ? L10n.tr("settings.voice.reinstalling")
                         : L10n.tr("settings.voice.reinstall")
                     ) {
                         Task { await self.reinstall() }
                     }
                     .bobeButton(.primary, size: .small)
-                    .disabled(self.isReinstalling)
+                    .disabled(self.installer.isPreparingTts)
                     .accessibilityLabel(L10n.tr("settings.voice.reinstall.accessibility"))
-                    Text(self.isReinstalling
+                    Text(self.installer.isPreparingTts
                         ? L10n.tr("settings.voice.reinstall.running")
                         : L10n.tr("settings.voice.reinstall.description")
                     )
@@ -357,75 +319,12 @@ struct VoicePanel: View {
         }
     }
 
-    private var pocketStatus: VoiceModelCard.Status {
-        guard let progress = self.installStatus?.models.first(where: { $0.kind == VoiceWire.modelKindTts }) else {
-            return .unknown
-        }
-        if self.installStatus?.ttsReady == true {
-            return .installed
-        }
-        if progress.status.starts(with: "downloading") || self.isReinstalling {
-            return .downloading(
-                bytesDownloaded: progress.bytesDownloaded,
-                bytesTotal: progress.bytesTotal,
-                percent: progress.percent
-            )
-        }
-        if progress.status == "failed" {
-            return .failed(self.installStatus?.error ?? progress.status)
-        }
-        return .missing
-    }
-
-    private var parakeetStatus: VoiceModelCard.Status {
-        self.cardStatus(for: FluidAudioModelPresence.self, language: "en")
-    }
-
-    private var nemotronStatus: VoiceModelCard.Status {
-        self.cardStatus(for: FluidAudioNemotronModelPresence.self, language: "zh")
-    }
-
-    private func cardStatus<P: FluidAudioPresence>(
-        for presence: P.Type,
-        language: String
-    ) -> VoiceModelCard.Status {
-        let wantsEnglish = language == "en"
-        let activeLanguage = self.store.settings?.voiceSttLanguage ?? "en"
-        let activeMatches = (activeLanguage == "en") == wantsEnglish
-        let downloadMatches = self.pipeline.sttDownloadLanguage.map {
-            ($0 == "en") == wantsEnglish
-        } ?? false
-
-        if downloadMatches {
-            return .downloading(
-                bytesDownloaded: 0,
-                bytesTotal: nil,
-                percent: self.pipeline.sttLoadProgress?.percent
-            )
-        }
-        if activeMatches {
-            switch self.pipeline.sttStatus {
-            case .ready: return .installed
-            case let .failed(message): return .failed(message)
-            case .downloading:
-                return .downloading(bytesDownloaded: 0, bytesTotal: nil, percent: nil)
-            case .notLoaded: break
-            }
-        }
-        return P.isInstalled() ? .installed : .missing
-    }
-
     private var modelsSummary: String {
         switch self.pipeline.readiness {
         case .ready:
             return L10n.tr("settings.voice.installed_label")
         case .installing, .modelsMissing, .failed:
-            let selectedTtsReady = switch self.ttsPreference.backend {
-            case .serverPocket: self.installStatus?.ttsReady ?? false
-            case .clientSupertonic: self.clientTtsInstalled
-            }
-            let sttReady = self.pipeline.sttStatus == .ready
-            if selectedTtsReady || sttReady {
+            if self.installer.selectedTtsReady || self.pipeline.sttStatus == .ready {
                 return L10n.tr("settings.voice.partial_label")
             }
             return L10n.tr("settings.voice.missing_label")
@@ -464,7 +363,6 @@ struct VoicePanel: View {
             switch advice {
             case let .engine(backend):
                 self.ttsPreference.setBackend(backend)
-                self.clientTtsInstalled = FluidAudioSupertonicModelPresence.isInstalled()
             case let .persona(slot):
                 self.store.binding(\.voicePersona, fallback: VoiceWire.defaultPersona).wrappedValue = slot
             }
@@ -484,77 +382,25 @@ struct VoicePanel: View {
 
     private func loadAll() async {
         self.remoteSpeechConsent.refresh()
-        await self.store.loadIfNeeded()
-        await self.pipeline.refreshDaemonState()
-        self.clientTtsInstalled = FluidAudioSupertonicModelPresence.isInstalled()
+        await self.installer.refresh()
     }
 
-    private func prepareClientTts() async {
+    private func install(_ model: VoiceModel) async {
+        self.installError = nil
         do {
-            try await self.pipeline.clientTtsEngine.prepare()
-            self.clientTtsInstalled = true
-            self.installError = nil
+            try await self.installer.install(model)
         } catch {
             self.installError = error.localizedDescription
         }
-    }
-
-    private func refreshInstallStatus() async {
-        await self.pipeline.refreshDaemonState()
     }
 
     private func reinstall() async {
-        VoiceSetupPreference.setDeferred(false)
-        self.isReinstalling = true
-        defer { self.isReinstalling = false }
         self.installError = nil
         do {
-            try await self.pipeline.prepareSelectedTts()
-        } catch {
-            self.installError = error.localizedDescription
-            return
-        }
-        Task { @MainActor in
-            await self.pipeline.ensureSttLoaded()
-        }
-        self.statusPollTask?.cancel()
-        self.statusPollTask = Task {
-            for _ in 0 ..< 600 where !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(500))
-                await self.refreshInstallStatus()
-                if self.installStatus?.isTerminal == true {
-                    return
-                }
-            }
-        }
-    }
-
-    private func installSingle(_ target: VoiceInstallTarget) async {
-        VoiceSetupPreference.setDeferred(false)
-        self.installError = nil
-        do {
-            switch target {
-            case .daemonTts:
-                try await self.pipeline.startDaemonTtsInstall()
-            case let .clientStt(language):
-                await self.pipeline.ensureSttLoaded(for: language)
-            }
+            try await self.installer.installSelected()
         } catch {
             self.installError = error.localizedDescription
         }
-        await self.refreshInstallStatus()
-    }
-
-    private func uninstall(path: String, sttLanguage: String? = nil) async {
-        if let sttLanguage {
-            await self.pipeline.unloadSttModel(for: sttLanguage)
-        }
-        let expanded = NSString(string: path).expandingTildeInPath
-        let url = URL(fileURLWithPath: expanded, isDirectory: true)
-        if FileManager.default.fileExists(atPath: url.path) {
-            try? FileManager.default.removeItem(at: url)
-        }
-        await self.refreshInstallStatus()
     }
 }
 

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
 
-pub(crate) const DEFAULT_BLOCKED_COMMANDS: &[&str] = &[
+const DEFAULT_BLOCKED_COMMANDS: &[&str] = &[
     "rm",
     "rmdir",
     "dd",
@@ -37,7 +37,7 @@ pub(crate) const DEFAULT_BLOCKED_COMMANDS: &[&str] = &[
     "find",
 ];
 
-pub(crate) const DEFAULT_DANGEROUS_ENV_KEYS: &[&str] = &[
+const DEFAULT_DANGEROUS_ENV_KEYS: &[&str] = &[
     "LD_PRELOAD",
     "LD_LIBRARY_PATH",
     "DYLD_INSERT_LIBRARIES",
@@ -49,7 +49,7 @@ pub(crate) fn validate_mcp_command_with_args(
     args: &[String],
     blocked: &[String],
 ) -> Result<(), AppError> {
-    validate_subprocess_command_spec(command, args, blocked, true).map_err(AppError::Mcp)
+    validate_subprocess_command_spec(command, args, blocked).map_err(AppError::Mcp)
 }
 
 pub(crate) fn validate_mcp_env(
@@ -59,34 +59,24 @@ pub(crate) fn validate_mcp_env(
     validate_subprocess_env(env, dangerous_keys).map_err(AppError::Mcp)
 }
 
-pub(crate) fn validate_subprocess_command_spec(
+fn validate_subprocess_command_spec(
     command: &str,
     args: &[String],
     blocked: &[String],
-    include_default_blocked_commands: bool,
 ) -> Result<(), String> {
-    validate_command_target(command, blocked, include_default_blocked_commands)?;
+    validate_command_target(command, blocked)?;
     let resolved = resolve_command_path(command);
     if let Some(ref resolved) = resolved {
-        validate_command_target(
-            &resolved.to_string_lossy(),
-            blocked,
-            include_default_blocked_commands,
-        )?;
+        validate_command_target(&resolved.to_string_lossy(), blocked)?;
         if let Some(interpreter) = read_script_interpreter(resolved) {
-            validate_command_target(&interpreter, blocked, include_default_blocked_commands)?;
+            validate_command_target(&interpreter, blocked)?;
         }
     }
 
     if uses_env_wrapper(command, resolved.as_deref())
         && let Some(wrapped_command) = extract_env_wrapped_command(args)
     {
-        validate_subprocess_command_spec(
-            wrapped_command,
-            &[],
-            blocked,
-            include_default_blocked_commands,
-        )?;
+        validate_subprocess_command_spec(wrapped_command, &[], blocked)?;
     }
 
     Ok(())
@@ -112,12 +102,8 @@ fn validate_subprocess_env(
     Ok(())
 }
 
-fn is_blocked_command(
-    command: &str,
-    blocked: &[String],
-    include_default_blocked_commands: bool,
-) -> bool {
-    (include_default_blocked_commands && DEFAULT_BLOCKED_COMMANDS.contains(&command))
+fn is_blocked_command(command: &str, blocked: &[String]) -> bool {
+    DEFAULT_BLOCKED_COMMANDS.contains(&command)
         || blocked.iter().any(|candidate| candidate == command)
 }
 
@@ -126,17 +112,13 @@ fn is_dangerous_env_key(key: &str, dangerous_keys: &[String]) -> bool {
         || dangerous_keys.iter().any(|candidate| candidate == key)
 }
 
-fn validate_command_target(
-    command: &str,
-    blocked: &[String],
-    include_default_blocked_commands: bool,
-) -> Result<(), String> {
+fn validate_command_target(command: &str, blocked: &[String]) -> Result<(), String> {
     let basename = Path::new(command)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(command);
 
-    if is_blocked_command(basename, blocked, include_default_blocked_commands) {
+    if is_blocked_command(basename, blocked) {
         return Err(format!(
             "Command '{basename}' is blocked for security reasons"
         ));

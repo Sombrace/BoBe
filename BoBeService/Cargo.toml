@@ -1,6 +1,6 @@
 [package]
 name = "bobe"
-version = "0.8.1"
+version = "0.9.0"
 edition = "2024"
 rust-version = "1.98.1"
 license = "MIT"
@@ -75,7 +75,6 @@ overflow-checks = true
 anyhow = "1.0.104"
 async-stream = "0.3.6"
 arc-swap = "1.9.2"
-async-trait = "0.1"
 axum = { version = "0.8.9", features = ["ws"] }
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 chrono = { version = "0.4.45", features = ["serde"] }
@@ -149,12 +148,10 @@ opusic-c = "1.6.1"
 regex = "1.13"
 rcgen = { version = "0.14", default-features = false, features = ["pem", "ring", "zeroize"] }
 x509-parser = "0.18.1"
-bobe-pairing-core = { path = "../PairingCore", version = "=0.8.1" }
+bobe-pairing-core = { path = "../PairingCore", version = "=0.9.0" }
 chacha20poly1305 = { version = "0.11.0", features = ["zeroize"] }
 hkdf = "0.13.0"
 zeroize = "1.9.1"
-metrics = "0.24.6"
-metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 sha2 = { version = "0.11.1", default-features = false }
 ed25519-dalek = { version = "3.0.0", default-features = false, features = ["alloc"] }
 serde_ignored = "0.1.14"

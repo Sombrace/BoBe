@@ -45,7 +45,7 @@ test("private worker entry uses protocol-only stdout, initializes without login,
     assert.equal(code, 0, stderr);
     assert.equal(stderr, "");
     assert.deepEqual(messages.map(message => message.id), [1, 2, 3]);
-    assert.deepEqual(messages[0]?.result, { protocol_version: 1, harness: "pi", version: "1.2.0" });
+    assert.deepEqual(messages[0]?.result, { protocol_version: 1, harness: "pi" });
     assert.equal(object(messages[1]?.result).is_authenticated, false);
     assert.ok(await readFile(join(paths.root, "agent/session.json"), "utf8"));
   } finally {

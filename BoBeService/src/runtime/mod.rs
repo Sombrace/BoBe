@@ -1,4 +1,3 @@
-pub(crate) mod behavior_context;
 pub(crate) mod capture_learner;
 pub(crate) mod consolidation;
 pub(crate) mod conversation_service;

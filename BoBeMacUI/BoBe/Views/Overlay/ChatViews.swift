@@ -286,7 +286,7 @@ struct ConversationSheet: View {
             return
         }
         self.followsLatest = true
-        withAnimation(animated && !BobeMotion.isReduced ? .linear(duration: 0.12) : nil) {
+        withAnimation(animated ? BobeMotion.follow : nil) {
             proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
         }
     }

@@ -162,10 +162,17 @@ pub(crate) struct StandaloneManifest {
     pub(crate) version: String,
     pub(crate) platform: String,
     pub(crate) database_schema: i64,
+    pub(crate) database_schema_min: i64,
     pub(crate) attach_protocol_min: u32,
     pub(crate) attach_protocol_max: u32,
     pub(crate) archive_sha256: String,
     pub(crate) archive: String,
+}
+
+impl StandaloneManifest {
+    pub(crate) fn supports_database_schema(&self, live: i64) -> bool {
+        (self.database_schema_min..=self.database_schema).contains(&live)
+    }
 }
 
 pub(crate) fn verify_manifest(
@@ -209,7 +216,7 @@ fn verify_manifest_with_key(
     let manifest: StandaloneManifest = serde_json::from_slice(manifest_bytes)?;
     if manifest.schema != 1
         || manifest.platform != expected_platform
-        || current_database_schema != manifest.database_schema
+        || !manifest.supports_database_schema(current_database_schema)
         || manifest.attach_protocol_min > crate::constants::attach::PROTOCOL_MAX
         || manifest.attach_protocol_max < crate::constants::attach::PROTOCOL_MIN
     {
@@ -674,24 +681,34 @@ mod tests {
         assert!(rollback(&root, Path::new("../outside")).is_err());
     }
 
-    #[test]
-    fn signed_manifest_verifies_and_tampering_fails() {
+    fn signed(manifest: &serde_json::Value) -> (Vec<u8>, String, String) {
         let signing = SigningKey::from_bytes(&[7; 32]);
-        let manifest = serde_json::to_vec(&StandaloneManifest {
+        let manifest = serde_json::to_vec(manifest).unwrap();
+        let signature =
+            base64::engine::general_purpose::STANDARD.encode(signing.sign(&manifest).to_bytes());
+        let public =
+            base64::engine::general_purpose::STANDARD.encode(signing.verifying_key().to_bytes());
+        (manifest, signature, public)
+    }
+
+    fn candidate(database_schema: i64, database_schema_min: i64) -> serde_json::Value {
+        serde_json::to_value(StandaloneManifest {
             schema: 1,
             version: "1.2.3".into(),
             platform: "darwin-arm64".into(),
-            database_schema: 2,
+            database_schema,
+            database_schema_min,
             attach_protocol_min: 1,
             attach_protocol_max: 1,
             archive_sha256: "00".repeat(32),
             archive: "bobe.tar.gz".into(),
         })
-        .unwrap();
-        let signature =
-            base64::engine::general_purpose::STANDARD.encode(signing.sign(&manifest).to_bytes());
-        let public =
-            base64::engine::general_purpose::STANDARD.encode(signing.verifying_key().to_bytes());
+        .unwrap()
+    }
+
+    #[test]
+    fn signed_manifest_verifies_and_tampering_fails() {
+        let (manifest, signature, public) = signed(&candidate(2, 2));
         assert!(
             verify_manifest_with_key(&manifest, &signature, &public, "darwin-arm64", 2).is_ok()
         );
@@ -699,6 +716,28 @@ mod tests {
         tampered.push(b' ');
         assert!(
             verify_manifest_with_key(&tampered, &signature, &public, "darwin-arm64", 2).is_err()
+        );
+    }
+
+    #[test]
+    fn a_candidate_accepts_every_live_schema_it_can_upgrade() {
+        let (manifest, signature, public) = signed(&candidate(10, 9));
+        for (live, accepted) in [(8, false), (9, true), (10, true), (11, false)] {
+            assert_eq!(
+                verify_manifest_with_key(&manifest, &signature, &public, "darwin-arm64", live)
+                    .is_ok(),
+                accepted,
+                "live schema {live}"
+            );
+        }
+        let mut without_minimum = candidate(10, 9);
+        without_minimum
+            .as_object_mut()
+            .unwrap()
+            .remove("database_schema_min");
+        let (manifest, signature, public) = signed(&without_minimum);
+        assert!(
+            verify_manifest_with_key(&manifest, &signature, &public, "darwin-arm64", 10).is_err()
         );
     }
 }

@@ -11,29 +11,6 @@ static bool add_number(cJSON *root, const char *name, double value)
     return cJSON_AddNumberToObject(root, name, value) != NULL;
 }
 
-static bool object_has_exact_fields(
-    const cJSON *root,
-    const char *const *names,
-    size_t name_count
-)
-{
-    size_t count = 0;
-    for (const cJSON *item = root->child; item != NULL; item = item->next) {
-        bool known = false;
-        for (size_t index = 0; index < name_count; ++index) {
-            if (item->string != NULL && strcmp(item->string, names[index]) == 0) {
-                known = true;
-                break;
-            }
-        }
-        if (!known) {
-            return false;
-        }
-        ++count;
-    }
-    return count == name_count;
-}
-
 static bool add_string(cJSON *root, const char *name, const char *value)
 {
     return cJSON_AddStringToObject(root, name, value != NULL ? value : "") != NULL;
@@ -843,28 +820,6 @@ bobe_protocol_result_t bobe_protocol_build_update_state(
     return bobe_json_print(root, output, output_size);
 }
 
-bobe_protocol_result_t bobe_protocol_build_pong(
-    char *output,
-    size_t output_size,
-    uint64_t nonce
-)
-{
-    if (nonce > UINT64_C(9007199254740991)) {
-        return BOBE_PROTOCOL_INVALID_ARGUMENT;
-    }
-    cJSON *root = cJSON_CreateObject();
-    if (root == NULL) {
-        return BOBE_PROTOCOL_MALFORMED;
-    }
-    if (!add_string(root, "type", "pong") ||
-        !add_number(root, "protocol_major", BOBE_PROTOCOL_MAJOR) ||
-        !add_number(root, "nonce", (double)nonce)) {
-        cJSON_Delete(root);
-        return BOBE_PROTOCOL_MALFORMED;
-    }
-    return bobe_json_print(root, output, output_size);
-}
-
 bobe_protocol_result_t bobe_protocol_parse_control(
     const char *input,
     size_t input_size,
@@ -1209,32 +1164,6 @@ bobe_protocol_result_t bobe_protocol_parse_control(
                 message->data.turn.turn_id,
                 sizeof(message->data.turn.turn_id)
             )) {
-            result = BOBE_PROTOCOL_MALFORMED;
-        }
-    } else if (strcmp(type->valuestring, "volume.set") == 0) {
-        message->kind = BOBE_CONTROL_VOLUME_SET;
-        uint32_t percent = 0;
-        if (!read_u32_field(root, "percent", &percent) || percent > 100) {
-            result = BOBE_PROTOCOL_RANGE_ERROR;
-        } else {
-            message->data.volume.percent = (uint8_t)percent;
-        }
-    } else if (strcmp(type->valuestring, "claim.revoke") == 0) {
-        static const char *const fields[] = {
-            "type",
-            "protocol_major",
-        };
-        message->kind = BOBE_CONTROL_CLAIM_REVOKE;
-        if (!object_has_exact_fields(
-                root,
-                fields,
-                sizeof(fields) / sizeof(fields[0])
-            )) {
-            result = BOBE_PROTOCOL_MALFORMED;
-        }
-    } else if (strcmp(type->valuestring, "ping") == 0) {
-        message->kind = BOBE_CONTROL_PING;
-        if (!read_u64_field(root, "nonce", &message->data.ping.nonce)) {
             result = BOBE_PROTOCOL_MALFORMED;
         }
     } else if (strcmp(type->valuestring, "error") == 0) {

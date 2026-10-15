@@ -162,12 +162,10 @@ extension DaemonClient {
 
         struct Deleted: Decodable {
             let learnedSkills: Int
-            let primarySkillReset: Bool
             let workspaceFiles: Int
 
             enum CodingKeys: String, CodingKey {
                 case learnedSkills = "learned_skills"
-                case primarySkillReset = "primary_skill_reset"
                 case workspaceFiles = "workspace_files"
             }
         }
@@ -304,10 +302,7 @@ extension DaemonClient {
                     if Task.isCancelled {
                         return
                     }
-                    guard line.hasPrefix("data: ") else { continue }
-                    let jsonStr = String(line.dropFirst(6))
-                    guard let data = jsonStr.data(using: .utf8) else { continue }
-                    let snapshot = try JSONDecoder().decode(LocalRuntimeSnapshot.self, from: data)
+                    guard let snapshot = try Self.decodeEvent(LocalRuntimeSnapshot.self, from: line) else { continue }
                     receivedSnapshot = true
                     onSnapshot(snapshot)
                     if [.complete, .canceled, .failed].contains(snapshot.status) {
@@ -388,15 +383,11 @@ extension DaemonClient {
             throw DaemonError.invalidResponse
         }
 
-        let decoder = JSONDecoder()
         for try await line in bytes.lines {
             if Task.isCancelled {
                 break
             }
-            guard line.hasPrefix("data: ") else { continue }
-            let jsonStr = String(line.dropFirst(6))
-            guard let data = jsonStr.data(using: .utf8) else { continue }
-            let phase = try decoder.decode(ProviderLoginPhase.self, from: data)
+            guard let phase = try Self.decodeEvent(ProviderLoginPhase.self, from: line) else { continue }
             await onPhase(phase)
             if phase.isTerminal {
                 break

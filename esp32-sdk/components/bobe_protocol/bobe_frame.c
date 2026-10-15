@@ -71,7 +71,7 @@ bobe_protocol_result_t bobe_media_header_decode(
     if (input[0] != BOBE_PROTOCOL_MAJOR) {
         return BOBE_PROTOCOL_UNSUPPORTED;
     }
-    if (input[1] < BOBE_MEDIA_MICROPHONE_PCM || input[1] > BOBE_MEDIA_DIAGNOSTIC) {
+    if (input[1] != BOBE_MEDIA_MICROPHONE_PCM && input[1] != BOBE_MEDIA_SPEAKER_PCM) {
         return BOBE_PROTOCOL_UNSUPPORTED;
     }
 
@@ -106,12 +106,6 @@ bobe_protocol_result_t bobe_media_validate_payload(
         return payload_size == BOBE_SPEAKER_FRAME_SAMPLES * sizeof(int16_t)
                    ? BOBE_PROTOCOL_OK
                    : BOBE_PROTOCOL_RANGE_ERROR;
-    case BOBE_MEDIA_OPUS:
-        return payload_size > 0 && payload_size <= 512
-                   ? BOBE_PROTOCOL_OK
-                   : BOBE_PROTOCOL_RANGE_ERROR;
-    case BOBE_MEDIA_DIAGNOSTIC:
-        return payload_size <= 1024 ? BOBE_PROTOCOL_OK : BOBE_PROTOCOL_TOO_LARGE;
     default:
         return BOBE_PROTOCOL_UNSUPPORTED;
     }

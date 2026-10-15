@@ -4,10 +4,9 @@ use crate::voice::opus::{PcmPacketizer, make_opus_encoder};
 use crate::voice::output::VoiceOutput;
 use crate::voice::protocol_helpers::send_json;
 use crate::voice::spoken::SpokenScript;
-use crate::voice::telemetry::{HIST_E2E_MS, HIST_TTS_SYNTH_MS};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -20,7 +19,6 @@ pub(crate) fn spawn_tts_task(
     voice_id: String,
     speed: f32,
     tts_text_delivery: TtsTextDelivery,
-    turn_start: Instant,
     script: Arc<SpokenScript>,
 ) -> tokio::task::JoinHandle<bool> {
     let sample_rate = tts.sample_rate();
@@ -37,7 +35,6 @@ pub(crate) fn spawn_tts_task(
             let tts_clone = Arc::clone(&tts);
             let sentence_owned = sentence.clone();
             let voice_id = voice_id.clone();
-            let synth_start = Instant::now();
             let (pcm_tx, mut pcm_rx) = mpsc::channel::<Vec<f32>>(2);
             let synth = tokio::task::spawn_blocking(move || {
                 tts_clone.synthesize_stream(&sentence_owned, &voice_id, speed, &mut |pcm| {
@@ -77,8 +74,6 @@ pub(crate) fn spawn_tts_task(
                         flags |= FLAG_FIRST_OF_TURN;
                         first_chunk_pending = false;
                         first_audio_emitted.swap(true, Ordering::AcqRel);
-                        metrics::histogram!(HIST_E2E_MS)
-                            .record(turn_start.elapsed().as_secs_f64() * 1_000.0);
                     }
                     let framed = encode_tts_frame(chunk_id, flags, &opus_packet);
                     if !output.audio(framed).await {
@@ -103,8 +98,6 @@ pub(crate) fn spawn_tts_task(
                     return false;
                 }
             }
-            metrics::histogram!(HIST_TTS_SYNTH_MS)
-                .record(synth_start.elapsed().as_secs_f64() * 1_000.0);
             script.complete_sentence(sentence_index, chunk_id);
         }
         script.finish();
@@ -157,7 +150,6 @@ mod tests {
             "alba".into(),
             1.0,
             TtsTextDelivery::None,
-            Instant::now(),
             Arc::new(SpokenScript::default()),
         );
         sentence_tx.send("Keep talking.".into()).await.unwrap();

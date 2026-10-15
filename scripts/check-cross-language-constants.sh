@@ -72,10 +72,18 @@ expect_match "attach protocol maximum" "$rust_attach_max" "$swift_attach_max"
 rust_attach_path=$(grep -E 'pub\(crate\) const PATH: &str =' "$RUST" | sed -E 's/.*= "([^"]+)";.*/\1/')
 swift_attach_path=$(grep -E 'static let path = "/v1/hello"' "$SWIFT_ATTACH_WIRE" | sed -E 's/.*= "([^"]+)".*/\1/')
 expect_match "attach path" "$rust_attach_path" "$swift_attach_path"
+diff_sets \
+    "ReadinessStatus" \
+    "$(rust_enum_variants "$ROOT/BoBeService/src/api/readiness.rs" ReadinessStatus)" \
+    "$(swift_enum_variants "$SWIFT_ATTACH_WIRE" ReadinessStateWire | sed '/^unknown$/d')"
 
-rust_privacy_timeout=$(grep -E 'CLIENT_TIMEOUT_SECS: u64 =' "$RUST" | sed -E 's/.*= ([0-9]+);.*/\1/')
+rust_privacy_http=$(grep -E 'HTTP_TIMEOUT: std::time::Duration =' "$RUST" | sed -E 's/.*from_secs\(([0-9]+)\);.*/\1/')
 swift_privacy_timeout=$(grep -E 'purgeRequestTimeoutSeconds: TimeInterval =' "$SWIFT_CONST" | sed -E 's/.*= ([0-9]+).*/\1/')
-expect_match "privacy purge Swift timeout" "$rust_privacy_timeout" "$swift_privacy_timeout"
+if ! [[ "$rust_privacy_http" =~ ^[0-9]+$ && "$swift_privacy_timeout" =~ ^[0-9]+$ ]] \
+    || (( rust_privacy_http >= swift_privacy_timeout )); then
+    echo "drift: privacy purge daemon timeout ${rust_privacy_http}s must be below the Swift client timeout ${swift_privacy_timeout}s" >&2
+    fail=1
+fi
 
 rust_ollama_base=$(grep -E 'DEFAULT_OLLAMA_BASE_URL:' "$RUST" | sed -E 's/.*= "([^"]+)";.*/\1/')
 swift_ollama_base=$(grep -E 'static let baseURL = "http://127' "$SWIFT_CONST" | sed -E 's/.*= "([^"]+)".*/\1/')
@@ -110,10 +118,6 @@ diff_sets \
     "$(rust_enum_variants "$ROOT/BoBeService/src/runtime/run_registry.rs" RunKind)" \
     "$(swift_enum_variants "$ROOT/BoBeMacUI/BoBe/DTOs/AgentWorkTypes.swift" AgentRunKindWire)"
 diff_sets \
-    "OwnerInputKind" \
-    "$(rust_enum_variants "$ROOT/BoBeService/src/db/owner_input_repo.rs" InputKind)" \
-    "$(swift_enum_variants "$ROOT/BoBeMacUI/BoBe/DTOs/AgentWorkTypes.swift" OwnerInputKindWire)"
-diff_sets \
     "OwnerInputStatus" \
     "$(rust_enum_variants "$ROOT/BoBeService/src/db/owner_input_repo.rs" InputStatus)" \
     "$(swift_enum_variants "$ROOT/BoBeMacUI/BoBe/DTOs/AgentWorkTypes.swift" OwnerInputStatusWire)"
@@ -138,10 +142,6 @@ rust_pocket=$(grep -E 'POCKET_TTS_MODEL_DIR: &str =' "$RUST" | sed -E 's/.*= "([
 swift_pocket=$(grep -E 'static let pocketTtsModelDir = ' "$SWIFT_CONST" | sed -E 's/.*= "([^"]+)".*/\1/')
 expect_match "Pocket TTS model dir name" "$rust_pocket" "$swift_pocket"
 
-rust_streaming_stt=$(grep -A1 -E 'STREAMING_STT_MODEL_DIR: &str =' "$RUST" | tail -n 1 | sed -E 's/.*"([^"]+)";.*/\1/')
-swift_streaming_stt=$(grep -E 'static let streamingSttModelDir = ' "$SWIFT_CONST" | sed -E 's/.*= "([^"]+)".*/\1/')
-expect_match "streaming STT model dir name" "$rust_streaming_stt" "$swift_streaming_stt"
-
 rust_persona=$(grep -E 'DEFAULT_PERSONA: &str =' "$RUST" | sed -E 's/.*= "([^"]+)";.*/\1/')
 swift_persona=$(grep -E 'static let defaultPersona = ' "$SWIFT_CONST" | sed -E 's/.*= "([^"]+)".*/\1/')
 expect_match "voice default persona" "$rust_persona" "$swift_persona"
@@ -149,10 +149,6 @@ expect_match "voice default persona" "$rust_persona" "$swift_persona"
 rust_kind_tts=$(grep -E 'MODEL_KIND_TTS: &str =' "$RUST" | sed -E 's/.*= "([^"]+)";.*/\1/')
 swift_kind_tts=$(grep -E 'static let modelKindTts = ' "$SWIFT_CONST" | sed -E 's/.*= "([^"]+)".*/\1/')
 expect_match "voice model kind TTS" "$rust_kind_tts" "$swift_kind_tts"
-
-rust_kind_stt=$(grep -E 'MODEL_KIND_STT: &str =' "$RUST" | sed -E 's/.*= "([^"]+)";.*/\1/')
-swift_kind_stt=$(grep -E 'static let modelKindStt = ' "$SWIFT_CONST" | sed -E 's/.*= "([^"]+)".*/\1/')
-expect_match "voice model kind STT" "$rust_kind_stt" "$swift_kind_stt"
 
 rust_subprotocol_v2=$(grep -E 'SUBPROTOCOL_V2: &str =' "$RUST" | sed -E 's/.*= "([^"]+)";.*/\1/')
 swift_subprotocol_v2=$(grep -E 'static let subprotocolV2 = ' "$SWIFT_CONST" | sed -E 's/.*= "([^"]+)".*/\1/')
@@ -181,18 +177,6 @@ expect_match "tool_call_status::COMPLETE" "$rust_tc_complete" "$swift_tc_complet
 rust_data_dir=$(grep -E 'BOBE_DATA_DIR_NAME: &str =' "$RUST" | sed -E 's/.*= "([^"]+)";.*/\1/')
 swift_data_dir=$(grep -E 'static let dataDirName = ' "$SWIFT_CONST" | sed -E 's/.*= "([^"]+)".*/\1/')
 expect_match "BOBE_DATA_DIR_NAME" "$rust_data_dir" "$swift_data_dir"
-
-rust_pause_tight=$(grep -E 'TIGHT: u32 =' "$RUST" | sed -E 's/.*= ([0-9]+);.*/\1/')
-swift_pause_tight=$(grep -E 'static let tight: Int = ' "$SWIFT_CONST" | sed -E 's/.*= ([0-9]+).*/\1/')
-expect_match "pause_sensitivity_ms::TIGHT" "$rust_pause_tight" "$swift_pause_tight"
-
-rust_pause_balanced=$(grep -E 'BALANCED: u32 =' "$RUST" | sed -E 's/.*= ([0-9]+);.*/\1/')
-swift_pause_balanced=$(grep -E 'static let balanced: Int = ' "$SWIFT_CONST" | sed -E 's/.*= ([0-9]+).*/\1/')
-expect_match "pause_sensitivity_ms::BALANCED" "$rust_pause_balanced" "$swift_pause_balanced"
-
-rust_pause_patient=$(grep -E 'PATIENT: u32 =' "$RUST" | sed -E 's/.*= ([0-9]+);.*/\1/')
-swift_pause_patient=$(grep -E 'static let patient: Int = ' "$SWIFT_CONST" | sed -E 's/.*= ([0-9]+).*/\1/')
-expect_match "pause_sensitivity_ms::PATIENT" "$rust_pause_patient" "$swift_pause_patient"
 
 RUST_POCKET="$ROOT/BoBeService/src/speech/providers/pocket.rs"
 SWIFT_POCKET="$ROOT/BoBeMacUI/BoBe/Voice/VoiceSettingsEnums.swift"

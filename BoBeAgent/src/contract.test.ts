@@ -32,11 +32,13 @@ test("Rust can mirror the exact host-contract-v1 fixture and authority filenames
     validate(schema, request.params, name);
   }
   const initial = object(object(fixture.initialize_request).params);
-  for (const name of ["execution", "workload_budgets"]) {
+  for (const name of ["execution", "workload_budgets", "capabilities"]) {
     const incomplete = { ...initial };
     delete incomplete[name];
     assert.throws(() => validate(initializeSchema, incomplete, "initialization requires owner policy"));
   }
+  assert.throws(() => validate(initializeSchema, { ...initial, capability_instructions: "Prose." },
+    "initialization carries capability facts, not behavior prose"));
   for (const name of ["domain_tool_response", "domain_tool_failed_response"]) {
     const response = parseEnvelope(fixture[name]);
     assert.ok("result" in response);

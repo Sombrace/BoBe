@@ -6,7 +6,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-/* Bound recursive parser work before entering cJSON on a small RTOS stack. */
 bool bobe_json_within_limits(const char *input, size_t length);
 bool bobe_uuid_valid(const char *value);
 bool bobe_name_valid(const char *value, size_t max_length);

@@ -116,7 +116,6 @@ struct SetupStagger: ViewModifier {
                 withAnimation(BobeMotion.stagger(self.index, step: 0.07)) {
                     self.shown = true
                 }
-                if BobeMotion.isReduced { self.shown = true }
             }
     }
 }
