@@ -4,6 +4,7 @@ use reqwest::{StatusCode, Url};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
+use crate::api::readiness::ReadinessStatus;
 use crate::config::Config;
 use crate::ops::exit::ExitCode;
 
@@ -11,6 +12,15 @@ use crate::ops::exit::ExitCode;
 pub(crate) enum ReadinessLevel {
     Process,
     Operational,
+}
+
+impl ReadinessLevel {
+    const fn is_reached_by(self, status: ReadinessStatus) -> bool {
+        match self {
+            Self::Process => status.is_serving(),
+            Self::Operational => matches!(status, ReadinessStatus::Ready),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -326,7 +336,7 @@ impl OpsTarget {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct ReadinessView {
-    pub(crate) status: String,
+    pub(crate) status: ReadinessStatus,
     pub(crate) runtime_authority_id: uuid::Uuid,
     pub(crate) runtime_authority_epoch: i64,
     pub(crate) runtime_incarnation_id: uuid::Uuid,
@@ -393,7 +403,6 @@ pub(crate) async fn collect(target: &OpsTarget) -> (ExitCode, StatusReport) {
             },
         );
     }
-    let readiness_status = readiness_response.status();
     let readiness = readiness_response.json::<ReadinessView>().await.ok();
     let runtime = match target.get("/status").await {
         Ok(response) if response.status().is_success() => response.json().await.ok(),
@@ -403,10 +412,9 @@ pub(crate) async fn collect(target: &OpsTarget) -> (ExitCode, StatusReport) {
         Ok(response) if response.status().is_success() => response.json().await.ok(),
         _ => None,
     };
-    let ready = readiness_status.is_success()
-        && readiness
-            .as_ref()
-            .is_some_and(|view| view.status == "ready");
+    let ready = readiness
+        .as_ref()
+        .is_some_and(|view| ReadinessLevel::Operational.is_reached_by(view.status));
     (
         if ready {
             ExitCode::Success
@@ -436,22 +444,18 @@ pub(crate) async fn wait_ready_for(
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let (exit, report) = collect(target).await;
-        let matches = report.readiness.as_ref().is_some_and(|readiness| {
-            authority_id.is_none_or(|expected| readiness.runtime_authority_id == expected)
+        if exit == ExitCode::Invalid {
+            return (exit, report);
+        }
+        let reached = report.readiness.as_ref().is_some_and(|readiness| {
+            level.is_reached_by(readiness.status)
+                && authority_id.is_none_or(|expected| readiness.runtime_authority_id == expected)
                 && authority_epoch
                     .is_none_or(|expected| readiness.runtime_authority_epoch == expected)
                 && daemon_version.is_none_or(|expected| readiness.daemon_version == expected)
         });
-        let process_ready = report.reachable
-            && report.readiness.as_ref().is_some_and(|readiness| {
-                readiness.status == "ready" || readiness.status == "initializing"
-            });
-        let level_ready = match level {
-            ReadinessLevel::Process => process_ready,
-            ReadinessLevel::Operational => exit == ExitCode::Success,
-        };
-        if level_ready && matches || exit == ExitCode::Invalid {
-            return (exit, report);
+        if reached {
+            return (ExitCode::Success, report);
         }
         if tokio::time::Instant::now() >= deadline {
             return (ExitCode::NotReady, report);
@@ -504,6 +508,97 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn process_readiness_includes_setup_but_operational_readiness_does_not() {
+        assert!(ReadinessLevel::Process.is_reached_by(ReadinessStatus::Ready));
+        assert!(ReadinessLevel::Process.is_reached_by(ReadinessStatus::Initializing));
+        assert!(!ReadinessLevel::Process.is_reached_by(ReadinessStatus::NotReady));
+        assert!(ReadinessLevel::Operational.is_reached_by(ReadinessStatus::Ready));
+        assert!(!ReadinessLevel::Operational.is_reached_by(ReadinessStatus::Initializing));
+        assert!(!ReadinessLevel::Operational.is_reached_by(ReadinessStatus::NotReady));
+    }
+
+    #[tokio::test]
+    async fn a_runtime_still_setting_up_is_running_but_not_ready() {
+        use crate::db::runtime_initialization_repo::InitializationState;
+
+        crate::util::tls::install_crypto_provider().unwrap();
+        let identity = crate::db::runtime_authority_repo::RuntimeIdentity {
+            runtime_authority_id: uuid::Uuid::new_v4(),
+            runtime_authority_epoch: 2,
+            runtime_incarnation_id: uuid::Uuid::new_v4(),
+            daemon_version: "1.2.3",
+            schema_version: 1,
+            started_at: chrono::Utc::now(),
+        };
+        let body = serde_json::to_value(crate::api::handlers::health::ReadinessResponse::new(
+            crate::api::readiness::Readiness::evaluate(true, InitializationState::ProviderRequired),
+            &identity,
+        ))
+        .unwrap();
+        let app = axum::Router::new().route(
+            "/readyz",
+            axum::routing::get(move || async move { axum::Json(body) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut config = Config::default();
+        config.server.host = "127.0.0.1".into();
+        config.server.port = address.port();
+        let target = OpsTarget::resolve(&config, None, None).unwrap();
+
+        let (exit, report) = collect(&target).await;
+        assert_eq!(exit, ExitCode::NotReady);
+        let readiness = report.readiness.unwrap();
+        assert_eq!(readiness.status, ReadinessStatus::Initializing);
+        assert_eq!(readiness.blocking_reasons, ["initialization_incomplete"]);
+        assert_eq!(
+            readiness.initialization_state,
+            InitializationState::ProviderRequired
+        );
+        assert_eq!(
+            readiness.runtime_incarnation_id,
+            identity.runtime_incarnation_id
+        );
+        assert_eq!(readiness.started_at, identity.started_at);
+
+        let (exit, _) = wait_ready_for(
+            &target,
+            Duration::from_secs(2),
+            Duration::from_millis(10),
+            ReadinessLevel::Process,
+            Some(identity.runtime_authority_id),
+            Some(identity.runtime_authority_epoch),
+            Some(identity.daemon_version),
+        )
+        .await;
+        assert_eq!(exit, ExitCode::Success);
+
+        let (exit, _) = wait_ready_for(
+            &target,
+            Duration::from_millis(100),
+            Duration::from_millis(10),
+            ReadinessLevel::Process,
+            Some(identity.runtime_authority_id),
+            Some(identity.runtime_authority_epoch + 1),
+            None,
+        )
+        .await;
+        assert_eq!(exit, ExitCode::NotReady);
+
+        let (exit, _) = wait_ready(
+            &target,
+            Duration::from_millis(100),
+            Duration::from_millis(10),
+        )
+        .await;
+        assert_eq!(exit, ExitCode::NotReady);
+        server.abort();
+    }
 
     #[test]
     fn remote_target_requires_https_and_token() {

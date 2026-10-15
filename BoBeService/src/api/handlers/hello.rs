@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::api::principal::{Principal, PrincipalKind};
+use crate::api::readiness::{BlockingReason, Readiness, ReadinessStatus};
 use crate::api::scope::Scope;
 use crate::app_state::AppState;
 use crate::error::AppError;
@@ -99,7 +100,7 @@ pub(crate) struct HelloResponse {
     negotiated_protocol: u32,
     deployment_mode: DeploymentMode,
     initialization_state: crate::db::runtime_initialization_repo::InitializationState,
-    readiness: Readiness,
+    readiness: AttachReadiness,
     capabilities: RuntimeCapabilities,
     granted_scopes: Vec<Scope>,
     auth_mode: AuthMode,
@@ -107,9 +108,18 @@ pub(crate) struct HelloResponse {
 }
 
 #[derive(Debug, Serialize)]
-struct Readiness {
-    state: &'static str,
-    blocking_reasons: Vec<&'static str>,
+struct AttachReadiness {
+    state: ReadinessStatus,
+    blocking_reasons: Vec<BlockingReason>,
+}
+
+impl From<Readiness> for AttachReadiness {
+    fn from(readiness: Readiness) -> Self {
+        Self {
+            state: readiness.status,
+            blocking_reasons: readiness.blocking_reasons,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -178,10 +188,7 @@ pub(crate) async fn hello(
         "attach.hello"
     );
 
-    let db_ok = sqlx::query("SELECT 1")
-        .fetch_one(&state.infra.db)
-        .await
-        .is_ok();
+    let readiness = Readiness::check(&state.infra).await;
     let config = state.config();
     let identity = &state.infra.identity;
     let deployment_mode = if config.server.is_networked() {
@@ -223,15 +230,8 @@ pub(crate) async fn hello(
         protocol_max: crate::constants::attach::PROTOCOL_MAX,
         negotiated_protocol: negotiated,
         deployment_mode,
-        initialization_state: **state.infra.initialization.load(),
-        readiness: Readiness {
-            state: if db_ok { "ready" } else { "not_ready" },
-            blocking_reasons: if db_ok {
-                Vec::new()
-            } else {
-                vec!["database_unavailable"]
-            },
-        },
+        initialization_state: readiness.initialization_state,
+        readiness: AttachReadiness::from(readiness),
         capabilities: RuntimeCapabilities {
             agent: CapabilityState::Ready,
             stt,
@@ -353,6 +353,47 @@ mod tests {
             r#"{"microphone":true,"local_tts":true,"screen_context":true}"#,
         );
         assert!(validate_request(&mac).is_ok());
+    }
+
+    #[test]
+    fn attach_reports_setup_in_progress_as_initializing() {
+        use crate::db::runtime_initialization_repo::InitializationState;
+
+        for initialization_state in [
+            InitializationState::ProviderRequired,
+            InitializationState::PersonalizationRequired,
+        ] {
+            assert_eq!(
+                serde_json::to_value(AttachReadiness::from(Readiness::evaluate(
+                    true,
+                    initialization_state
+                )))
+                .unwrap(),
+                serde_json::json!({
+                    "state": "initializing",
+                    "blocking_reasons": ["initialization_incomplete"],
+                })
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(AttachReadiness::from(Readiness::evaluate(
+                true,
+                InitializationState::Ready
+            )))
+            .unwrap(),
+            serde_json::json!({"state": "ready", "blocking_reasons": []})
+        );
+        assert_eq!(
+            serde_json::to_value(AttachReadiness::from(Readiness::evaluate(
+                false,
+                InitializationState::Ready
+            )))
+            .unwrap(),
+            serde_json::json!({
+                "state": "not_ready",
+                "blocking_reasons": ["database_unavailable"],
+            })
+        );
     }
 
     #[test]

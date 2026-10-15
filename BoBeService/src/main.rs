@@ -2820,7 +2820,7 @@ fn emit_report<T: serde::Serialize>(json: bool, report: &T, human: String) {
 
 fn render_status(report: &ops::status::StatusReport) -> String {
     if let Some(readiness) = &report.readiness {
-        if readiness.status == "ready" {
+        if readiness.status == api::readiness::ReadinessStatus::Ready {
             return format!(
                 "BoBe is ready at {}\nAuthority: {} epoch {}\nIncarnation: {}\nDaemon: {}  Schema: {}",
                 report.target,

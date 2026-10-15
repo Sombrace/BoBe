@@ -50,8 +50,24 @@ struct RuntimeCapabilitiesWire: Codable, Sendable {
     let stt: CapabilityStateWire
 }
 
+enum ReadinessStateWire: String, Codable, Sendable, Equatable {
+    case ready
+    case initializing
+    case notReady = "not_ready"
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = ReadinessStateWire(rawValue: raw) ?? .unknown
+    }
+
+    var isServing: Bool {
+        self == .ready || self == .initializing
+    }
+}
+
 struct HelloReadiness: Codable, Sendable {
-    let state: String
+    let state: ReadinessStateWire
     let blockingReasons: [String]
 
     enum CodingKeys: String, CodingKey {

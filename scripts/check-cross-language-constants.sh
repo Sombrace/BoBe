@@ -72,6 +72,10 @@ expect_match "attach protocol maximum" "$rust_attach_max" "$swift_attach_max"
 rust_attach_path=$(grep -E 'pub\(crate\) const PATH: &str =' "$RUST" | sed -E 's/.*= "([^"]+)";.*/\1/')
 swift_attach_path=$(grep -E 'static let path = "/v1/hello"' "$SWIFT_ATTACH_WIRE" | sed -E 's/.*= "([^"]+)".*/\1/')
 expect_match "attach path" "$rust_attach_path" "$swift_attach_path"
+diff_sets \
+    "ReadinessStatus" \
+    "$(rust_enum_variants "$ROOT/BoBeService/src/api/readiness.rs" ReadinessStatus)" \
+    "$(swift_enum_variants "$SWIFT_ATTACH_WIRE" ReadinessStateWire | sed '/^unknown$/d')"
 
 rust_privacy_http=$(grep -E 'HTTP_TIMEOUT: std::time::Duration =' "$RUST" | sed -E 's/.*from_secs\(([0-9]+)\);.*/\1/')
 swift_privacy_timeout=$(grep -E 'purgeRequestTimeoutSeconds: TimeInterval =' "$SWIFT_CONST" | sed -E 's/.*= ([0-9]+).*/\1/')

@@ -3,6 +3,7 @@ import SwiftUI
 struct RuntimePanel: View {
     @Environment(\.theme) private var theme
     @State private var hello: HelloResponse?
+    @State private var readiness: HelloReadiness?
     @State private var runtimeIssue: RuntimeIssue?
     @State private var errorMessage: String?
     @State private var cliStatus: String?
@@ -50,12 +51,14 @@ struct RuntimePanel: View {
                     L10n.tr("settings.runtime.authority"),
                     value: hello.runtimeAuthorityId.uuidString
                 )
+            }
+            if let readiness {
                 self.detailRow(
                     L10n.tr("settings.runtime.status"),
-                    value: self.statusDescription(hello.readiness.state)
+                    value: self.statusDescription(readiness.state)
                 )
-                if hello.readiness.state != "ready" {
-                    ForEach(hello.readiness.blockingReasons, id: \.self) { reason in
+                if readiness.state != .ready {
+                    ForEach(readiness.blockingReasons, id: \.self) { reason in
                         Label(self.blockingReasonDescription(reason), systemImage: "info.circle")
                             .bobeTextStyle(.helper)
                             .foregroundStyle(self.theme.colors.textMuted)
@@ -133,11 +136,11 @@ struct RuntimePanel: View {
         }
     }
 
-    private func statusDescription(_ status: String) -> String {
-        switch status {
-        case "ready": L10n.tr("settings.runtime.status.ready")
-        case "initializing": L10n.tr("settings.runtime.status.initializing")
-        default: L10n.tr("settings.runtime.status.not_ready")
+    private func statusDescription(_ state: ReadinessStateWire) -> String {
+        switch state {
+        case .ready: L10n.tr("settings.runtime.status.ready")
+        case .initializing: L10n.tr("settings.runtime.status.initializing")
+        case .notReady, .unknown: L10n.tr("settings.runtime.status.not_ready")
         }
     }
 
@@ -239,6 +242,7 @@ struct RuntimePanel: View {
         self.isWorking = true
         defer { self.isWorking = false }
         self.hello = nil
+        self.readiness = nil
         self.runtimeIssue = nil
         self.errorMessage = nil
         do {
@@ -262,14 +266,21 @@ struct RuntimePanel: View {
         do {
             guard let attach = try await EndpointAttachService.shared.attachConfiguredEndpoint() else {
                 self.hello = nil
+                self.readiness = nil
                 self.runtimeIssue = RuntimeIssue(AttachError.unauthorized)
                 return
             }
             self.hello = attach.hello
+            self.readiness = attach.hello.readiness
             self.runtimeIssue = nil
             self.errorMessage = nil
         } catch {
             self.hello = nil
+            if case let AttachError.notReady(reasons) = error {
+                self.readiness = HelloReadiness(state: .notReady, blockingReasons: reasons)
+            } else {
+                self.readiness = nil
+            }
             self.runtimeIssue = RuntimeIssue(error)
             self.errorMessage = nil
         }
