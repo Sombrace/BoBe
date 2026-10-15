@@ -7,10 +7,7 @@ use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 
 use crate::error::AppError;
 
-use super::{
-    AuxiliaryClass, ChatDelta, ChatPrompt, JobInput, JobOutput, McpRuntimeConfig, McpServerStatus,
-    McpToolDescriptor, MemoryFile, WorkerError,
-};
+use super::ChatDelta;
 
 pub(crate) type ChatStream = Pin<Box<dyn Stream<Item = ChatDelta> + Send>>;
 
@@ -18,10 +15,6 @@ pub(crate) type ChatStream = Pin<Box<dyn Stream<Item = ChatDelta> + Send>>;
 pub(crate) struct BackgroundResult {
     pub(crate) session_id: String,
     pub(crate) output: String,
-}
-
-pub(crate) trait ChatRuntime: Send + Sync {
-    fn send(&self, prompt: ChatPrompt) -> ChatStream;
 }
 
 #[derive(Debug, Default)]
@@ -69,51 +62,4 @@ impl AgentAuthorityLifecycle {
         }
         Ok(guard)
     }
-}
-
-#[async_trait::async_trait]
-pub(crate) trait AgentRuntime: Send + Sync {
-    async fn cancel_run(&self, run_id: uuid::Uuid) -> Result<bool, AppError>;
-    async fn steer_run(
-        &self,
-        run_id: uuid::Uuid,
-        text: &str,
-        follow_up: bool,
-    ) -> Result<(), AppError>;
-    async fn chat(&self) -> Result<Arc<dyn ChatRuntime>, AppError>;
-    async fn run_background(
-        &self,
-        job: &crate::db::agent_job_repo::AgentJob,
-        cancellation: tokio_util::sync::CancellationToken,
-    ) -> Result<BackgroundResult, AppError>;
-
-    async fn probe_chat_provider(&self) -> Result<super::diagnostics::ProviderProbe, AppError>;
-    async fn context_status(
-        &self,
-        channel: crate::models::ids::ConversationChannelId,
-    ) -> Result<super::diagnostics::AgentContextStatus, AppError>;
-    async fn compact_context(
-        &self,
-        keep_recent_tokens: Option<u32>,
-        channel: crate::models::ids::ConversationChannelId,
-    ) -> Result<super::diagnostics::CompactionResult, AppError>;
-
-    async fn run_auxiliary(
-        &self,
-        class: AuxiliaryClass,
-        job: JobInput,
-    ) -> Result<JobOutput, WorkerError>;
-
-    fn memory_file(&self) -> Arc<MemoryFile>;
-
-    async fn live_mcp_servers(&self) -> Result<Vec<McpServerStatus>, AppError>;
-    async fn live_mcp_tools(&self, server_name: &str) -> Result<Vec<McpToolDescriptor>, AppError>;
-    async fn apply_mcp_config(&self, config: McpRuntimeConfig) -> Result<(), AppError>;
-
-    async fn reload_skills(&self) -> Result<(), AppError> {
-        Ok(())
-    }
-    async fn shutdown_all(&self);
-    async fn quiesce_for_snapshot(&self) -> Result<(), AppError>;
-    async fn purge_sessions(&self) -> Result<(), AppError>;
 }

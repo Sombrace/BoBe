@@ -8,10 +8,10 @@ use tokio::sync::OwnedRwLockReadGuard;
 use super::host::{Connection, DomainBridge, Host, InitializeParams, RunScope};
 use crate::error::AppError;
 use crate::provider::{
-    AgentAuthorityLifecycle, AgentRuntime, AuxiliaryClass, ChatDelta, ChatPrompt, ChatRuntime,
-    ChatStream, DomainTools, JobInput, JobOutput, McpRuntimeConfig, McpServerStatus,
-    McpToolDescriptor, MemoryFile, ProfileId, ProviderAuthStatus, ProviderModelDescriptor,
-    SkillStore, TurnChannel, TurnContext, WorkerClass, WorkerError,
+    AgentAuthorityLifecycle, AuxiliaryClass, ChatDelta, ChatPrompt, ChatStream, DomainTools,
+    JobInput, JobOutput, McpRuntimeConfig, McpServerStatus, McpToolDescriptor, MemoryFile,
+    ProfileId, ProviderAuthStatus, ProviderModelDescriptor, SkillStore, TurnChannel, TurnContext,
+    WorkerClass, WorkerError,
 };
 
 pub(crate) struct PiRuntime {
@@ -24,7 +24,7 @@ pub(crate) struct PiRuntime {
     jobs: Arc<crate::db::agent_job_repo::AgentJobRepo>,
 }
 
-struct PiChat {
+pub(crate) struct PiChat {
     host: Arc<Host>,
     lifecycle: Arc<AgentAuthorityLifecycle>,
     context: Arc<TurnContext>,
@@ -304,8 +304,8 @@ impl PiRuntime {
     }
 }
 
-impl ChatRuntime for PiChat {
-    fn send(&self, prompt: ChatPrompt) -> ChatStream {
+impl PiChat {
+    pub(crate) fn send(&self, prompt: ChatPrompt) -> ChatStream {
         let host = Arc::clone(&self.host);
         let lifecycle = Arc::clone(&self.lifecycle);
         let context = Arc::clone(&self.context);
@@ -440,13 +440,12 @@ impl ChatRuntime for PiChat {
     }
 }
 
-#[async_trait::async_trait]
-impl AgentRuntime for PiRuntime {
-    async fn cancel_run(&self, run_id: uuid::Uuid) -> Result<bool, AppError> {
+impl PiRuntime {
+    pub(crate) async fn cancel_run(&self, run_id: uuid::Uuid) -> Result<bool, AppError> {
         self.host.cancel_run(run_id).await
     }
 
-    async fn steer_run(
+    pub(crate) async fn steer_run(
         &self,
         run_id: uuid::Uuid,
         text: &str,
@@ -456,11 +455,11 @@ impl AgentRuntime for PiRuntime {
         self.host.steer_run(run_id, text, follow_up).await
     }
 
-    async fn chat(&self) -> Result<Arc<dyn ChatRuntime>, AppError> {
-        Ok(Arc::clone(&self.chat) as Arc<dyn ChatRuntime>)
+    pub(crate) fn chat(&self) -> Arc<PiChat> {
+        Arc::clone(&self.chat)
     }
 
-    async fn run_background(
+    pub(crate) async fn run_background(
         &self,
         job: &crate::db::agent_job_repo::AgentJob,
         cancellation: tokio_util::sync::CancellationToken,
@@ -473,7 +472,7 @@ impl AgentRuntime for PiRuntime {
         .await
     }
 
-    async fn probe_chat_provider(
+    pub(crate) async fn probe_chat_provider(
         &self,
     ) -> Result<crate::provider::diagnostics::ProviderProbe, AppError> {
         serde_json::from_value(
@@ -488,7 +487,7 @@ impl AgentRuntime for PiRuntime {
         .map_err(AppError::from)
     }
 
-    async fn context_status(
+    pub(crate) async fn context_status(
         &self,
         channel: crate::models::ids::ConversationChannelId,
     ) -> Result<crate::provider::diagnostics::AgentContextStatus, AppError> {
@@ -505,7 +504,7 @@ impl AgentRuntime for PiRuntime {
         .map_err(AppError::from)
     }
 
-    async fn compact_context(
+    pub(crate) async fn compact_context(
         &self,
         keep_recent_tokens: Option<u32>,
         channel: crate::models::ids::ConversationChannelId,
@@ -522,7 +521,7 @@ impl AgentRuntime for PiRuntime {
         .map_err(AppError::from)
     }
 
-    async fn run_auxiliary(
+    pub(crate) async fn run_auxiliary(
         &self,
         class: AuxiliaryClass,
         job: JobInput,
@@ -558,11 +557,11 @@ impl AgentRuntime for PiRuntime {
         Ok(output)
     }
 
-    fn memory_file(&self) -> Arc<MemoryFile> {
+    pub(crate) fn memory_file(&self) -> Arc<MemoryFile> {
         Arc::clone(&self.memory)
     }
 
-    async fn live_mcp_servers(&self) -> Result<Vec<McpServerStatus>, AppError> {
+    pub(crate) async fn live_mcp_servers(&self) -> Result<Vec<McpServerStatus>, AppError> {
         let _guard = self.lifecycle.read().await?;
         self.host
             .call("mcp_status", json!({}), Duration::from_secs(30))
@@ -570,7 +569,10 @@ impl AgentRuntime for PiRuntime {
             .and_then(|value| serde_json::from_value(value).map_err(AppError::from))
     }
 
-    async fn live_mcp_tools(&self, server_name: &str) -> Result<Vec<McpToolDescriptor>, AppError> {
+    pub(crate) async fn live_mcp_tools(
+        &self,
+        server_name: &str,
+    ) -> Result<Vec<McpToolDescriptor>, AppError> {
         let _guard = self.lifecycle.read().await?;
         self.host
             .call(
@@ -582,27 +584,27 @@ impl AgentRuntime for PiRuntime {
             .and_then(|value| serde_json::from_value(value).map_err(AppError::from))
     }
 
-    async fn apply_mcp_config(&self, config: McpRuntimeConfig) -> Result<(), AppError> {
+    pub(crate) async fn apply_mcp_config(&self, config: McpRuntimeConfig) -> Result<(), AppError> {
         self.host.reload(Some(config)).await
     }
 
-    async fn reload_skills(&self) -> Result<(), AppError> {
+    pub(crate) async fn reload_skills(&self) -> Result<(), AppError> {
         self.host.reload(None).await
     }
 
-    async fn shutdown_all(&self) {
+    pub(crate) async fn shutdown_all(&self) {
         if let Err(error) = self.host.close().await {
             tracing::error!(%error, "pi.shutdown_failed");
         }
     }
 
-    async fn quiesce_for_snapshot(&self) -> Result<(), AppError> {
+    pub(crate) async fn quiesce_for_snapshot(&self) -> Result<(), AppError> {
         self.host.shutdown().await?;
         let _guard = self.lifecycle.write_for_owner_operation().await;
         Ok(())
     }
 
-    async fn purge_sessions(&self) -> Result<(), AppError> {
+    pub(crate) async fn purge_sessions(&self) -> Result<(), AppError> {
         self.host.shutdown().await?;
         let _guard = self.lifecycle.write_for_owner_operation().await;
         super::state::purge(&self.paths).await
@@ -804,8 +806,6 @@ mod tests {
         .unwrap();
         let stream = runtime
             .chat()
-            .await
-            .unwrap()
             .send(ChatPrompt::text("Learn an owner procedure."));
         let result =
             tokio::time::timeout(Duration::from_secs(20), stream.collect::<Vec<_>>()).await;

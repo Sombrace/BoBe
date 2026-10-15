@@ -4,9 +4,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 use tokio::sync::{Mutex, RwLock};
 
+use crate::agent::PiRuntime;
 use crate::config::Config;
 use crate::config::manager::ConfigManager;
-use crate::provider::AgentRuntime;
 use crate::provider::MemoryFile;
 use crate::provider::{AgentWorkspace, SkillStore};
 use crate::runtime::session::RuntimeSession;
@@ -44,7 +44,7 @@ pub(crate) struct Infrastructure {
 
 pub(crate) struct RuntimeContext {
     pub(crate) runtime_session: Arc<RuntimeSession>,
-    pub(crate) workers: Arc<dyn AgentRuntime>,
+    pub(crate) workers: Arc<PiRuntime>,
     pub(crate) active_providers: crate::provider::ProvidersConfig,
     pub(crate) active_routes: crate::provider::ProviderRoutes,
     pub(crate) active_agent: crate::config::AgentConfig,

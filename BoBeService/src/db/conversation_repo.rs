@@ -94,18 +94,16 @@ impl SqliteConversationRepo {
 
     pub(crate) async fn save(&self, conversation: &Conversation) -> Result<Conversation, AppError> {
         sqlx::query(
-            r"INSERT INTO conversations (id, state, closed_at, summary, created_at, updated_at, channel_id)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            r"INSERT INTO conversations (id, state, closed_at, created_at, updated_at, channel_id)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                ON CONFLICT(id) DO UPDATE SET
                    state = excluded.state,
                    closed_at = excluded.closed_at,
-                   summary = excluded.summary,
                    updated_at = excluded.updated_at",
         )
         .bind(conversation.id)
         .bind(conversation.state)
         .bind(conversation.closed_at)
-        .bind(&conversation.summary)
         .bind(conversation.created_at)
         .bind(conversation.updated_at)
         .bind(conversation.channel_id)
@@ -199,7 +197,6 @@ impl SqliteConversationRepo {
         &self,
         id: ConversationId,
         state: ConversationState,
-        summary: Option<String>,
     ) -> Result<Option<Conversation>, AppError> {
         let now = Utc::now();
         let closed_at = if state == ConversationState::Closed {
@@ -209,11 +206,10 @@ impl SqliteConversationRepo {
         };
 
         let result = sqlx::query(
-            r"UPDATE conversations SET state = ?1, summary = COALESCE(?2, summary),
-               closed_at = COALESCE(?3, closed_at), updated_at = ?4 WHERE id = ?5",
+            r"UPDATE conversations SET state = ?1,
+               closed_at = COALESCE(?2, closed_at), updated_at = ?3 WHERE id = ?4",
         )
         .bind(state.as_str())
-        .bind(&summary)
         .bind(closed_at)
         .bind(now)
         .bind(id)
@@ -228,7 +224,6 @@ impl SqliteConversationRepo {
         info!(
             conversation_id = %id,
             to_state = %state.as_str(),
-            has_summary = summary.is_some(),
             "conversation_repo.updated_state"
         );
         self.get_by_id(id).await
@@ -563,7 +558,7 @@ mod tests {
         let repo = SqliteConversationRepo::new(pool);
         let conv = repo.save(&Conversation::new_pending()).await.expect("save");
         let updated = repo
-            .update_state(conv.id, ConversationState::Active, None)
+            .update_state(conv.id, ConversationState::Active)
             .await
             .expect("update_state")
             .expect("conversation found");
@@ -577,14 +572,14 @@ mod tests {
         let c = repo.save(&Conversation::new_active()).await.expect("save");
         let turn = ConversationTurn::new(c.id, TurnRole::Assistant, "answer".into());
         repo.add_turn(&turn).await.expect("add turn");
-        repo.update_state(c.id, ConversationState::Closed, Some("summary".into()))
+        repo.update_state(c.id, ConversationState::Closed)
             .await
             .expect("close");
         let empty = repo
             .save(&Conversation::new_active())
             .await
             .expect("save empty conversation");
-        repo.update_state(empty.id, ConversationState::Closed, None)
+        repo.update_state(empty.id, ConversationState::Closed)
             .await
             .expect("close empty conversation");
         let last = repo
@@ -593,7 +588,6 @@ mod tests {
             .expect("get_last_closed_with_turns")
             .expect("has closed conversation");
         assert_eq!(last.id, c.id);
-        assert_eq!(last.summary.as_deref(), Some("summary"));
     }
 
     #[tokio::test]

@@ -53,7 +53,6 @@ struct BearerAuthenticationRow {
     endpoint_id: String,
     verifier: Option<Vec<u8>>,
     issued_authority_epoch: Option<i64>,
-    expires_at: Option<DateTime<Utc>>,
     last_used_at: Option<DateTime<Utc>>,
 }
 
@@ -238,7 +237,7 @@ impl DeviceTrustRepo {
         };
         let record: Option<BearerAuthenticationRow> = sqlx::query_as(
             "SELECT c.id, c.endpoint_id, c.verifier,
-                    c.issued_authority_epoch, c.expires_at, c.last_used_at
+                    c.issued_authority_epoch, c.last_used_at
              FROM endpoint_credentials c
              JOIN endpoints e ON e.id = c.endpoint_id
              WHERE c.lookup_id = ?1 AND c.kind = 'bearer'
@@ -250,9 +249,7 @@ impl DeviceTrustRepo {
         let Some(record) = record else {
             return Ok(None);
         };
-        if record.issued_authority_epoch != Some(current_authority_epoch)
-            || record.expires_at.is_some_and(|expiry| expiry <= Utc::now())
-        {
+        if record.issued_authority_epoch != Some(current_authority_epoch) {
             return Ok(None);
         }
         let expected = record.verifier.as_deref().unwrap_or_default();

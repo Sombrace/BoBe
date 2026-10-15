@@ -57,7 +57,7 @@ impl ConversationService {
                 .await?;
             let conversation = if conversation.is_pending() {
                 self.repo
-                    .update_state(conversation.id, ConversationState::Active, None)
+                    .update_state(conversation.id, ConversationState::Active)
                     .await?
                     .ok_or_else(|| {
                         AppError::NotFound(format!(
@@ -332,7 +332,7 @@ impl ConversationService {
 
         let updated = self
             .repo
-            .update_state(conversation_id, ConversationState::Closed, None)
+            .update_state(conversation_id, ConversationState::Closed)
             .await?;
         if updated.is_some() {
             let turn_count = self.repo.count_turns(conversation_id).await?;
@@ -420,7 +420,7 @@ mod tests {
         let first = ConversationChannelId::for_endpoint("first");
         let other = ConversationChannelId::for_endpoint("other");
         let preferred = service.event_conversation(first).await.unwrap();
-        repo.update_state(preferred.id, ConversationState::Closed, None)
+        repo.update_state(preferred.id, ConversationState::Closed)
             .await
             .unwrap();
         service.event_conversation(other).await.unwrap();
@@ -490,14 +490,14 @@ mod tests {
         let answer =
             ConversationTurn::new(closed.id, TurnRole::Assistant, "Durable answer".to_owned());
         repo.add_turn(&answer).await.expect("save answer");
-        repo.update_state(closed.id, ConversationState::Closed, None)
+        repo.update_state(closed.id, ConversationState::Closed)
             .await
             .expect("close conversation");
         let empty_closed = repo
             .save(&Conversation::new_active())
             .await
             .expect("save empty active conversation");
-        repo.update_state(empty_closed.id, ConversationState::Closed, None)
+        repo.update_state(empty_closed.id, ConversationState::Closed)
             .await
             .expect("close empty conversation");
         repo.save(&Conversation::new_pending())
@@ -635,7 +635,7 @@ mod tests {
             .save(&Conversation::new_active())
             .await
             .expect("save old conversation");
-        repo.update_state(closed.id, ConversationState::Closed, None)
+        repo.update_state(closed.id, ConversationState::Closed)
             .await
             .expect("close old conversation");
 

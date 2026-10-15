@@ -75,28 +75,11 @@ impl OllamaManager {
         }
     }
 
-    pub(crate) async fn ensure_daemon_running(
-        &self,
-        binary_path: Option<&Path>,
-        auto_start: bool,
-    ) -> Result<(), AppError> {
+    pub(crate) async fn ensure_daemon_running(&self, binary: &Path) -> Result<(), AppError> {
         if self.health_check().await {
             info!("ollama_manager.already_running");
             return Ok(());
         }
-
-        if !auto_start {
-            return Err(AppError::ServiceUnavailable(
-                "Ollama not running and auto_start=false".into(),
-            ));
-        }
-
-        let Some(binary) = binary_path else {
-            return Err(AppError::Config(
-                "Ollama binary path required when auto_start=true and no daemon is running".into(),
-            ));
-        };
-
         self.spawn_daemon(binary).await
     }
 

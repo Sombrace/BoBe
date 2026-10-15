@@ -30,7 +30,7 @@ pub(crate) async fn wire(
     config_root: &std::path::Path,
     infra: &Infrastructure,
     repos: &Repositories,
-    workers: Arc<dyn crate::provider::AgentRuntime>,
+    workers: Arc<crate::agent::PiRuntime>,
     goals_service: Arc<GoalsService>,
     personal_data_lifecycle: Arc<tokio::sync::RwLock<()>>,
     jobs: Arc<crate::db::agent_job_repo::AgentJobRepo>,

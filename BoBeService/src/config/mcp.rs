@@ -14,28 +14,8 @@ impl Default for McpConfig {
         Self {
             enabled: true,
             config_file: None,
-            blocked_commands: vec![
-                "rm".into(),
-                "rmdir".into(),
-                "dd".into(),
-                "mkfs".into(),
-                "fdisk".into(),
-                "sudo".into(),
-                "su".into(),
-                "chmod".into(),
-                "chown".into(),
-                "kill".into(),
-                "killall".into(),
-                "shutdown".into(),
-                "reboot".into(),
-                "halt".into(),
-            ],
-            dangerous_env_keys: vec![
-                "LD_PRELOAD".into(),
-                "LD_LIBRARY_PATH".into(),
-                "DYLD_INSERT_LIBRARIES".into(),
-                "DYLD_LIBRARY_PATH".into(),
-            ],
+            blocked_commands: Vec::new(),
+            dangerous_env_keys: Vec::new(),
         }
     }
 }

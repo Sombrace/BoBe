@@ -181,7 +181,7 @@ impl OllamaInstallService {
         }
 
         self.ollama_manager
-            .ensure_daemon_running(Some(&binary_path), true)
+            .ensure_daemon_running(&binary_path)
             .await?;
 
         if *cancel_rx.borrow() {

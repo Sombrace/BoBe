@@ -186,8 +186,7 @@ async fn run_with_config(
         Arc::clone(&voice_sink),
         Arc::clone(&voice_engines),
     )?;
-    let workers: Arc<dyn crate::provider::AgentRuntime> =
-        Arc::clone(&agent) as Arc<dyn crate::provider::AgentRuntime>;
+    let workers = Arc::clone(&agent);
 
     let wired = wiring::wire(
         &config,

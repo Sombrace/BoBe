@@ -34,7 +34,7 @@ pub(crate) use profile::{
     ProviderRoutes, ProvidersConfig, WorkloadRoute, credential_account, credential_reference,
     resolve_credential,
 };
-pub(crate) use runtime::{AgentAuthorityLifecycle, AgentRuntime, ChatRuntime, ChatStream};
+pub(crate) use runtime::{AgentAuthorityLifecycle, ChatStream};
 pub(crate) use skill_store::{SkillStore, SkillSummary};
 pub(crate) use workload::{AuxiliaryClass, WorkerClass};
 pub(crate) use workspace::{

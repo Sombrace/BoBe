@@ -75,7 +75,6 @@ overflow-checks = true
 anyhow = "1.0.104"
 async-stream = "0.3.6"
 arc-swap = "1.9.2"
-async-trait = "0.1"
 axum = { version = "0.8.9", features = ["ws"] }
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 chrono = { version = "0.4.45", features = ["serde"] }

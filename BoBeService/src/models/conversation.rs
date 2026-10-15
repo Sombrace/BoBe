@@ -9,7 +9,6 @@ pub(crate) struct Conversation {
     pub(crate) channel_id: ConversationChannelId,
     pub(crate) state: ConversationState,
     pub(crate) closed_at: Option<DateTime<Utc>>,
-    pub(crate) summary: Option<String>,
     pub(crate) created_at: DateTime<Utc>,
     pub(crate) updated_at: DateTime<Utc>,
 }
@@ -22,7 +21,6 @@ impl Conversation {
             channel_id: ConversationChannelId::OWNER,
             state: ConversationState::Pending,
             closed_at: None,
-            summary: None,
             created_at: now,
             updated_at: now,
         }
@@ -35,7 +33,6 @@ impl Conversation {
             channel_id: ConversationChannelId::OWNER,
             state: ConversationState::Active,
             closed_at: None,
-            summary: None,
             created_at: now,
             updated_at: now,
         }

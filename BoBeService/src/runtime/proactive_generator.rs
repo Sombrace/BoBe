@@ -6,12 +6,12 @@ use chrono::Utc;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
+use crate::agent::PiRuntime;
 use crate::config::Config;
 use crate::db::SqliteCooldownRepo;
 use crate::error::AppError;
 use crate::models::conversation::Conversation;
 use crate::models::ids::{ConversationTurnId, message_id_for_turn};
-use crate::provider::AgentRuntime;
 use crate::provider::{ChatPrompt, JobInput};
 use crate::runtime::behavior_context::BehaviorContext;
 use crate::runtime::conversation_service::ConversationService;
@@ -126,7 +126,7 @@ async fn admit_activation(
 }
 
 pub(crate) struct ProactiveGenerator {
-    workers: Arc<dyn AgentRuntime>,
+    workers: Arc<PiRuntime>,
     conversation: Arc<ConversationService>,
     event_queue: Arc<EventQueue>,
     cooldown_repo: Arc<SqliteCooldownRepo>,
@@ -140,7 +140,7 @@ pub(crate) struct ProactiveGenerator {
 
 impl ProactiveGenerator {
     pub(crate) fn new(
-        workers: Arc<dyn AgentRuntime>,
+        workers: Arc<PiRuntime>,
         conversation: Arc<ConversationService>,
         event_queue: Arc<EventQueue>,
         cooldown_repo: Arc<SqliteCooldownRepo>,
@@ -472,7 +472,7 @@ impl ProactiveGenerator {
         conversation_id: crate::models::ids::ConversationId,
         channel: crate::models::ids::ConversationChannelId,
     ) -> Result<crate::runtime::response_streamer::StreamResult, AppError> {
-        let worker = self.workers.chat().await?;
+        let worker = self.workers.chat();
         let prompt_text = self.behavior_context.prepend_to(prompt_text).await;
         let run_id =
             crate::models::ids::conversation_turn_id_from_wire_id(msg_id).map_err(|error| {

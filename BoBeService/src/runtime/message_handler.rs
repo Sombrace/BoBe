@@ -4,10 +4,10 @@ use std::sync::Arc;
 use chrono::Utc;
 use tracing::{error, info, warn};
 
+use crate::agent::PiRuntime;
 use crate::db::SqliteCooldownRepo;
 use crate::error::AppError;
 use crate::models::ids::{ConversationChannelId, ConversationId, ConversationTurnId};
-use crate::provider::AgentRuntime;
 use crate::provider::ChatPrompt;
 use crate::runtime::behavior_context::BehaviorContext;
 use crate::runtime::conversation_service::ConversationService;
@@ -89,7 +89,7 @@ impl Drop for ConversationChangeGuard {
 }
 
 pub(crate) struct MessageHandler {
-    workers: Arc<dyn AgentRuntime>,
+    workers: Arc<PiRuntime>,
     conversation: Arc<ConversationService>,
     cooldown_repo: Arc<SqliteCooldownRepo>,
     event_queue: Arc<EventQueue>,
@@ -193,7 +193,7 @@ impl MessageHandler {
     }
 
     pub(crate) fn new(
-        workers: Arc<dyn AgentRuntime>,
+        workers: Arc<PiRuntime>,
         conversation: Arc<ConversationService>,
         cooldown_repo: Arc<SqliteCooldownRepo>,
         event_queue: Arc<EventQueue>,
@@ -480,7 +480,7 @@ impl MessageHandler {
         F: FnMut(String) -> Fut + Send,
         Fut: Future<Output = ()> + Send,
     {
-        let worker = self.workers.chat().await?;
+        let worker = self.workers.chat();
         let contextualized = self.behavior_context.prepend_to(user_content).await;
         let prompt = if background {
             ChatPrompt::background(contextualized)
