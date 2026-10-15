@@ -273,7 +273,7 @@ fn required_scope(method: &Method, path: &str) -> RouteScope {
         VoiceSession,
     };
 
-    if matches!(path, "/health" | "/readyz" | "/metrics" | "/v1/hello")
+    if matches!(path, "/health" | "/readyz" | "/v1/hello")
         || (*method == Method::DELETE && path == "/endpoints/self")
     {
         return RouteScope::Public;
@@ -473,7 +473,6 @@ mod tests {
             (Method::POST, "/v1/hello", Public),
             (Method::GET, "/health", Public),
             (Method::GET, "/readyz", Public),
-            (Method::GET, "/metrics", Public),
             (Method::GET, "/status", Required(Scope::SettingsRead)),
             (
                 Method::POST,
@@ -698,7 +697,6 @@ mod tests {
             (Method::POST, "/v1/hello"),
             (Method::GET, "/health"),
             (Method::GET, "/readyz"),
-            (Method::GET, "/metrics"),
             (Method::GET, "/events"),
             (Method::GET, "/voice/stream"),
             (Method::GET, "/conversation/current"),
@@ -713,7 +711,6 @@ mod tests {
             (Method::POST, "/owner-input/input/cancel"),
             (Method::GET, "/goals"),
             (Method::POST, "/goals"),
-            (Method::GET, "/goals/goal"),
             (Method::PATCH, "/goals/goal"),
             (Method::DELETE, "/goals/goal"),
             (Method::POST, "/goals/goal/complete"),
@@ -726,14 +723,12 @@ mod tests {
             (Method::PUT, "/memory"),
             (Method::GET, "/souls"),
             (Method::POST, "/souls"),
-            (Method::GET, "/souls/soul"),
             (Method::PATCH, "/souls/soul"),
             (Method::DELETE, "/souls/soul"),
             (Method::POST, "/souls/soul/enable"),
             (Method::POST, "/souls/soul/disable"),
             (Method::GET, "/user-profiles"),
             (Method::POST, "/user-profiles"),
-            (Method::GET, "/user-profiles/profile"),
             (Method::PATCH, "/user-profiles/profile"),
             (Method::DELETE, "/user-profiles/profile"),
             (Method::POST, "/user-profiles/profile/enable"),

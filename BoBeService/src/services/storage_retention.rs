@@ -10,14 +10,7 @@ use crate::error::AppError;
 pub(crate) const RETENTION_INTERVAL: std::time::Duration = std::time::Duration::from_hours(6);
 const CONVERSATION_PRUNE_BATCH_SIZE: i64 = 100;
 
-#[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct RetentionOutcome {
-    pub(crate) conversations_deleted: u64,
-    pub(crate) logs_deleted: usize,
-    pub(crate) log_bytes_deleted: u64,
-}
-
-pub(crate) async fn run(pool: &SqlitePool, config: &Config) -> RetentionOutcome {
+pub(crate) async fn run(pool: &SqlitePool, config: &Config) {
     let conversations_deleted = match prune_closed_conversations(pool, config).await {
         Ok(count) => count,
         Err(error) => {
@@ -40,20 +33,14 @@ pub(crate) async fn run(pool: &SqlitePool, config: &Config) -> RetentionOutcome 
         }
     };
 
-    let outcome = RetentionOutcome {
-        conversations_deleted,
-        logs_deleted,
-        log_bytes_deleted,
-    };
-    if outcome != RetentionOutcome::default() {
+    if conversations_deleted > 0 || logs_deleted > 0 || log_bytes_deleted > 0 {
         info!(
-            conversations = outcome.conversations_deleted,
-            logs = outcome.logs_deleted,
-            log_bytes = outcome.log_bytes_deleted,
+            conversations = conversations_deleted,
+            logs = logs_deleted,
+            log_bytes = log_bytes_deleted,
             "retention.completed"
         );
     }
-    outcome
 }
 
 async fn prune_closed_conversations(pool: &SqlitePool, config: &Config) -> Result<u64, AppError> {

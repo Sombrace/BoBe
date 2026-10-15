@@ -4,9 +4,9 @@ use tracing::{debug, info, warn};
 
 use crate::error::AppError;
 use crate::provider::AgentRuntime;
+use crate::provider::AuxiliaryClass;
 use crate::provider::JobInput;
 use crate::provider::MemoryFile;
-use crate::provider::WorkerClass;
 use crate::util::text::truncate_str;
 
 const RECENT_SECTION: &str = "Recent";
@@ -73,7 +73,7 @@ impl CaptureLearner {
         };
         let output = self
             .workers
-            .run_auxiliary(WorkerClass::Small, job)
+            .run_auxiliary(AuxiliaryClass::Small, job)
             .await
             .map_err(|e| AppError::Capture(format!("screen activity inference failed: {e}")))?;
         if let Some(error) = output.error {

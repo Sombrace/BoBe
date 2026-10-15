@@ -49,8 +49,8 @@ are clients of it. Swift never starts pi, and the CLI never runs inference.
 
 Rust starts one Node process on the first agent, catalog or auth request and
 talks to it with JSON lines on stdin and stdout. Rust sends every policy value
-(paths, providers, routes, tools, limits); the worker has no fallback
-defaults. The protocol is defined in `BoBeAgent/src/protocol.ts` and checked
+(paths, providers, routes, tools, execution limits and task budgets) at
+initialization or with each request. The protocol is defined in `BoBeAgent/src/protocol.ts` and checked
 against Rust with `BoBeAgent/fixtures/host-contract-v1.json`.
 
 Shell, search and MCP processes run as daemon children in their own process

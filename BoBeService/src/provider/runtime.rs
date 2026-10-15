@@ -8,8 +8,8 @@ use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 use crate::error::AppError;
 
 use super::{
-    ChatDelta, ChatPrompt, JobInput, JobOutput, McpRuntimeConfig, McpServerStatus,
-    McpToolDescriptor, MemoryFile, WorkerClass, WorkerError,
+    AuxiliaryClass, ChatDelta, ChatPrompt, JobInput, JobOutput, McpRuntimeConfig, McpServerStatus,
+    McpToolDescriptor, MemoryFile, WorkerError,
 };
 
 pub(crate) type ChatStream = Pin<Box<dyn Stream<Item = ChatDelta> + Send>>;
@@ -100,7 +100,7 @@ pub(crate) trait AgentRuntime: Send + Sync {
 
     async fn run_auxiliary(
         &self,
-        class: WorkerClass,
+        class: AuxiliaryClass,
         job: JobInput,
     ) -> Result<JobOutput, WorkerError>;
 

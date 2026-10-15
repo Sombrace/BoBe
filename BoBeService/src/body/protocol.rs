@@ -146,45 +146,19 @@ pub(crate) struct AdapterWelcome {
     pub(crate) adapter_generation: u64,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize)]
 pub(crate) struct BodyHealthReport {
     #[serde(default)]
-    pub(crate) uptime_s: u64,
-    #[serde(default)]
-    pub(crate) app_version: String,
-    #[serde(default)]
     pub(crate) build_number: u32,
-    #[serde(default)]
-    pub(crate) running_slot: u8,
-    #[serde(default)]
-    pub(crate) ota_pending_verification: bool,
-    #[serde(default)]
-    pub(crate) lifecycle: String,
-    #[serde(default)]
-    pub(crate) turn: String,
-    #[serde(default)]
-    pub(crate) wifi_rssi_dbm: i32,
-    #[serde(default)]
-    pub(crate) audio_rx_overruns: u64,
-    #[serde(default)]
-    pub(crate) audio_tx_underruns: u64,
-    #[serde(default)]
-    pub(crate) playback_sequence_gaps: u64,
-    #[serde(default)]
-    pub(crate) temperature_millicelsius: Option<i32>,
-    #[serde(default)]
-    pub(crate) microphone_muted: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize)]
 pub(crate) struct BodyBatteryState {
     #[serde(default)]
     pub(crate) percent: u8,
-    #[serde(default)]
-    pub(crate) charging: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Deserialize)]
 pub(crate) struct UpdateStateReport {
     pub(crate) phase: String,
     #[serde(default)]
@@ -310,7 +284,7 @@ impl MediaHeader {
         let stream_id = u32::from_be_bytes(header[4..8].try_into().ok()?);
         let sequence = u32::from_be_bytes(header[8..12].try_into().ok()?);
         let monotonic_us = u64::from_be_bytes(header[12..20].try_into().ok()?);
-        if !matches!(kind, 0x01..=0x04) || flags & !MEDIA_FLAG_DISCONTINUITY != 0 || stream_id == 0
+        if !matches!(kind, 0x01 | 0x02) || flags & !MEDIA_FLAG_DISCONTINUITY != 0 || stream_id == 0
         {
             return None;
         }
@@ -493,5 +467,26 @@ mod tests {
         frame[3] = 0;
         frame.pop();
         assert!(MediaHeader::validate_microphone_frame(&frame).is_none());
+    }
+
+    #[test]
+    fn body_media_accepts_only_microphone_and_speaker_kinds() {
+        let mut frame = vec![0_u8; MEDIA_HEADER_LEN];
+        frame[0] = PROTOCOL_MAJOR;
+        frame[7] = 1;
+        for (kind, accepted) in [
+            (0x00, false),
+            (0x01, true),
+            (0x02, true),
+            (0x03, false),
+            (0x04, false),
+        ] {
+            frame[1] = kind;
+            assert_eq!(
+                MediaHeader::parse(&frame).is_some(),
+                accepted,
+                "kind {kind:#04x}"
+            );
+        }
     }
 }

@@ -13,7 +13,7 @@ test("auxiliary structured-result tool is a real SDK tool and does not enter the
   const pointer = await readFile(join(paths.root, "agent/session.json"), "utf8");
   const result = await worker.request({
     id: 2, method: "auxiliary",
-    params: { class: "goals", job: { job_id: "job-1", kind: "extract", instructions: "Extract goals.", input: {} }, context: "finite owner context" },
+    params: { class: "small", job: { job_id: "job-1", kind: "extract", instructions: "Extract goals.", input: {} }, context: "finite owner context" },
   });
   assert.deepEqual(result, { job_id: "job-1", output: { goals: ["bounded"] }, error: null });
   assert.equal(await readFile(join(paths.root, "agent/session.json"), "utf8"), pointer);
@@ -36,7 +36,7 @@ test("Rust auxiliary jobs preserve result values rather than an extra output env
       assert.deepEqual(await worker.request({
         id: 2, method: "auxiliary",
         params: {
-          class: result.kind === "consolidate" ? "consolidate" : "goals",
+          class: result.kind === "consolidate" ? "consolidate" : "small",
           job: { job_id: "rust-job", kind: result.kind, instructions: "Submit the requested result.", input: {} },
           context: "",
         },

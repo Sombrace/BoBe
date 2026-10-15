@@ -12,7 +12,7 @@ export function assertActive(signal?: AbortSignal): void {
   }
 }
 
-export function errorMessage(error: unknown): string {
+function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Operation failed";
 }
 

@@ -36,7 +36,7 @@ pub(crate) use profile::{
 };
 pub(crate) use runtime::{AgentAuthorityLifecycle, AgentRuntime, ChatRuntime, ChatStream};
 pub(crate) use skill_store::{SkillStore, SkillSummary};
-pub(crate) use workload::WorkerClass;
+pub(crate) use workload::{AuxiliaryClass, WorkerClass};
 pub(crate) use workspace::{
     AgentWorkspace, WorkspaceEntry, WorkspaceListParams, WorkspaceRead, WorkspaceReadParams,
     WorkspaceWriteParams,

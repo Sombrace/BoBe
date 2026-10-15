@@ -37,10 +37,6 @@ impl UserProfileService {
         })
     }
 
-    pub(crate) async fn get(&self, id: UserProfileId) -> Result<Option<UserProfile>, AppError> {
-        self.repo.get_by_id(id).await
-    }
-
     pub(crate) async fn create(
         &self,
         name: String,

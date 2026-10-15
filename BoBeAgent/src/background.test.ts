@@ -29,6 +29,7 @@ test("background execution does not occupy the canonical chat and has no recursi
     id: 2, method: "background", params: {
       job_id: job, title: "Bounded task", task: "Background work", context: "", memory_context: "",
       attempt: 1, route: { profile: "test", model: "fixture-model", reasoning_effort: "low" },
+      budget: { timeout_seconds: 1800, max_turns: 64 },
     },
   });
   await started.promise;
@@ -55,6 +56,7 @@ test("aborting a background job settles only that job and permits a later foregr
   const running = worker.request({ id: 2, method: "background", params: {
     job_id: randomUUID(), title:"Wait",task:"Wait",context:"",memory_context:"",attempt:1,
     route:{profile:"test",model:"fixture-model",reasoning_effort:null},
+    budget:{timeout_seconds:1800,max_turns:64},
   } });
   const rejected = assert.rejects(running);
   await started.promise;
@@ -142,6 +144,7 @@ test("a real pi background session can plan a durable future wake without spawni
   await worker.request({id:2,method:"background",params:{
     job_id:randomUUID(),title:"Plan",task:"Plan the next check",context:"",memory_context:"",attempt:1,
     route:{profile:"test",model:"fixture-model",reasoning_effort:"low"},
+    budget:{timeout_seconds:1800,max_turns:64},
   }});
   assert.equal(schedules,1);
 });
@@ -169,6 +172,7 @@ test("tool exclusions also apply to scoped children and persistent background se
   const params = {
     job_id: job, title: "Background", task: "Background", context: "", memory_context: "", attempt: 1,
     route: { profile: "test", model: "fixture-model", reasoning_effort: null },
+    budget: { timeout_seconds: 1800, max_turns: 64 },
   };
   const first = await worker.request({ id: 3, method: "background", params });
   const resumed = await worker.request({ id: 4, method: "background", params: { ...params, attempt: 2 } });

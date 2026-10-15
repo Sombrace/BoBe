@@ -1,23 +1,16 @@
-use std::time::Instant;
-
-use crate::voice::telemetry::HIST_FIRST_SENTENCE_MS;
 use crate::voice::text_prep::markdown_strip::{FenceFilter, strip_markdown};
 use crate::voice::text_prep::sentence_buffer::{Sentence, SentenceBuffer};
 
 pub(crate) struct SentencePipeline {
     fences: FenceFilter,
     sb: SentenceBuffer,
-    turn_start: Instant,
-    first_sentence_recorded: bool,
 }
 
 impl SentencePipeline {
-    pub(crate) fn new(turn_start: Instant) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             fences: FenceFilter::default(),
             sb: SentenceBuffer::new(),
-            turn_start,
-            first_sentence_recorded: false,
         }
     }
 
@@ -26,39 +19,18 @@ impl SentencePipeline {
         if visible.is_empty() {
             return Vec::new();
         }
-        let sentences = speakable(self.sb.feed(&visible));
-        if !sentences.is_empty() {
-            self.record_first_sentence();
-        }
-        sentences
+        speakable(self.sb.feed(&visible))
     }
 
     pub(crate) fn settle(&mut self) -> Vec<String> {
-        let sentences = speakable(self.sb.settle());
-        if !sentences.is_empty() {
-            self.record_first_sentence();
-        }
-        sentences
+        speakable(self.sb.settle())
     }
 
     pub(crate) fn flush(&mut self) -> Vec<String> {
         let tail = self.fences.flush();
         let mut sentences = self.sb.feed(&tail);
         sentences.extend(self.sb.flush());
-        let sentences = speakable(sentences);
-        if !sentences.is_empty() {
-            self.record_first_sentence();
-        }
-        sentences
-    }
-
-    fn record_first_sentence(&mut self) {
-        if self.first_sentence_recorded {
-            return;
-        }
-        self.first_sentence_recorded = true;
-        metrics::histogram!(HIST_FIRST_SENTENCE_MS)
-            .record(self.turn_start.elapsed().as_secs_f64() * 1_000.0);
+        speakable(sentences)
     }
 }
 
@@ -79,7 +51,7 @@ mod tests {
     use super::*;
 
     fn spoken(deltas: &[&str]) -> Vec<String> {
-        let mut pipeline = SentencePipeline::new(Instant::now());
+        let mut pipeline = SentencePipeline::new();
         let mut sentences = Vec::new();
         for delta in deltas {
             sentences.extend(pipeline.feed(delta));
@@ -147,7 +119,7 @@ mod tests {
 
     #[test]
     fn a_sentence_before_a_pause_is_spoken_without_waiting_for_more_text() {
-        let mut pipeline = SentencePipeline::new(Instant::now());
+        let mut pipeline = SentencePipeline::new();
         assert!(pipeline.feed("Let me **check** that.").is_empty());
         assert_eq!(pipeline.settle(), vec!["Let me check that."]);
         assert!(pipeline.feed(" Found it.").is_empty());
@@ -156,7 +128,7 @@ mod tests {
 
     #[test]
     fn flush_returns_unterminated_tail() {
-        let mut pipeline = SentencePipeline::new(Instant::now());
+        let mut pipeline = SentencePipeline::new();
         assert!(pipeline.feed("Still speaking").is_empty());
         assert_eq!(pipeline.flush(), vec!["Still speaking"]);
     }

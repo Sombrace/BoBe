@@ -14,7 +14,7 @@ interface ProcessState {
   completion: Promise<number>;
 }
 
-export interface ProcessSpec {
+interface ProcessSpec {
   program: string;
   args: string[];
   cwd: string;

@@ -105,9 +105,41 @@ pub(super) struct InitializeParams {
     pub(super) capability_instructions: String,
     pub(super) mcp: McpRuntimeConfig,
     pub(super) enabled_tools: std::collections::BTreeSet<crate::config::AgentTool>,
-    pub(super) execution: crate::config::ExecutionLimits,
+    pub(super) execution: WorkerExecution,
     pub(super) workload_budgets:
         std::collections::BTreeMap<String, crate::provider::budget::WorkloadBudget>,
+}
+
+#[derive(Clone, Serialize)]
+pub(super) struct WorkerExecution {
+    model_concurrency: usize,
+    foreground_reserve: usize,
+    tool_concurrency: usize,
+    live_channels: usize,
+    idle_channel_seconds: u64,
+    task_timeout_seconds: u32,
+    task_max_turns: u32,
+}
+
+impl From<&crate::config::ExecutionLimits> for WorkerExecution {
+    fn from(limits: &crate::config::ExecutionLimits) -> Self {
+        Self {
+            model_concurrency: limits.model_concurrency,
+            foreground_reserve: limits.foreground_reserve,
+            tool_concurrency: limits.tool_concurrency,
+            live_channels: limits.live_channels,
+            idle_channel_seconds: limits.idle_channel_seconds,
+            task_timeout_seconds: limits.task_timeout_seconds,
+            task_max_turns: limits.task_max_turns,
+        }
+    }
+}
+
+#[derive(Default)]
+pub(super) struct RunScope {
+    pub(super) run_id: Option<uuid::Uuid>,
+    pub(super) channel: crate::models::ids::ConversationChannelId,
+    pub(super) goal_id: Option<crate::models::ids::GoalId>,
 }
 
 #[derive(Clone)]
@@ -557,6 +589,7 @@ impl Connection {
         method: &str,
         params: Value,
         stream: bool,
+        scope: RunScope,
     ) -> Result<Request, AppError> {
         let _order = self.request_order.lock().await;
         if !self.alive.load(Ordering::Acquire) {
@@ -570,25 +603,11 @@ impl Connection {
                 "pi request ID space is exhausted".into(),
             ));
         }
-        let run_id = match method {
-            "chat" => params.get("run_id"),
-            "background" => params.get("job_id"),
-            "auxiliary" => params.get("job").and_then(|job| job.get("job_id")),
-            _ => None,
-        }
-        .filter(|value| !value.is_null())
-        .map(|value| serde_json::from_value::<uuid::Uuid>(value.clone()))
-        .transpose()?;
-        let channel = params
-            .get("session_key")
-            .map(|value| serde_json::from_value(value.clone()))
-            .transpose()?
-            .unwrap_or_default();
-        let goal_id = params
-            .get("goal_id")
-            .filter(|value| !value.is_null())
-            .map(|value| serde_json::from_value(value.clone()))
-            .transpose()?;
+        let RunScope {
+            run_id,
+            channel,
+            goal_id,
+        } = scope;
         if run_id.is_some_and(|run_id| lock(&self.run_requests).contains_key(&run_id)) {
             return Err(AppError::Conflict(
                 "run already has an executing worker request".into(),
@@ -646,7 +665,9 @@ impl Connection {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, AppError> {
-        let request = self.begin(method, params, false).await?;
+        let request = self
+            .begin(method, params, false, RunScope::default())
+            .await?;
         let result = tokio::time::timeout(timeout, request.reply).await;
         self.finish(request.id);
         match result {
@@ -1218,7 +1239,10 @@ mod tests {
         let params = &fixture["initialize_request"]["params"];
         assert_eq!(
             params["execution"],
-            serde_json::to_value(crate::config::ExecutionLimits::default()).unwrap()
+            serde_json::to_value(WorkerExecution::from(
+                &crate::config::ExecutionLimits::default()
+            ))
+            .unwrap()
         );
         for class in [
             crate::provider::WorkerClass::Chat,
@@ -1310,7 +1334,7 @@ input.on("line", line => {
       writeFileSync("initializing.pid", String(process.pid));
       return;
     }
-    send({ id: message.id, result: { protocol_version: 1, harness: "pi", version: "1.0.3" } });
+    send({ id: message.id, result: { protocol_version: 1, harness: "pi" } });
   } else if (message.method === "chat") {
     callbacks.set(-message.id, message.id);
     send({ method: "event", params: { request_id: message.id, delta: {
@@ -1355,7 +1379,10 @@ input.on("line", line => {
             .call("initialize", json!({}), Duration::from_secs(5))
             .await
             .unwrap();
-        let mut request = connection.begin("chat", json!({}), true).await.unwrap();
+        let mut request = connection
+            .begin("chat", json!({}), true, RunScope::default())
+            .await
+            .unwrap();
         let mut events = request.events.take().unwrap();
         assert!(matches!(
             tokio::time::timeout(Duration::from_secs(5), events.recv())
@@ -1370,7 +1397,10 @@ input.on("line", line => {
             .unwrap();
         assert_eq!(reply["tool_success"], true);
         connection.finish(request.id);
-        let pending = connection.begin("hold", json!({}), false).await.unwrap();
+        let pending = connection
+            .begin("hold", json!({}), false, RunScope::default())
+            .await
+            .unwrap();
         connection.abort(pending.id).await;
         let reply = tokio::time::timeout(Duration::from_secs(5), pending.reply)
             .await
@@ -1396,7 +1426,7 @@ input.on("line", line => {
                 capability_instructions: String::new(),
                 mcp: McpRuntimeConfig::default(),
                 enabled_tools: std::collections::BTreeSet::default(),
-                execution: crate::config::ExecutionLimits::default(),
+                execution: WorkerExecution::from(&crate::config::ExecutionLimits::default()),
                 workload_budgets: std::collections::BTreeMap::default(),
             },
             bridge,

@@ -38,7 +38,8 @@ sides and the fixture together.
 
 ## Rules
 
-- Rust owns every policy value; the worker has no fallback limits.
+- Rust sends every execution limit and task budget; do not add worker-side
+  fallbacks. Only the subagent tool's limits live in `src/delegation.ts`.
 - Shell, `rg`, `fd` and MCP processes run as Rust children through the
   `process` callback, never as Node children.
 - Domain tools (memory, goals, schedules, owner questions, background jobs,

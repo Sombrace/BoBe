@@ -7,7 +7,6 @@ use crate::config::Config;
 use crate::db::agent_job_repo::{AgentJobRepo, JobInput};
 use crate::db::goal_review_repo::GoalReviewWork;
 use crate::provider::WorkloadRoute;
-use crate::runtime::state::Decision;
 use crate::services::goals::goals_service::GoalsService;
 
 const IDLE_REVIEW_LIMIT: u32 = 3;
@@ -37,11 +36,11 @@ impl GoalTrigger {
         }
     }
 
-    pub(crate) async fn fire(&self) -> Decision {
-        self.fire_at(chrono::Utc::now()).await
+    pub(crate) async fn fire(&self) {
+        self.fire_at(chrono::Utc::now()).await;
     }
 
-    async fn fire_at(&self, now: chrono::DateTime<chrono::Utc>) -> Decision {
+    async fn fire_at(&self, now: chrono::DateTime<chrono::Utc>) {
         let _personal_data = self.personal_data_lifecycle.read().await;
         let cfg = self.config.load_full();
 
@@ -51,29 +50,29 @@ impl GoalTrigger {
                 .enabled_tools
                 .contains(&crate::config::AgentTool::BackgroundJobs)
         {
-            return Decision::Idle;
+            return;
         }
 
         if !cfg.goals.check_interval_seconds.is_finite()
             || !(1.0..=31_536_000.0).contains(&cfg.goals.check_interval_seconds)
         {
             warn!("goal_trigger.invalid_review_interval");
-            return Decision::Idle;
+            return;
         }
         let interval = cfg.goals.check_interval_seconds.ceil() as u32;
         match self.jobs.goal_review_due(now, interval).await {
-            Ok(false) => return Decision::Idle,
+            Ok(false) => return,
             Ok(true) => {}
             Err(error) => {
                 warn!(%error,"goal_trigger.clock_failed");
-                return Decision::Idle;
+                return;
             }
         }
         let goals = match self.goals_service.list_active().await {
             Ok(goals) => goals,
             Err(error) => {
                 warn!(%error,"goal_trigger.fetch_failed");
-                return Decision::Idle;
+                return;
             }
         };
         let mut work = Vec::with_capacity(goals.len());
@@ -112,7 +111,6 @@ impl GoalTrigger {
             Ok(_) => {}
             Err(error) => warn!(%error,"goal_trigger.queue_failed"),
         }
-        Decision::Idle
     }
 }
 
@@ -205,8 +203,8 @@ mod tests {
             Arc::clone(&config),
             Arc::new(tokio::sync::RwLock::new(())),
         );
-        assert_eq!(trigger.fire().await, Decision::Idle);
-        assert_eq!(trigger.fire().await, Decision::Idle);
+        trigger.fire().await;
+        trigger.fire().await;
         let queued = jobs.list().await.unwrap();
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].goal_id, Some(goal.id));

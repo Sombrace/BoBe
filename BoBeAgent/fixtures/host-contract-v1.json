@@ -28,7 +28,6 @@
       "execution": {
         "model_concurrency": 4,
         "foreground_reserve": 1,
-        "process_concurrency": 64,
         "tool_concurrency": 8,
         "live_channels": 8,
         "idle_channel_seconds": 900,
@@ -74,7 +73,7 @@
   },
   "initialize_response": {
     "id": 1,
-    "result": {"protocol_version": 1, "harness": "pi", "version": "1.0.3"}
+    "result": {"protocol_version": 1, "harness": "pi"}
   },
   "chat_request": {
     "id": 2,

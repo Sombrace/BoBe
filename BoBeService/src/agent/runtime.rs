@@ -5,13 +5,13 @@ use async_stream::stream;
 use serde_json::{Value, json};
 use tokio::sync::OwnedRwLockReadGuard;
 
-use super::host::{Connection, DomainBridge, Host, InitializeParams};
+use super::host::{Connection, DomainBridge, Host, InitializeParams, RunScope};
 use crate::error::AppError;
 use crate::provider::{
-    AgentAuthorityLifecycle, AgentRuntime, ChatDelta, ChatPrompt, ChatRuntime, ChatStream,
-    DomainTools, JobInput, JobOutput, McpRuntimeConfig, McpServerStatus, McpToolDescriptor,
-    MemoryFile, ProfileId, ProviderAuthStatus, ProviderModelDescriptor, SkillStore, TurnChannel,
-    TurnContext, WorkerClass, WorkerError,
+    AgentAuthorityLifecycle, AgentRuntime, AuxiliaryClass, ChatDelta, ChatPrompt, ChatRuntime,
+    ChatStream, DomainTools, JobInput, JobOutput, McpRuntimeConfig, McpServerStatus,
+    McpToolDescriptor, MemoryFile, ProfileId, ProviderAuthStatus, ProviderModelDescriptor,
+    SkillStore, TurnChannel, TurnContext, WorkerClass, WorkerError,
 };
 
 pub(crate) struct PiRuntime {
@@ -106,7 +106,7 @@ impl PiRuntime {
                 capability_instructions: tools.capability_instructions(),
                 mcp,
                 enabled_tools: config.agent.enabled_tools.clone(),
-                execution: config.agent.execution.clone(),
+                execution: (&config.agent.execution).into(),
                 workload_budgets: [
                     WorkerClass::Chat,
                     WorkerClass::Goals,
@@ -165,11 +165,14 @@ impl PiRuntime {
         let request = connection.begin("background", json!({
             "job_id":job.id, "title":job.title, "task":job.task,
             "context":format!("{}\n{}\n[bobe.resumed_task]\n{}\n[/bobe.resumed_task]",job.context,inputs,job.resume_context),
-            "session_key":job.channel_id.unwrap_or_default(), "goal_id":job.goal_id,
             "memory_context":memory.body, "attempt":job.attempt,
             "budget":{"timeout_seconds":job.timeout_seconds,"max_turns":job.max_turns},
             "route":{"profile":job.profile,"model":job.model,"reasoning_effort":job.reasoning_effort},
-        }), false).await?;
+        }), false, RunScope {
+            run_id: Some(job.id),
+            channel: job.channel_id.unwrap_or_default(),
+            goal_id: job.goal_id,
+        }).await?;
         let mut running = RunningRequest {
             connection: Arc::clone(&connection),
             id: request.id,
@@ -252,8 +255,13 @@ impl PiRuntime {
         route: crate::provider::WorkloadRoute,
     ) -> Result<crate::provider::diagnostics::ProviderProbe, AppError> {
         serde_json::from_value(
-            self.execute("probe", json!({"route":route}), Duration::from_secs(75))
-                .await?,
+            self.execute(
+                "probe",
+                json!({"route":route}),
+                Duration::from_secs(75),
+                RunScope::default(),
+            )
+            .await?,
         )
         .map_err(AppError::from)
     }
@@ -263,10 +271,11 @@ impl PiRuntime {
         method: &str,
         params: Value,
         timeout: Duration,
+        scope: RunScope,
     ) -> Result<Value, AppError> {
         let permit = self.lifecycle.read().await?;
         let connection = self.host.connection().await?;
-        let request = connection.begin(method, params, false).await?;
+        let request = connection.begin(method, params, false, scope).await?;
         let mut running = RunningRequest {
             connection,
             id: request.id,
@@ -321,13 +330,15 @@ impl ChatRuntime for PiChat {
                 let request = connection.begin("chat", json!({
                     "text": prompt.text,
                     "session_key": prompt.session_key,
-                    "run_id": prompt.run_id,
-                    "goal_id":prompt.goal_id,
                     "priority": if prompt.background { "background" } else { "interactive" },
                     "channel": if prompt.channel == TurnChannel::Voice { "voice" } else { "text" },
                     "context": format!("{}\n{}{}",dynamic.body,inputs,interruption),
                     "memory_context": memory.body,
-                }), true).await?;
+                }), true, RunScope {
+                    run_id: prompt.run_id,
+                    channel: prompt.session_key,
+                    goal_id: prompt.goal_id,
+                }).await?;
                 Ok::<_, AppError>((connection, request, permit))
             }.await;
             let (connection, mut request, permit) = match setup {
@@ -466,8 +477,13 @@ impl AgentRuntime for PiRuntime {
         &self,
     ) -> Result<crate::provider::diagnostics::ProviderProbe, AppError> {
         serde_json::from_value(
-            self.execute("probe", json!({}), Duration::from_secs(75))
-                .await?,
+            self.execute(
+                "probe",
+                json!({}),
+                Duration::from_secs(75),
+                RunScope::default(),
+            )
+            .await?,
         )
         .map_err(AppError::from)
     }
@@ -499,6 +515,7 @@ impl AgentRuntime for PiRuntime {
                 "compact",
                 json!({"keep_recent_tokens":keep_recent_tokens,"session_key":channel}),
                 Duration::from_mins(5),
+                RunScope::default(),
             )
             .await?,
         )
@@ -507,9 +524,10 @@ impl AgentRuntime for PiRuntime {
 
     async fn run_auxiliary(
         &self,
-        class: WorkerClass,
+        class: AuxiliaryClass,
         job: JobInput,
     ) -> Result<JobOutput, WorkerError> {
+        let class = class.worker_class();
         let context = turn_context(&self.context, class, TurnChannel::Text)
             .await
             .map_err(|error| WorkerError::Provider(error.to_string()))?;
@@ -521,6 +539,10 @@ impl AgentRuntime for PiRuntime {
                     "class":class.name(),"job":job,"context":context,
                 }),
                 class.turn_timeout(),
+                RunScope {
+                    run_id: Some(job_id),
+                    ..RunScope::default()
+                },
             )
             .await
             .map_err(|error| WorkerError::Provider(error.to_string()))?;

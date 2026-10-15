@@ -143,7 +143,7 @@ test("one foreground root and two background roots share an aggregate four-call 
     worker.request({ id: 2, method: "chat", params: { text: "FOREGROUND", channel: "text", context: "" } }),
     ...[3, 4].map(id => worker.request({ id, method: "background", params: {
       job_id: randomUUID(), title: `Root ${id}`, task: `BACKGROUND ${id}`,
-      context: "", memory_context: "", attempt: 1, route,
+      context: "", memory_context: "", attempt: 1, route, budget: { timeout_seconds: 1800, max_turns: 64 },
     } })),
   ];
   try {

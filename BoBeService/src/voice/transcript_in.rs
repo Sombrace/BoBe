@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Instant;
 
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -58,7 +57,6 @@ pub(crate) async fn dispatch_from_control(
     s.begin_turn(TurnInFlight {
         turn_id,
         join,
-        started_at: Instant::now(),
         playback_complete: Some(playback_complete),
         script,
     });

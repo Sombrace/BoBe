@@ -6,7 +6,7 @@ use std::path::Path;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::Value;
 
 pub(crate) const MAX_OFFER_BYTES: usize = 4_096;
@@ -69,7 +69,7 @@ impl fmt::Display for OfferError {
 
 impl std::error::Error for OfferError {}
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OfferManifest {
     pub(crate) device_model: String,
     pub(crate) version: String,

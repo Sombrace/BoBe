@@ -55,7 +55,6 @@ pub(crate) struct SettingsUpdateRequest {
 #[derive(Debug, Serialize)]
 pub(crate) struct SettingsUpdateResponse {
     pub(crate) message: String,
-    pub(crate) applied_fields: Vec<String>,
     pub(crate) restart_required_fields: Vec<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub(crate) persist_failed: bool,
@@ -135,7 +134,6 @@ pub(crate) async fn update_settings(
     if changes.is_empty() {
         return Ok(Json(SettingsUpdateResponse {
             message: "No changes provided".into(),
-            applied_fields: vec![],
             restart_required_fields: vec![],
             persist_failed: false,
             body_theme_delivered: None,
@@ -194,7 +192,6 @@ pub(crate) async fn update_settings(
     let total = result.applied_fields.len() + result.restart_required_fields.len();
     Ok(Json(SettingsUpdateResponse {
         message: format!("Updated {total} setting(s)"),
-        applied_fields: result.applied_fields,
         restart_required_fields: result.restart_required_fields,
         persist_failed: result.persist_failed,
         body_theme_delivered,

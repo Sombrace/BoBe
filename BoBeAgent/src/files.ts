@@ -9,15 +9,6 @@ export function isMissing(error: unknown): boolean {
   return isRecord(error) && error.code === "ENOENT";
 }
 
-export async function readOptional(path: string): Promise<string | undefined> {
-  try {
-    return await readFile(path, "utf8");
-  } catch (error) {
-    if (isMissing(error)) return undefined;
-    throw error;
-  }
-}
-
 export async function privateDirectory(path: string): Promise<void> {
   await mkdir(path, { recursive: true, mode: 0o700 });
   const stat = await lstat(path);

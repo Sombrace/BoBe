@@ -263,7 +263,7 @@ impl OwnedProcesses {
                     completed.send_replace(true);
                     lock(&owner.entries).remove(&process_id);
                 });
-                Ok(json!({"process_id":process_id,"pid":pid}))
+                Ok(json!({"process_id":process_id}))
             }
             ProcessRequest::Write {
                 process_id,

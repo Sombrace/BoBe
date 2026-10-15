@@ -25,7 +25,7 @@ import {
   type BackgroundRequest, type Json, type JsonObject, type McpConfig, type Route, type Thinking,
 } from "./protocol.js";
 
-export interface SessionCallbacks {
+interface SessionCallbacks {
   domain(name: string, args: JsonObject, requestId: number, signal?: AbortSignal): Promise<Json>;
   event(requestId: number, delta: Delta): void;
   activity(requestId: number, name: string): void;
@@ -386,11 +386,7 @@ export class Sessions {
             await this.callbacks.domain(tool.name, object(args), bundle.current.requestId, signal),
             "domain tool result");
           assertActive(signal);
-          if (!response.success) {
-            const detail = isRecord(response.value) && typeof response.value.error === "string"
-              ? response.value.error : undefined;
-            throw new Error(response.error ?? response.message ?? detail ?? "Owner domain tool failed");
-          }
+          if (!response.success) throw new Error(response.value.error);
 
           const value = json(response.value);
           return { content: [{ type: "text", text: JSON.stringify(value) }], details: value, structuredContent: value };
@@ -632,8 +628,7 @@ export class Sessions {
       const prompt = params.attempt > 1
         ? `This task is being reconsidered after interruption or failure. Earlier external effects may have happened. Inspect the retained transcript and current files/tool state before repeating effects. Choose whether to continue, use another method or wait within the task's existing authorization. A retry is not new permission for an external commitment. Do not ask the owner to approve a routine technical retry.\n\n${params.task}`
         : params.task;
-      const budget = this.models.execution.taskBudget(params.budget, 1800, 64);
-      const events = await this.run(bundle, prompt, signal, false, false, budget.max_turns);
+      const events = await this.run(bundle, prompt, signal, false, false, params.budget.max_turns);
       return { session_id: manager.getSessionId(), output: boundedOutput(bundle.current.deferredInput?.prompt ?? events.text()).text };
     } finally {
       await this.release(bundle);

@@ -204,7 +204,7 @@ mod tests {
         std::fs::create_dir_all(&root).expect("create test config directory");
         std::fs::write(
             root.join("config.toml"),
-            "[voice]\nenabled = false\npersona = 'af_heart'\n",
+            "[voice]\nenabled = false\npersona = 'marius'\n",
         )
         .expect("write test config");
 

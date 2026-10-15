@@ -205,9 +205,7 @@ impl SpeechPlan {
             }
             (SpeechSite::Daemon, SpeechSite::Daemon) => SpeechPlanReason::VoiceV2DaemonSpeech,
         };
-        let daemon_voice = crate::speech::providers::pocket::migrate_voice(
-            voice_id.as_deref().unwrap_or(&defaults.persona),
-        );
+        let daemon_voice = voice_id.as_deref().unwrap_or(&defaults.persona);
         if tts_site == SpeechSite::Daemon
             && !crate::speech::providers::pocket::VOICES.contains(&daemon_voice)
         {
@@ -484,14 +482,14 @@ mod tests {
     }
 
     #[test]
-    fn voice_negotiation_migrates_old_presets_and_rejects_excluded_voices() {
+    fn voice_negotiation_accepts_only_installed_pocket_voices() {
         let mut offer = offer();
         offer.overrides.tts = SpeechPlacementOverride::Daemon;
         let plan =
-            SpeechPlan::resolve_voice_v2(&offer, &defaults(), Some("af_bella".into()), None, true)
+            SpeechPlan::resolve_voice_v2(&offer, &defaults(), Some("marius".into()), None, true)
                 .unwrap();
-        assert_eq!(plan.voice_id, "alba");
-        for voice in ["cosette", "jean", "unknown"] {
+        assert_eq!(plan.voice_id, "marius");
+        for voice in ["af_bella", "7", "cosette", "jean", "unknown"] {
             assert!(matches!(
                 SpeechPlan::resolve_voice_v2(&offer, &defaults(), Some(voice.into()), None, true),
                 Err(SpeechPlanError::InvalidOffer(_))

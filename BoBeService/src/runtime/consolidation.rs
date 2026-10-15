@@ -110,7 +110,7 @@ impl ConsolidationScheduler {
 
         let out = self
             .workers
-            .run_auxiliary(crate::provider::WorkerClass::Consolidate, job)
+            .run_auxiliary(crate::provider::AuxiliaryClass::Consolidate, job)
             .await
             .map_err(|e| AppError::Internal(format!("consolidation inference: {e}")))?;
 

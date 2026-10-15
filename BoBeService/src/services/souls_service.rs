@@ -38,10 +38,6 @@ impl SoulsService {
         })
     }
 
-    pub(crate) async fn get(&self, id: SoulId) -> Result<Option<Soul>, AppError> {
-        self.repo.get_by_id(id).await
-    }
-
     pub(crate) async fn create(
         &self,
         name: String,

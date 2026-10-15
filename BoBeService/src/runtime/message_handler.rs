@@ -184,7 +184,7 @@ impl MessageHandler {
         };
         let result = self
             .workers
-            .run_auxiliary(crate::provider::WorkerClass::Small, input)
+            .run_auxiliary(crate::provider::AuxiliaryClass::Small, input)
             .await
             .map_err(|error| {
                 AppError::Internal(format!("goal update evaluation failed: {error}"))

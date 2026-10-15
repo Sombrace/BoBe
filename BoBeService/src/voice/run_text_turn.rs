@@ -8,19 +8,16 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, warn};
 
 use crate::models::ids::conversation_turn_id_from_wire_id;
-use crate::speech::protocol::{FLAG_FILLER, ServerMessage, VoicePhase, encode_tts_frame};
+use crate::speech::protocol::{ServerMessage, VoicePhase};
 use crate::voice::context::VoiceContext;
 use crate::voice::filler_library::FillerKind;
-use crate::voice::opus::{encode_pcm_with, make_opus_encoder};
 use crate::voice::output::VoiceOutput;
 use crate::voice::protocol_helpers::{send_error, send_json, send_state};
 use crate::voice::sentence_pipeline::SentencePipeline;
 use crate::voice::session::SessionVoiceConfig;
+use crate::voice::sinks::filler_frames;
 use crate::voice::spoken::SpokenScript;
 use crate::voice::synthesis::spawn_tts_task;
-use crate::voice::telemetry::{
-    CTR_FILLER_TRIGGER, CTR_TURN_COMPLETE, HIST_E2E_MS, HIST_TURN_TOTAL_MS,
-};
 use tokio_util::task::AbortOnDropHandle;
 
 pub(crate) const FILLER_TRIGGER: Duration = Duration::from_millis(800);
@@ -216,7 +213,6 @@ pub(crate) async fn run_text_turn(
             tts.sample_rate(),
             Arc::clone(&first_audio_emitted),
             output.clone(),
-            turn_start,
         )
         .map(AbortOnDropHandle::new)
     });
@@ -242,12 +238,11 @@ pub(crate) async fn run_text_turn(
             voice_cfg.speech_plan.voice_id.clone(),
             voice_cfg.speed,
             voice_cfg.speech_plan.tts_text_delivery,
-            turn_start,
             script,
         ))
     };
 
-    let pipeline = Arc::new(tokio::sync::Mutex::new(SentencePipeline::new(turn_start)));
+    let pipeline = Arc::new(tokio::sync::Mutex::new(SentencePipeline::new()));
     let stream_activity = Arc::new(tokio::sync::Notify::new());
     let pause_release = AbortOnDropHandle::new(spawn_pause_release(
         Arc::clone(&pipeline),
@@ -373,8 +368,6 @@ pub(crate) async fn run_text_turn(
     drop(lifetime);
 
     let total_ms = turn_start.elapsed().as_millis() as u64;
-    metrics::histogram!(HIST_TURN_TOTAL_MS).record(total_ms as f64);
-    metrics::counter!(CTR_TURN_COMPLETE).increment(1);
     tracing::info!(
         speaking_ms = speaking_start.elapsed().as_millis() as u64,
         total_ms,
@@ -455,7 +448,6 @@ fn spawn_filler_watchdog(
     sample_rate: u32,
     first_audio_emitted: Arc<AtomicBool>,
     output: VoiceOutput,
-    turn_start: Instant,
 ) -> Option<JoinHandle<()>> {
     let pcm = filler_pcm?;
     Some(tokio::spawn(async move {
@@ -467,16 +459,11 @@ fn spawn_filler_watchdog(
             debug!("voice.filler_skipped_tts_already_emitted");
             return;
         }
-        metrics::histogram!(HIST_E2E_MS).record(turn_start.elapsed().as_secs_f64() * 1_000.0);
-        metrics::counter!(CTR_FILLER_TRIGGER).increment(1);
         debug!(samples = pcm.len(), "voice.filler_emit");
-        let Some(mut encoder) = make_opus_encoder(sample_rate) else {
+        let Some(frames) = filler_frames(&pcm, sample_rate) else {
             return;
         };
-        let mut chunk_id: u64 = 0;
-        for opus_packet in encode_pcm_with(&mut encoder, &pcm, sample_rate) {
-            let framed = encode_tts_frame(chunk_id, FLAG_FILLER, &opus_packet);
-            chunk_id = chunk_id.saturating_add(1);
+        for framed in frames {
             if !output.audio(framed).await {
                 return;
             }
@@ -504,9 +491,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_finished_sentence_is_sent_when_the_stream_pauses() {
-        let pipeline = Arc::new(tokio::sync::Mutex::new(SentencePipeline::new(
-            Instant::now(),
-        )));
+        let pipeline = Arc::new(tokio::sync::Mutex::new(SentencePipeline::new()));
         let activity = Arc::new(tokio::sync::Notify::new());
         let (sentence_tx, mut sentence_rx) = mpsc::channel::<String>(4);
         let _task = AbortOnDropHandle::new(spawn_pause_release(

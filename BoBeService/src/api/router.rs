@@ -170,7 +170,6 @@ pub(crate) fn build_router(
         .route(crate::constants::attach::PATH, post(handlers::hello::hello))
         .route("/health", get(handlers::health::health_check))
         .route("/readyz", get(handlers::health::readiness))
-        .route("/metrics", get(handlers::metrics::metrics))
         .route("/status", get(handlers::health::get_status))
         .route(
             "/config",
@@ -253,9 +252,7 @@ pub(crate) fn build_router(
         )
         .route(
             "/goals/{goal_id}",
-            get(handlers::goals::get_goal)
-                .patch(handlers::goals::update_goal)
-                .delete(handlers::goals::delete_goal),
+            axum::routing::patch(handlers::goals::update_goal).delete(handlers::goals::delete_goal),
         )
         .route(
             "/goals/{goal_id}/complete",
@@ -275,9 +272,7 @@ pub(crate) fn build_router(
         )
         .route(
             "/souls/{soul_id}",
-            get(handlers::souls::get_soul)
-                .patch(handlers::souls::update_soul)
-                .delete(handlers::souls::delete_soul),
+            axum::routing::patch(handlers::souls::update_soul).delete(handlers::souls::delete_soul),
         )
         .route(
             "/souls/{soul_id}/enable",
@@ -293,8 +288,7 @@ pub(crate) fn build_router(
         )
         .route(
             "/user-profiles/{profile_id}",
-            get(handlers::user_profile::get_profile)
-                .patch(handlers::user_profile::update_profile)
+            axum::routing::patch(handlers::user_profile::update_profile)
                 .delete(handlers::user_profile::delete_profile),
         )
         .route(

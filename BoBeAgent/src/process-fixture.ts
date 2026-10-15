@@ -36,7 +36,7 @@ export class ProcessFixture {
       child.stdin.on("error", () => {});
       try { await once(child, "spawn"); }
       catch (error) { this.processes.delete(id); throw error; }
-      return { process_id: id, pid: child.pid ?? 0 };
+      return { process_id: id };
     }
     const active = this.processes.get(id);
     if (params.action === "stop") {

@@ -13,9 +13,6 @@ pub(crate) struct HealthResponse {
     status: &'static str,
     services: ServiceHealth,
     version: &'static str,
-    bodies: std::collections::HashMap<String, crate::body::gateway::BodyUpdateStatus>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    body_offer_build: Option<u32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -43,8 +40,6 @@ pub(crate) async fn health_check(State(state): State<Arc<AppState>>) -> Json<Hea
             body_link: state.body.gateway.health_status(),
         },
         version: env!("CARGO_PKG_VERSION"),
-        bodies: state.body.gateway.update_statuses(),
-        body_offer_build: state.body.gateway.configured_offer_build(),
     })
 }
 

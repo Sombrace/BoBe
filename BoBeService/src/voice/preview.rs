@@ -1,5 +1,4 @@
 use std::sync::{Arc, atomic::AtomicBool};
-use std::time::Instant;
 
 use serde::Deserialize;
 use tokio::sync::{mpsc, oneshot};
@@ -7,7 +6,7 @@ use tokio_util::task::AbortOnDropHandle;
 
 use crate::error::AppError;
 use crate::speech::protocol::ServerMessage;
-use crate::speech::providers::pocket::{VOICES, migrate_voice};
+use crate::speech::providers::pocket::VOICES;
 use crate::speech::{TtsEngine, TtsTextDelivery};
 use crate::voice::output::VoiceOutput;
 use crate::voice::protocol_helpers::send_json;
@@ -45,7 +44,7 @@ impl Preview {
                 "Voice preview text must be at most {MAX_TEXT_BYTES} bytes"
             )));
         }
-        let voice = migrate_voice(request.voice.as_deref().unwrap_or(&defaults.persona));
+        let voice = request.voice.as_deref().unwrap_or(&defaults.persona);
         if !VOICES.contains(&voice) {
             return Err(AppError::Validation(format!(
                 "Unknown Pocket TTS voice: {voice}"
@@ -57,7 +56,7 @@ impl Preview {
                 "Speech speed must be between 0.5 and 2.0".into(),
             ));
         }
-        let mut pipeline = SentencePipeline::new(Instant::now());
+        let mut pipeline = SentencePipeline::new();
         let mut sentences = pipeline.feed(&request.text);
         sentences.extend(pipeline.flush());
         if sentences.is_empty() {
@@ -91,7 +90,6 @@ impl Preview {
             self.voice,
             self.speed,
             TtsTextDelivery::SentenceCaptions,
-            Instant::now(),
             Arc::clone(&script),
         ));
         for sentence in self.sentences {

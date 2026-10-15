@@ -64,14 +64,14 @@ export function configuration(paths: { root: string; workspace: string; skills: 
   };
 }
 
-export const fixtureModel: Model<Api> = {
+const fixtureModel: Model<Api> = {
   id: "fixture-model", name: "Controlled SDK test model", api: "openai-completions",
   provider: "bobe-profile:test", baseUrl: "http://127.0.0.1:1/v1",
   input: ["text", "image"], reasoning: true, contextWindow: 100_000, maxTokens: 4_096,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 
-export interface ScriptResponse {
+interface ScriptResponse {
   text?: string;
   thinking?: string;
   tools?: { id: string; name: string; arguments: { [key: string]: Json } }[];
@@ -81,7 +81,7 @@ export interface ScriptResponse {
   outputTokens?: number;
 }
 
-export type ModelScript = (
+type ModelScript = (
   context: TranscriptContext, options: SimpleStreamOptions | undefined, model: Model<Api>,
 ) => ScriptResponse | Promise<ScriptResponse>;
 
@@ -174,10 +174,11 @@ export async function host(
   t: TestContext, config: Initialize, script: ModelScript,
   call: HostConnection["call"] = async () => ({ success: true, value: {} }),
   modelLimits: { contextWindow?: number; maxTokens?: number } = {},
+  processCapacity?: number,
 ): Promise<{ worker: WorkerHost; notifications: Notification[]; profiles: ModelProfiles; processes:ProcessFixture }> {
   const notifications: Notification[] = [];
   let profiles: ModelProfiles | undefined;
-  const processes = new ProcessFixture(params => worker.notification("process_event", params),config.execution?.process_concurrency);
+  const processes = new ProcessFixture(params => worker.notification("process_event", params), processCapacity);
   const worker = new WorkerHost({
     call: (method, params, signal) => method === "process" ? processes.invoke(params) : call(method, params, signal),
     notify: value => notifications.push(value),

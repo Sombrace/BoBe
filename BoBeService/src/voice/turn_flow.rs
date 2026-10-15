@@ -6,7 +6,6 @@ use crate::speech::protocol::{ServerMessage, VoicePhase};
 use crate::voice::context::VoiceContext;
 use crate::voice::protocol_helpers::{send_json, send_state};
 use crate::voice::session::{PendingBargeIn, TurnInFlight, VoiceSession};
-use crate::voice::telemetry::{CTR_BARGE_IN_FALSE, CTR_BARGE_IN_SUCCESS};
 
 pub(crate) const MIN_WORDS_FOR_BARGE_IN: usize = 2;
 const MIN_UNSPACED_CHARS_FOR_BARGE_IN: usize = 4;
@@ -201,7 +200,6 @@ pub(crate) async fn handle_barge_in(
     });
     let verdict = judge_barge_in(&s.last_partial_text);
     if verdict != BargeIn::Interrupt {
-        metrics::counter!(CTR_BARGE_IN_FALSE).increment(1);
         debug!(
             ?verdict,
             words = s.last_partial_text.split_whitespace().count(),
@@ -209,7 +207,6 @@ pub(crate) async fn handle_barge_in(
         );
         return;
     }
-    metrics::counter!(CTR_BARGE_IN_SUCCESS).increment(1);
     let keep_ms = played_ms.max(s.last_acked_played_ms);
     abort_active_turn(s, ctx, keep_ms, "barge_in").await;
 }

@@ -39,26 +39,18 @@ pub(super) async fn build_voice_engines_snapshot(models_root: PathBuf) -> VoiceE
 }
 
 fn load_stt(models_root: &Path) -> Option<Arc<dyn crate::speech::SttEngine>> {
-    let provider = std::env::var("BOBE_VOICE_PROVIDER").unwrap_or_else(|_| {
-        if cfg!(target_os = "macos") {
-            "coreml".to_string()
-        } else {
-            "cpu".to_string()
-        }
-    });
-    let num_threads: i32 = std::env::var("BOBE_VOICE_NUM_THREADS")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(4);
+    let provider = if cfg!(target_os = "macos") {
+        "coreml"
+    } else {
+        "cpu"
+    };
     let dir = models_root.join(crate::constants::voice_wire::STREAMING_STT_MODEL_DIR);
     if !dir.is_dir() {
         info!(path = %dir.display(), "voice.stt_model_not_installed");
         return None;
     }
     match crate::speech::providers::sherpa::streaming_stt::SherpaStreamingStt::load(
-        &dir,
-        &provider,
-        num_threads,
+        &dir, provider, 4,
     ) {
         Ok(engine) => {
             let rtf = crate::speech::SttEngine::health(&engine).real_time_factor;

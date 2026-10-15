@@ -11,7 +11,6 @@ pub(crate) mod initialization;
 pub(crate) mod local_enrollment;
 pub(crate) mod local_runtime;
 pub(crate) mod memories;
-pub(crate) mod metrics;
 pub(crate) mod models;
 pub(crate) mod pairing;
 pub(crate) mod privacy;

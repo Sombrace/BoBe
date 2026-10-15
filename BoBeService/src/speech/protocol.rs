@@ -240,14 +240,14 @@ mod tests {
     #[test]
     fn hello_deserializes_voice_preferences() {
         let raw = format!(
-            r#"{{"type":"hello","session_id":"abc","voice_id":"am_michael","speed":1.2,"speech_offer":{MAC_OFFER}}}"#
+            r#"{{"type":"hello","session_id":"abc","voice_id":"marius","speed":1.2,"speech_offer":{MAC_OFFER}}}"#
         );
         let parsed: ClientMessage = serde_json::from_str(&raw).unwrap();
         match parsed {
             ClientMessage::Hello {
                 voice_id, speed, ..
             } => {
-                assert_eq!(voice_id, Some("am_michael".into()));
+                assert_eq!(voice_id, Some("marius".into()));
                 assert_eq!(speed, Some(1.2));
             }
             other => panic!("expected Hello, got {other:?}"),

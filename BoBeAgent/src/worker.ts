@@ -104,8 +104,7 @@ export class WorkerHost implements RpcHandler {
         }
         case "background": {
           const job = validate(backgroundSchema, params, "background job parameters");
-          const budget = models.execution.taskBudget(job.budget, 1800, 64);
-          return this.activity(id, signal => sessions.background(id, job, signal), budget.timeout_seconds * 1000, "goals", "background");
+          return this.activity(id, signal => sessions.background(id, job, signal), job.budget.timeout_seconds * 1000, "goals", "background");
         }
         case "context_status": {
           const status = validate(contextStatusSchema, params, "context status parameters");
@@ -114,7 +113,7 @@ export class WorkerHost implements RpcHandler {
         case "compact": {
           const compact = validate(compactSchema, params, "compaction parameters");
           return await this.channelActivity(id, compact.session_key, signal =>
-            sessions.compact(compact.keep_recent_tokens ?? undefined, signal, compact.session_key), 300_000);
+            sessions.compact(compact.keep_recent_tokens ?? undefined, signal, compact.session_key));
         }
         case "chat": {
           const chat = validate(chatSchema, params, "chat parameters");
@@ -124,13 +123,13 @@ export class WorkerHost implements RpcHandler {
         case "auxiliary": {
           const auxiliary = validate(auxiliarySchema, params, "auxiliary parameters");
           return await this.activity(id, signal => this.auxiliary(id, auxiliary, sessions, config, signal),
-            auxiliary.class === "consolidate" ? 900_000 : 180_000, auxiliary.class, "background");
+            undefined, auxiliary.class, "background");
         }
         case "probe": {
           const probe = validate(probeSchema, params, "probe parameters");
           return await this.activity(id, signal =>
             this.probe(id, sessions, probe.route ?? config.routes.chat, signal),
-          90_000, "small", "background");
+          undefined, "small", "background");
         }
         case "reload": {
           const reload = validate(reloadSchema, params, "reload parameters");
@@ -273,7 +272,7 @@ export class WorkerHost implements RpcHandler {
         });
       }, 10_000);
       this.idleTimer.unref();
-      return { protocol_version: PROTOCOL_VERSION, harness: "pi", version: HARNESS_VERSION };
+      return { protocol_version: PROTOCOL_VERSION, harness: "pi" };
     } catch (error) {
       await this.sessions.close();
       await this.models.close();
@@ -315,7 +314,7 @@ export class WorkerHost implements RpcHandler {
     let bundle: SessionBundle | undefined;
     try {
       bundle = await sessions.finite(
-        params.class === "small" ? config.routes.small ?? config.routes.goals : config.routes[params.class], id, params.context,
+        params.class === "consolidate" ? config.routes.consolidate : config.routes.small ?? config.routes.goals, id, params.context,
         "You are a bounded operation of BoBe's owner authority, not another companion. Follow the supplied job instructions. Pass the requested result directly as the output value of bobe_submit_result. If not using the tool, return exactly one JSON envelope {\"output\": <result>}. Do not add another output wrapper to the tool argument. Do not claim changes to owner state; Rust applies the result.",
         [submit], signal,
       );

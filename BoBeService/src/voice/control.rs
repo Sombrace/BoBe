@@ -8,7 +8,6 @@ use crate::voice::capture_in::reset_capture_stream;
 use crate::voice::context::VoiceContext;
 use crate::voice::protocol_helpers::{send_error, send_json, send_state};
 use crate::voice::session::{SessionVoiceConfig, VoiceSession};
-use crate::voice::telemetry::{CTR_BARGE_IN_SUCCESS, CTR_CANCEL_PHRASE};
 use crate::voice::transcript_in;
 use crate::voice::turn_flow::{abort_active_turn, handle_barge_in, pending_interruption};
 
@@ -123,16 +122,7 @@ pub(crate) async fn handle_control_text(
             turn_id,
             synthesis_ms,
         }) => {
-            metrics::histogram!(crate::voice::telemetry::HIST_TTS_SYNTH_MS)
-                .record(synthesis_ms as f64);
-            if let Some(turn) = session
-                .as_ref()
-                .and_then(|session| session.current_turn.as_ref())
-                .filter(|turn| turn.turn_id == turn_id)
-            {
-                metrics::histogram!(crate::voice::telemetry::HIST_E2E_MS)
-                    .record(turn.started_at.elapsed().as_secs_f64() * 1_000.0);
-            }
+            debug!(turn_id = %turn_id, synthesis_ms, "voice.client_tts_playback_started");
             true
         }
         Ok(ClientMessage::TtsPlaybackComplete { turn_id }) => {
@@ -211,14 +201,12 @@ async fn handle_transcript_partial(
             partial_chars = s.last_partial_text.chars().count(),
             "voice.cancel_phrase_detected"
         );
-        metrics::counter!(CTR_CANCEL_PHRASE).increment(1);
         let keep_ms = s.last_acked_played_ms;
         abort_active_turn(s, ctx, keep_ms, "cancel_phrase").await;
         return;
     }
     if let Some(keep_ms) = pending_interruption(s, &s.last_partial_text) {
         info!(turn_id = %turn_id, "voice.barge_in_confirmed_by_transcript");
-        metrics::counter!(CTR_BARGE_IN_SUCCESS).increment(1);
         abort_active_turn(s, ctx, keep_ms, "barge_in_transcript").await;
     }
 }

@@ -132,8 +132,6 @@ async fn run_with_config(
     );
     let voice_ws_active = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let voice_sink = Arc::new(crate::voice::sinks::VoiceSink::new());
-    let metrics_handle = crate::voice::telemetry::install_recorder()
-        .map_err(|e| AppError::Internal(format!("metrics recorder: {e}")))?;
     let voice_engines: Arc<ArcSwap<crate::voice::engines::VoiceEnginesSnapshot>> = Arc::new(
         ArcSwap::from_pointee(crate::voice::engines::VoiceEnginesSnapshot::default()),
     );
@@ -340,7 +338,6 @@ async fn run_with_config(
             mdns_announcer: infra.mdns_announcer,
             secret_store,
             headless_secret_store,
-            metrics_handle,
             mcp_config_lock: Arc::new(tokio::sync::Mutex::new(())),
         }),
         runtime: Arc::new(crate::app_state::RuntimeContext {

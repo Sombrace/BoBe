@@ -1,5 +1,4 @@
 use arc_swap::ArcSwap;
-use metrics_exporter_prometheus::PrometheusHandle;
 use sqlx::sqlite::SqlitePool;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
@@ -40,7 +39,6 @@ pub(crate) struct Infrastructure {
     pub(crate) mdns_announcer: Arc<MdnsAnnouncer>,
     pub(crate) secret_store: Arc<dyn SecretStore>,
     pub(crate) headless_secret_store: Arc<dyn SecretStore>,
-    pub(crate) metrics_handle: PrometheusHandle,
     pub(crate) mcp_config_lock: Arc<Mutex<()>>,
 }
 

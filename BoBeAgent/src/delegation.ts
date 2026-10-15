@@ -25,11 +25,11 @@ export interface DelegateResult {
   truncated: boolean;
 }
 
-export interface DelegateRunner {
+interface DelegateRunner {
   run(task: DelegateTask, signal?: AbortSignal): Promise<DelegateResult>;
 }
 
-export async function boundedParallel<T, R>(
+async function boundedParallel<T, R>(
   items: readonly T[], concurrency: number, execute: (item: T) => Promise<R>, signal?: AbortSignal,
 ): Promise<R[]> {
   let cursor = 0;

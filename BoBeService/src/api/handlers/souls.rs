@@ -7,7 +7,7 @@ use crate::models::soul::Soul;
 use crate::services::DeleteOutcome;
 use crate::services::souls_service::SoulsService;
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -66,12 +66,6 @@ pub(crate) struct SoulActionResponse {
     pub(crate) message: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct SoulListQuery {
-    #[serde(default)]
-    pub(crate) enabled_only: bool,
-}
-
 async fn set_enabled(
     service: &SoulsService,
     soul_id: SoulId,
@@ -96,31 +90,13 @@ async fn set_enabled(
 
 pub(crate) async fn list_souls(
     State(state): State<Arc<AppState>>,
-    Query(params): Query<SoulListQuery>,
 ) -> Result<Json<SoulListResponse>, AppError> {
-    let summary = state
-        .services
-        .souls_service
-        .list(params.enabled_only)
-        .await?;
+    let summary = state.services.souls_service.list(false).await?;
     Ok(Json(SoulListResponse {
         count: summary.souls.len(),
         enabled_count: summary.enabled_count,
         souls: summary.souls.iter().map(SoulResponse::from).collect(),
     }))
-}
-
-pub(crate) async fn get_soul(
-    State(state): State<Arc<AppState>>,
-    Path(soul_id): Path<SoulId>,
-) -> Result<Json<SoulResponse>, AppError> {
-    let soul = state
-        .services
-        .souls_service
-        .get(soul_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("Soul {soul_id} not found")))?;
-    Ok(Json(SoulResponse::from(&soul)))
 }
 
 pub(crate) async fn create_soul(

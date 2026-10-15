@@ -31,14 +31,6 @@ pub(crate) async fn read_schema_version(database: &std::path::Path) -> Result<i6
 }
 
 pub(crate) async fn connect_and_apply_schema(db_url: &str) -> Result<(SqlitePool, i64), AppError> {
-    let db_url = normalize_sqlite_url(db_url);
-
-    if let Some(path) = sqlite_file_path(&db_url)
-        && let Some(parent) = std::path::Path::new(path).parent()
-    {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-
     let opts: SqliteConnectOptions = db_url
         .parse::<SqliteConnectOptions>()?
         .create_if_missing(true)
@@ -110,22 +102,6 @@ async fn stamp_schema_version(pool: &SqlitePool) -> Result<(), AppError> {
     .await?;
     transaction.commit().await?;
     Ok(())
-}
-
-fn normalize_sqlite_url(db_url: &str) -> String {
-    if let Some(path) = db_url.strip_prefix("sqlite:") {
-        let expanded = crate::util::paths::expand_tilde(path);
-        return format!("sqlite:{}", expanded.display());
-    }
-    db_url.to_string()
-}
-
-fn sqlite_file_path(db_url: &str) -> Option<&str> {
-    let raw = db_url.strip_prefix("sqlite:")?;
-    if raw.starts_with(":memory:") {
-        return None;
-    }
-    Some(raw.split('?').next().unwrap_or(raw))
 }
 
 #[cfg(test)]

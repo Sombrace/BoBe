@@ -338,7 +338,7 @@ impl ProactiveGenerator {
         };
         let output = match self
             .workers
-            .run_auxiliary(crate::provider::WorkerClass::Small, job)
+            .run_auxiliary(crate::provider::AuxiliaryClass::Small, job)
             .await
         {
             Ok(output) => output.output,

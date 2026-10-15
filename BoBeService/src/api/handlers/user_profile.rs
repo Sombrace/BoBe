@@ -7,7 +7,7 @@ use crate::models::user_profile::UserProfile;
 use crate::services::DeleteOutcome;
 use crate::services::user_profile_service::UserProfileService;
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -66,12 +66,6 @@ pub(crate) struct UserProfileActionResponse {
     pub(crate) message: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct UserProfileListQuery {
-    #[serde(default)]
-    pub(crate) enabled_only: bool,
-}
-
 async fn set_enabled(
     service: &UserProfileService,
     profile_id: UserProfileId,
@@ -96,13 +90,8 @@ async fn set_enabled(
 
 pub(crate) async fn list_profiles(
     State(state): State<Arc<AppState>>,
-    Query(params): Query<UserProfileListQuery>,
 ) -> Result<Json<UserProfileListResponse>, AppError> {
-    let summary = state
-        .services
-        .user_profile_service
-        .list(params.enabled_only)
-        .await?;
+    let summary = state.services.user_profile_service.list(false).await?;
     Ok(Json(UserProfileListResponse {
         count: summary.profiles.len(),
         enabled_count: summary.enabled_count,
@@ -124,19 +113,6 @@ pub(crate) async fn create_profile(
         .create(body.name, body.content, body.enabled)
         .await?;
     Ok((StatusCode::CREATED, Json(UserProfileResponse::from(&saved))))
-}
-
-pub(crate) async fn get_profile(
-    State(state): State<Arc<AppState>>,
-    Path(profile_id): Path<UserProfileId>,
-) -> Result<Json<UserProfileResponse>, AppError> {
-    let profile = state
-        .services
-        .user_profile_service
-        .get(profile_id)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("User profile {profile_id} not found")))?;
-    Ok(Json(UserProfileResponse::from(&profile)))
 }
 
 pub(crate) async fn update_profile(
