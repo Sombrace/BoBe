@@ -10,13 +10,13 @@ options:
 packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
-    exactVersion: 2.9.6
+    exactVersion: 2.10.0
   Textual:
     url: https://github.com/gonzalezreal/textual
     exactVersion: 0.5.0
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
-    exactVersion: 0.15.6
+    exactVersion: 0.17.7
 
 settings:
   base:

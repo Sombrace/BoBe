@@ -13,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::error::AppError;
+use crate::util::process_group::signal_group;
 
 const IO_DEADLINE: Duration = Duration::from_secs(5);
 
@@ -384,20 +385,3 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         poisoned.into_inner()
     })
 }
-
-#[cfg(unix)]
-#[allow(unsafe_code)]
-pub(super) fn signal_group(pid: u32, signal: i32) {
-    if let Ok(pid) = i32::try_from(pid) {
-        let result = unsafe { libc::kill(-pid, signal) };
-        if result != 0 {
-            let error = std::io::Error::last_os_error();
-            if error.raw_os_error() != Some(libc::ESRCH) {
-                tracing::warn!(%error,pid,"owned_process.signal_failed");
-            }
-        }
-    }
-}
-
-#[cfg(not(unix))]
-pub(super) fn signal_group(_pid: u32, _signal: i32) {}

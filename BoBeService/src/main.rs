@@ -2262,7 +2262,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     "schema": 1,
                     "version": env!("CARGO_PKG_VERSION"),
                     "agent_harness": "pi",
-                    "agent_version": "1.0.3",
+                    "agent_version": "1.2.0",
                     "database_schema": bootstrap::database::CURRENT_SCHEMA_VERSION,
                     "database_schema_min": bootstrap::database::OLDEST_UPGRADABLE_SCHEMA_VERSION,
                     "attach_protocol_min": constants::attach::PROTOCOL_MIN,
@@ -3166,6 +3166,9 @@ async fn run_graceful_shutdown(state: &std::sync::Arc<app_state::AppState>) {
     state.runtime.workers.shutdown_all().await;
 
     drain_in_flight_text_turns(&state.runtime.in_flight_text_turns).await;
+
+    tracing::info!("Stopping managed Ollama...");
+    state.services.ollama_install.shutdown().await;
 
     tracing::info!("Closing database pool...");
     state.infra.db.close().await;

@@ -9,8 +9,11 @@ use tokio::sync::{Mutex, watch};
 use tracing::{info, warn};
 
 use crate::error::AppError;
+use crate::util::process_group::{group_exists, signal_group};
 
 const HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
+const STOP_GRACE: Duration = Duration::from_secs(5);
+const STOP_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const PULL_TIMEOUT: Duration = Duration::from_hours(2);
 const STARTUP_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const STARTUP_MAX_ATTEMPTS: u32 = 30;
@@ -67,6 +70,8 @@ fn serve_command(binary: &Path) -> tokio::process::Command {
                 .to_string(),
         )
         .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
     command
 }
 
@@ -116,15 +121,19 @@ impl OllamaManager {
             }
         }
 
-        if let Some(mut child) = self.child.lock().await.take()
-            && let Err(e) = child.start_kill()
-        {
-            warn!(err = %e, "ollama_manager.kill_after_timeout_failed");
+        if let Some(child) = self.child.lock().await.take() {
+            stop_process_group(child, STOP_GRACE).await;
         }
 
         Err(AppError::ServiceUnavailable(format!(
             "Ollama failed to become healthy within {STARTUP_MAX_ATTEMPTS}s"
         )))
+    }
+
+    pub(crate) async fn stop(&self) {
+        if let Some(child) = self.child.lock().await.take() {
+            stop_process_group(child, STOP_GRACE).await;
+        }
     }
 
     pub(crate) async fn pull_model(
@@ -280,6 +289,43 @@ pub(crate) async fn fetch_installed_models(
     Ok(tags.models)
 }
 
+impl Drop for OllamaManager {
+    fn drop(&mut self) {
+        if let Some(pid) = self
+            .child
+            .get_mut()
+            .as_ref()
+            .and_then(tokio::process::Child::id)
+        {
+            signal_group(pid, libc::SIGKILL);
+        }
+    }
+}
+
+async fn stop_process_group(mut child: tokio::process::Child, grace: Duration) {
+    let Some(pid) = child.id() else {
+        return;
+    };
+    info!(pid, "ollama_manager.stopping");
+    let deadline = Instant::now() + grace;
+    signal_group(pid, libc::SIGTERM);
+    let leader_exited = tokio::time::timeout(grace, child.wait()).await.is_ok();
+    while leader_exited && group_exists(pid) && Instant::now() < deadline {
+        tokio::time::sleep(STOP_POLL_INTERVAL).await;
+    }
+    if !leader_exited || group_exists(pid) {
+        warn!(pid, "ollama_manager.stop_forced");
+        signal_group(pid, libc::SIGKILL);
+        if !leader_exited {
+            if let Err(error) = child.start_kill() {
+                warn!(%error, pid, "ollama_manager.kill_failed");
+            }
+            let _ignored = child.wait().await;
+        }
+    }
+    info!(pid, "ollama_manager.stopped");
+}
+
 async fn wait_for_cancel(cancel_rx: &mut watch::Receiver<bool>) {
     if *cancel_rx.borrow() {
         return;
@@ -327,6 +373,8 @@ mod tests {
             assert!(context >= class.budget().context_tokens());
         }
     }
+    #[cfg(unix)]
+    use super::{group_exists, stop_process_group};
 
     #[tokio::test]
     async fn stalled_model_pull_cancels_without_another_chunk() {
@@ -450,6 +498,125 @@ mod tests {
         assert_eq!(models.len(), 2);
         assert_eq!(models[0].name, "qwen-vl");
         assert_eq!(models[1].name, "untagged-model");
+        server.abort();
+        drop(server.await);
+    }
+
+    #[cfg(unix)]
+    fn fake_runtime(
+        name: &str,
+        ignore_terminate: bool,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("bobe-ollama-stop-{name}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("temp dir should be created");
+        let runner_pid = dir.join("runner.pid");
+        let trap = if ignore_terminate {
+            "trap '' TERM\n"
+        } else {
+            ""
+        };
+        let binary = dir.join("ollama");
+        std::fs::write(
+            &binary,
+            format!(
+                "#!/bin/sh\n{trap}sleep 600 &\necho $! > '{}'\nwait\n",
+                runner_pid.display()
+            ),
+        )
+        .expect("fake runtime should be written");
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
+            .expect("fake runtime should be executable");
+        (binary, runner_pid)
+    }
+
+    #[cfg(unix)]
+    async fn started_fake_runtime(
+        name: &str,
+        ignore_terminate: bool,
+    ) -> (OllamaManager, u32, tokio::task::JoinHandle<()>) {
+        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
+        let app = Router::new().route("/api/tags", get(|| async { Json(json!({"models": []})) }));
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test server should bind");
+        let address = listener.local_addr().expect("test address should exist");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("test server should run");
+        });
+        let (binary, runner_pid) = fake_runtime(name, ignore_terminate);
+        let manager = OllamaManager::new(
+            Arc::new(reqwest::Client::new()),
+            &format!("http://{address}"),
+        );
+        manager
+            .spawn_daemon(&binary)
+            .await
+            .expect("fake runtime should start");
+        let group = manager
+            .child
+            .lock()
+            .await
+            .as_ref()
+            .and_then(tokio::process::Child::id)
+            .expect("fake runtime should be running");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !runner_pid.exists() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("fake runtime should start its runner");
+        (manager, group, server)
+    }
+
+    #[cfg(unix)]
+    async fn wait_until_group_is_gone(group: u32) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while group_exists(group) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the runtime and its runner should be gone");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stop_ends_the_runtime_and_the_runner_it_started() {
+        let (manager, group, server) = started_fake_runtime("graceful", false).await;
+        assert!(group_exists(group));
+
+        manager.stop().await;
+
+        wait_until_group_is_gone(group).await;
+        assert!(manager.child.lock().await.is_none());
+        server.abort();
+        drop(server.await);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stop_kills_a_runtime_that_ignores_terminate() {
+        let (manager, group, server) = started_fake_runtime("forced", true).await;
+        let child = manager
+            .child
+            .lock()
+            .await
+            .take()
+            .expect("fake runtime should be running");
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            stop_process_group(child, Duration::from_millis(300)),
+        )
+        .await
+        .expect("a forced stop should be prompt");
+
+        wait_until_group_is_gone(group).await;
         server.abort();
         drop(server.await);
     }

@@ -32,6 +32,9 @@ if [[ -n "$swift_checkouts" ]]; then
         find "$package" -maxdepth 1 -type f \
             \( -iname 'LICENSE*' -o -iname 'NOTICE*' -o -iname 'COPYING*' \) \
             -exec install -m 0644 {} "$output/swift/$name/" \;
+        if [[ -d "$package/ThirdPartyLicenses" ]]; then
+            cp -RP "$package/ThirdPartyLicenses" "$output/swift/$name/ThirdPartyLicenses"
+        fi
         if [[ -z "$(ls -A "$output/swift/$name")" ]]; then
             echo "Swift package $name has no license file" >&2
             exit 1

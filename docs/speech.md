@@ -35,7 +35,7 @@ OpenRAIL-M restrictions.
 
 ## Daemon engines
 
-- Pocket TTS runs natively through `ptts` 0.4.0-rc.1 with Q8 weights; no
+- Pocket TTS runs natively through `ptts` 0.4.0-rc.2 with Q8 weights; no
   Python or model server. `BoBeService/src/voice/install_artifacts.rs` pins the
   pack revision and every file's SHA-256. Alba is the default voice.
 - Tempo from 0.5x to 2x uses Signalsmith Stretch, which needs a C++ compiler

@@ -66,9 +66,13 @@ bobe local-runtime install --chat-model qwen2.5:7b-instruct --batch-model qwen2.
 bobe service restart
 ```
 
-An Ollama that BoBe started is not restarted later; run it as your own service.
-BoBe starts Ollama with a 40,960-token context so its prompts are not cut
-off; start your own Ollama with `OLLAMA_CONTEXT_LENGTH=40960` as well.
+`bobe local-runtime install` uses an Ollama that is already running or
+installs BoBe's pinned Ollama under the data root, then pulls the models into
+Ollama's own `~/.ollama/`. When the daemon stops, it stops the Ollama it
+started and any model that Ollama loaded; a later start does not start it
+again, so run Ollama as your own service if local models must survive a
+restart. BoBe starts Ollama with a 40,960-token context so its prompts are not
+cut off; start your own Ollama with `OLLAMA_CONTEXT_LENGTH=40960` as well.
 
 | Workload | Used for |
 |---|---|
@@ -135,6 +139,7 @@ root at a time.
 | `agent/` | Transcripts and provider sign-ins |
 | `headless-secrets.json` | API keys (mode 0600) |
 | `models/`, `backups/`, `logs/` | Speech models, backups, logs |
+| `ollama/` | The Ollama BoBe installed; its models stay in `~/.ollama/` |
 
 ## Remote access and pairing
 

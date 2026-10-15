@@ -10,9 +10,9 @@ let package = Package(
         .macOS("26.0")
     ],
     dependencies: [
-        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
         .package(url: "https://github.com/gonzalezreal/textual", exact: "0.5.0"),
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.15.6"),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7"),
     ],
     targets: [
         .target(

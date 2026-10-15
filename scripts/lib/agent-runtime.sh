@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-BOBE_NODE_VERSION="22.22.0"
-BOBE_PI_VERSION="1.0.3"
-BOBE_RG_VERSION="15.1.0"
-BOBE_FD_VERSION="10.3.0"
+BOBE_NODE_VERSION="22.23.3"
+BOBE_PI_VERSION="1.2.0"
+BOBE_RG_VERSION="15.2.0"
+BOBE_FD_VERSION="10.5.0"
 
 bobe_node_platform() {
     local system architecture
@@ -24,10 +24,10 @@ bobe_node_platform() {
 
 bobe_node_archive_sha256() {
     case "$1" in
-        darwin-arm64) echo "5ed4db0fcf1eaf84d91ad12462631d73bf4576c1377e192d222e48026a902640" ;;
-        darwin-x64) echo "5ea50c9d6dea3dfa3abb66b2656f7a4e1c8cef23432b558d45fb538c7b5dedce" ;;
-        linux-arm64) echo "25ba95dfb96871fa2ef977f11f95ea90818c8fa15c0f2110771db08d4ba423be" ;;
-        linux-x64) echo "c33c39ed9c80deddde77c960d00119918b9e352426fd604ba41638d6526a4744" ;;
+        darwin-arm64) echo "23b25245dcfb9af7262f8ff142e9e2e0af025368117329e7a7458a51e5922f53" ;;
+        darwin-x64) echo "8a677b0219178efd6eb0e475457c4afb452b521a92f6e67845a73bd85727f2a8" ;;
+        linux-arm64) echo "5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2" ;;
+        linux-x64) echo "1084aa36196bba4c3a5e69a1ee388a6e4ff729dad09445fbcd434b28fe3c24af" ;;
         *) echo "No pinned Node checksum for $1" >&2; return 1 ;;
     esac
 }
@@ -94,14 +94,14 @@ bobe_stage_search_tools() {
             linux-x64) target=x86_64-unknown-linux-musl ;;
         esac
         case "$tool:$platform" in
-            rg:darwin-arm64) expected=378e973289176ca0c6054054ee7f631a065874a352bf43f0fa60ef079b6ba715 ;;
-            rg:darwin-x64) expected=64811cb24e77cac3057d6c40b63ac9becf9082eedd54ca411b475b755d334882 ;;
-            rg:linux-arm64) expected=2b661c6ef508e902f388e9098d9c4c5aca72c87b55922d94abdba830b4dc885e ;;
-            rg:linux-x64) expected=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599 ;;
-            fd:darwin-arm64) expected=0570263812089120bc2a5d84f9e65cd0c25e4a4d724c80075c357239c74ae904 ;;
-            fd:darwin-x64) expected=50d30f13fe3d5914b14c4fff5abcbd4d0cdab4b855970a6956f4f006c17117a3 ;;
-            fd:linux-arm64) expected=996b9b1366433b211cb3bbedba91c9dbce2431842144d925428ead0adf32020b ;;
-            fd:linux-x64) expected=2b6bfaae8c48f12050813c2ffe1884c61ea26e750d803df9c9114550a314cd14 ;;
+            rg:darwin-arm64) expected=3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4 ;;
+            rg:darwin-x64) expected=af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1 ;;
+            rg:linux-arm64) expected=a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d ;;
+            rg:linux-x64) expected=33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c ;;
+            fd:darwin-arm64) expected=b67e1836c468e42e411984b56e52fa7abec08c2bd22c867398e7cc134aac5e12 ;;
+            fd:darwin-x64) expected=7e31028c62c6955877735d0406807aa484c2a5e6f86235a59e26c29c301da590 ;;
+            fd:linux-arm64) expected=d76c4317f7d5dba69f8a2a15856c90c777e7f0dd4e85f0de8c76de6992c374d4 ;;
+            fd:linux-x64) expected=761c72dc8e120d85b22292063be8a796e2eeb20eb3e4f38b8fa2343ccf3514a7 ;;
             *) echo "Unsupported native pi tool platform: $platform" >&2; return 1 ;;
         esac
         if [[ "$tool" == rg ]]; then

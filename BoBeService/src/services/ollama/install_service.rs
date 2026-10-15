@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
@@ -7,6 +8,8 @@ use tracing::{info, warn};
 use crate::error::AppError;
 use crate::services::ollama::binary_manager::{BinaryManager, DownloadProgress};
 use crate::services::ollama::manager::{OllamaManager, PullProgress};
+
+const INSTALL_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InstallStage {
@@ -130,6 +133,21 @@ impl OllamaInstallService {
         }
     }
 
+    pub(crate) async fn shutdown(&self) {
+        self.cancel().await;
+        let in_flight = self.state.lock().await.in_flight.take();
+        if let Some(mut handle) = in_flight
+            && tokio::time::timeout(INSTALL_SHUTDOWN_GRACE, &mut handle)
+                .await
+                .is_err()
+        {
+            warn!("ollama_install.shutdown_aborted");
+            handle.abort();
+            drop(handle.await);
+        }
+        self.ollama_manager.stop().await;
+    }
+
     async fn run(
         self: Arc<Self>,
         req: InstallRequest,
@@ -154,9 +172,11 @@ impl OllamaInstallService {
         let needs_managed_binary = !self.ollama_manager.health_check().await;
         let binary_path = if needs_managed_binary {
             info!("ollama_install.runtime_missing_downloading");
-            self.binary_manager
-                .ensure_managed_ollama(&runtime_tx, cancel_rx.clone())
-                .await?
+            Some(
+                self.binary_manager
+                    .ensure_managed_ollama(&runtime_tx, cancel_rx.clone())
+                    .await?,
+            )
         } else {
             info!("ollama_install.runtime_present_skipping_download");
             runtime_tx
@@ -166,7 +186,7 @@ impl OllamaInstallService {
                     percent: Some(100),
                 })
                 .ok();
-            self.binary_manager.managed_binary_path()
+            None
         };
         runtime_pump.abort();
 
@@ -174,15 +194,14 @@ impl OllamaInstallService {
             return Err(AppError::Canceled("Install canceled".into()));
         }
 
-        if needs_managed_binary {
+        if let Some(binary_path) = binary_path.as_deref() {
             self.binary_manager
-                .validate_ollama_binary(&binary_path)
+                .validate_ollama_binary(binary_path)
+                .await?;
+            self.ollama_manager
+                .ensure_daemon_running(binary_path)
                 .await?;
         }
-
-        self.ollama_manager
-            .ensure_daemon_running(&binary_path)
-            .await?;
 
         if *cancel_rx.borrow() {
             return Err(AppError::Canceled("Install canceled".into()));
