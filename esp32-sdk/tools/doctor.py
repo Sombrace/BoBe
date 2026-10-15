@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Read-only SDK environment and project diagnostics."""
-
 import argparse
 import json
 import shutil
@@ -38,7 +36,7 @@ def report(project: Path | None) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description="Read-only SDK environment and project diagnostics.")
     parser.add_argument("--project", type=Path)
     args = parser.parse_args()
     result = report(args.project)

@@ -21,5 +21,4 @@ esp_err_t bobe_board_read_temperature(float *celsius);
 bool bobe_board_button_is_pressed(bobe_button_id_t button);
 void bobe_board_request_shutdown(void);
 
-/* Board-owned NUL-terminated PEM trust root; length includes the terminator. */
 const unsigned char *bobe_board_update_public_key(size_t *length);

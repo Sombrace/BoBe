@@ -1,20 +1,18 @@
 ---
 name: macos-camera-vision
 description: >-
-  Use only when explicitly invoked for camera discovery, TCC preflight or
-  authorization, bounded frame capture, rectangle rectification, or Vision OCR
-  through `tools/bobe_capture.sh`. Never use this skill to choose firmware
-  roadmap work. Camera presence, permission, mounting, and calibration are not
-  assumed.
+  Use only when explicitly invoked for camera discovery, camera permission,
+  bounded frame capture, rectification or Vision OCR through
+  `tools/bobe_capture.sh`. Camera presence, permission, mounting and calibration
+  are not assumed.
 disable-model-invocation: true
-compatibility: macOS with Swift/Xcode; live capture uses macOS camera authorization.
+compatibility: macOS with Swift/Xcode; live capture needs macOS camera permission.
 ---
 
 # macOS camera and Vision tool
 
-Read `tools/bobe_capture.sh --help` and the selected command help. The wrapper
-builds and signs the app bundle whose identifier owns macOS TCC permission.
-
-`list` and `preflight` report current camera/setup state. `authorize` presents
-the macOS consent UI. Frame capture, rectification, and OCR are separate
-operations. WB-12 calibration data lives under `hil/calibration/`.
+Read `tools/bobe_capture.sh --help` and the command's help, and always use this
+wrapper: it builds and signs the app that holds the camera permission. `list` and
+`preflight` only report; `authorize` shows the consent prompt; `frame`,
+`rectify` and `ocr` are separate steps. A photo is not a physical display pass
+without matching calibration (Calibration in `hil/README.md`).

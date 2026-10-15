@@ -1,15 +1,16 @@
 ---
 name: bobe-physical-test
-description: Run an explicitly requested BoBe hardware scenario or physical validation. Explicit invocation only; never use this skill to set the firmware roadmap.
+description: Run an explicitly requested WB-12 hardware scenario. Explicit invocation only.
 argument-hint: "[scenario-name] [--dry-run|--mock|--live]"
 disable-model-invocation: true
-compatibility: Project-local uv environment; live runs may require configured external hardware.
+compatibility: Project-local uv environment; live runs need the configured lab hardware.
 ---
 
-# BoBe physical validation
+# WB-12 physical validation
 
-Use `tools/bobe_hil.sh scenario list`, `scenario show`, and then the exact scenario requested in `$ARGUMENTS`. Read `hil/README.md` only as needed for that operation.
+Use `tools/bobe_hil.sh scenario list` and `scenario show`, then run the scenario
+in `$ARGUMENTS`. Read `hil/README.md` only as needed.
 
-HIL is a side path for validating already-chosen product work. Do not propose fixture, router, camera, observer, or evidence-system development as product milestones. Never turn a firmware implementation request into HIL work unless the user explicitly asks for physical validation.
-
-Use `--dry-run` or `--mock` only when requested; neither proves physical behavior. A live run that lacks required hardware is blocked, not failed and not simulated.
+Do not widen the request into fixture, router, camera, observer or evidence-tool
+work. Use `--dry-run` or `--mock` only when asked; neither proves physical
+behavior. A live run that lacks hardware is blocked, not failed or simulated.

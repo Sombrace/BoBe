@@ -319,6 +319,4 @@ def contract_sha256(contract: dict[str, Any]) -> str:
 
 
 def scenario_contract_sha256(scenario: Scenario) -> str:
-    """Identify a scenario contract in run evidence."""
-
     return contract_sha256(scenario_contract(scenario))

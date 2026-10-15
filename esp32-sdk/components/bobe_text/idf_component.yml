@@ -1,7 +1,7 @@
 version: "0.2.0"
 files:
   exclude: ["**/*"]
-  include: ["CMakeLists.txt", "README.md", "idf_component.yml", "*.c", "*.h", "include/**/*.h"]
+  include: ["CMakeLists.txt", "idf_component.yml", "*.c", "*.h", "include/**/*.h"]
 description: "Bounded UTF-8 text-stream state for small BoBe displays"
 dependencies:
   idf: ">=6.0.2,<6.2"

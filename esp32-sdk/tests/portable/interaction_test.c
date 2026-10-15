@@ -58,7 +58,7 @@ int main(void)
     const char *ack = "{\"type\":\"sensor.ack\",\"protocol_major\":1,\"name\":\"door.open\",\"sequence\":3}";
     CHECK(bobe_protocol_parse_control(ack, strlen(ack), &message) == BOBE_PROTOCOL_OK);
     CHECK(message.kind == BOBE_CONTROL_SENSOR_ACK && message.data.sensor_ack.sequence == 3);
-    const char *duplicate = "{\"type\":\"ping\",\"protocol_major\":1,\"nonce\":1,\"nonce\":2}";
+    const char *duplicate = "{\"type\":\"sensor.ack\",\"protocol_major\":1,\"name\":\"door.open\",\"sequence\":1,\"sequence\":2}";
     CHECK(bobe_protocol_parse_control(duplicate, strlen(duplicate), &message) == BOBE_PROTOCOL_MALFORMED);
     char nested[1024];
     size_t used = 0;

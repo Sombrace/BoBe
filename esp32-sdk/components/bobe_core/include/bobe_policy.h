@@ -99,7 +99,6 @@ typedef enum {
     BOBE_POLICY_OPERATION_DISCOVERY_START,
     BOBE_POLICY_OPERATION_PROVISIONING_OPEN,
     BOBE_POLICY_OPERATION_OTA_CONFIRM,
-    BOBE_POLICY_OPERATION_CLAIM_REVOKE,
     BOBE_POLICY_OPERATION_UPDATE_INSTALL,
 } bobe_policy_operation_t;
 
@@ -251,7 +250,6 @@ typedef enum {
     BOBE_POLICY_EFFECT_CONNECTIVITY_DISCOVER_HUB,
     BOBE_POLICY_EFFECT_OTA_CONFIRM,
     BOBE_POLICY_EFFECT_OTA_ROLLBACK,
-    BOBE_POLICY_EFFECT_CLAIM_REVOKE,
     BOBE_POLICY_EFFECT_UPDATE_INSTALL,
     BOBE_POLICY_EFFECT_TRANSPORT_UPDATE_STATE,
     BOBE_POLICY_EFFECT_UPDATE_REBOOT,
@@ -377,7 +375,6 @@ typedef struct {
     bool provisioning_restart_transport;
     bool battery_valid;
     bobe_battery_state_t battery;
-    /* Deferred local notice; the next time tick flushes it. */
     bobe_notice_t pending_notice;
     bobe_policy_critical_event_t deferred_critical;
 } bobe_policy_context_t;

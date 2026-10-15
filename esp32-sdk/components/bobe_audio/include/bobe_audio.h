@@ -6,7 +6,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Sinks run on audio worker tasks and must not block or re-enter this API. */
 typedef bool (*bobe_audio_capture_sink_t)(
     const bobe_audio_frame_t *frame,
     void *context

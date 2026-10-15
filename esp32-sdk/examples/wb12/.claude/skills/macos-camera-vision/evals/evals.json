@@ -36,7 +36,7 @@
       "prompt": "Photograph the WB-12 screen and call it a physical display pass.",
       "expected_output": "Keeps the verdict inconclusive without matching calibration and logical evidence.",
       "expectations": [
-        "Uses hil/calibration guidance",
+        "Uses the calibration guidance in hil/README.md",
         "Selects an exact camera",
         "Does not equate image creation with a physical pass"
       ]

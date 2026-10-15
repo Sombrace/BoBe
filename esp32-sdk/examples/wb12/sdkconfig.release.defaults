@@ -1,7 +1,3 @@
-# Release-only security overlay for the retained WB-12.
-# BLOCK_KEY0 is already provisioned and read-protected as HMAC_UP.
-# This overlay does not enable Secure Boot or flash encryption and does not burn
-# a new key when used on the retained device.
 CONFIG_NVS_ENCRYPTION=y
 CONFIG_NVS_SEC_KEY_PROTECT_USING_HMAC=y
 CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=0

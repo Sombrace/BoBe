@@ -61,8 +61,6 @@ USB_SERIAL_MAC_PATTERN = re.compile(
 
 
 def usb_serial_mac(serial_number: str | None) -> str | None:
-    """Return the MAC in a USB serial number as aa:bb:cc:dd:ee:ff, or None."""
-
     if (
         serial_number is None
         or USB_SERIAL_MAC_PATTERN.fullmatch(serial_number) is None
@@ -256,8 +254,6 @@ def retained_log(payload: bytes, prefix: str, root: Path | None = None) -> str:
 
 
 class SerialMonitor:
-    """Continuously buffer device output across resets and re-enumeration."""
-
     def __init__(
         self,
         identity: str,
@@ -342,8 +338,6 @@ def observe(
     log_prefix: str = "observe",
     lock_device: bool = True,
 ) -> dict[str, Any]:
-    """Watch device output for caller-selected markers within a time bound."""
-
     if not 0 < seconds <= 3600:
         raise ValueError("observation duration must be within 0-3600 seconds")
     owned = monitor is None
@@ -439,8 +433,6 @@ def enter_verified_loader(
     use_fixture: bool = True,
     fixture_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Enter the ROM loader and verify identity, security and OTA state."""
-
     before = "usb-reset"
     fixture_result: dict[str, Any] | None = None
     if use_fixture and fixture_control.inspect_fixture(fixture_root)["available"]:
@@ -518,8 +510,6 @@ def write_image(
     offset: int = APP_OFFSET,
     expected_sha256: str | None = None,
 ) -> dict[str, Any]:
-    """Write, then read back and verify, one image at a caller-chosen offset."""
-
     regular_file(image, "flash image")
     if not 0 <= offset <= 0xFFFFFFFF or offset % 0x1000:
         raise ValueError("flash offset must be a 4 KiB aligned flash address")
@@ -602,8 +592,6 @@ def observe_started_app(
     working: Path,
     seconds: float = DEFAULT_OBSERVE_SECONDS,
 ) -> dict[str, Any]:
-    """Check that the written application booted."""
-
     deadline = time.monotonic() + seconds
     payload = bytearray()
     disconnected_after_start = False
@@ -734,8 +722,6 @@ def boot_observe(
     port: str | None = None,
     identity: str | None = None,
 ) -> dict[str, Any]:
-    """Reset the WB-12 through the ROM loader and observe its boot."""
-
     identity, port = resolve_port(port, identity=identity)
     with exclusive_device_access("device"):
         reset_verified_application(port, identity)
@@ -762,8 +748,6 @@ def flash(
     port: str | None = None,
     use_fixture: bool = True,
 ) -> dict[str, Any]:
-    """Write, verify and boot-prove an image, optionally rolling back on failure."""
-
     identity, port = resolve_port(port)
     parsed = image_manifest(image, manifest)
     expected_elf = str(parsed["app_elf_sha256"]) if parsed else None

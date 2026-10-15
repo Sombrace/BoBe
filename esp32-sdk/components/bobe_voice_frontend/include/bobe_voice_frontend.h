@@ -18,7 +18,6 @@ typedef struct {
     int wake_word_index;
 } bobe_voice_event_t;
 
-/* Sinks run on AFE workers and must not block or re-enter this API. */
 typedef bool (*bobe_voice_output_sink_t)(
     const bobe_audio_frame_t *frame,
     void *context

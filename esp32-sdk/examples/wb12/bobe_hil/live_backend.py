@@ -41,8 +41,6 @@ OPERATION_HANDLERS = {
 
 
 class BodyLinkService:
-    """One bounded BodyLink peer served on a background thread."""
-
     def __init__(self, scenario: str, timeout: float, run: EvidenceRun) -> None:
         self.scenario = scenario
         self.timeout = timeout
@@ -57,7 +55,7 @@ class BodyLinkService:
                 str(self.run.manifest["nonce"]),
             )
             asyncio.run(serve_once(config, self.run, timeout=self.timeout))
-        except BaseException as error:  # surfaced when the service is joined
+        except BaseException as error:
             self.error = error
 
     def start(self) -> None:
@@ -69,8 +67,6 @@ class BodyLinkService:
 
 
 class LiveScenarioBackend:
-    """Execute scenario steps directly against the local hardware tools."""
-
     def __init__(
         self,
         run: EvidenceRun,
@@ -91,8 +87,6 @@ class LiveScenarioBackend:
             step.operation == "capture_serial"
             for step in (*scenario.steps, *scenario.cleanup)
         ):
-            # Device output emitted while contacts are actuated is lost unless
-            # the serial endpoint is already open, so start before step one.
             try:
                 self.start_serial_monitor()
             except (OSError, RuntimeError, ValueError) as error:
@@ -323,8 +317,6 @@ class LiveScenarioBackend:
         }
 
     def finalize(self) -> list[str]:
-        """Release physical state held by this run."""
-
         forced: list[str] = []
         if self.services:
             try:

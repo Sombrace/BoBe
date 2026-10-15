@@ -161,8 +161,6 @@ def validate_tls_identity(
     *,
     now: datetime,
 ) -> dict[str, str]:
-    """Pin the observer TLS identity."""
-
     ca = load_x509_certificate(root / "observer-ca.pem", "observer TLS CA")
     server = load_x509_certificate(
         root / "observer-server-cert.pem",
@@ -448,8 +446,6 @@ def inspect_observer(
     *,
     live_probe: bool = False,
 ) -> dict[str, Any]:
-    """Report observer configuration, TLS identity and reachability."""
-
     location = observer_root(root)
     if location.is_symlink() or not location.is_dir():
         return {

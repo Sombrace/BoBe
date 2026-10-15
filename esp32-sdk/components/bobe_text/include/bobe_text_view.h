@@ -24,10 +24,6 @@ typedef struct {
     bool truncated;
 } bobe_text_view_t;
 
-/** Caller-owned storage, at least five bytes. No allocation or display driver.
- * Apply updates from one task, then render buffer as plain UTF-8 text.
- * When full, the oldest complete code points are discarded and truncated is set.
- */
 bool bobe_text_view_init(bobe_text_view_t *view, char *buffer, size_t capacity);
 bobe_text_result_t bobe_text_view_apply(bobe_text_view_t *view, const bobe_control_message_t *message);
 

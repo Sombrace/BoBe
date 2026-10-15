@@ -185,7 +185,6 @@ static void write_rgb565(
         for (uint32_t x = 0; x < BOBE_DISPLAY_WIDTH; ++x) {
             uint16_t pixel;
             memcpy(&pixel, row + x * sizeof(pixel), sizeof(pixel));
-            /* Hash numeric RGB565 in a host-independent byte order. */
             if (fputc((int)(pixel >> 8), output) == EOF ||
                 fputc((int)(pixel & 0xFFU), output) == EOF) {
                 fclose(output);

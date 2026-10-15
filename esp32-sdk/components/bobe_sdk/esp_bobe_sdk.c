@@ -52,7 +52,6 @@ esp_err_t esp_bobe_start(void)
     if (atomic_exchange(&started, true)) {
         return ESP_ERR_INVALID_STATE;
     }
-    // Retain board power before allocating or scheduling the startup task.
     const esp_err_t result = bobe_board_early_init();
     if (result != ESP_OK) {
         ESP_LOGE(TAG, "Board early initialization failed: %s", esp_err_to_name(result));

@@ -1,5 +1,3 @@
-# BLE Security 2 provisioning profile for hardware with a verified BLE radio.
-# The retained WB-12 has no observed BLE TX or RX; SoftAP remains its default.
 CONFIG_BOBE_ENABLE_SECURE_PROVISIONING=y
 CONFIG_BOBE_PROVISIONING_TRANSPORT_BLE=y
 CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2=y

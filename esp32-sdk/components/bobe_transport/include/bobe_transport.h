@@ -47,7 +47,6 @@ typedef bobe_update_offer_result_t (*bobe_transport_update_verifier_t)(
 
 typedef struct {
     bobe_hello_info_t hello;
-    /* NULL uses the existing provisioned NVS claim. Strings are copied at init. */
     const bobe_transport_credentials_t *credentials;
     uint32_t build_number;
     uint32_t max_image_size;

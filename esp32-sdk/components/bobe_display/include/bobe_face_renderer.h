@@ -15,10 +15,6 @@ typedef struct {
     bool microphone_active;
     bool face_changed;
     bool theme_changed;
-    /*
-     * Transient local confirmation drawn over the caption. An empty text or
-     * BOBE_NOTICE_NONE hides it; the caller decides expiry.
-     */
     bobe_notice_t notice;
     bobe_display_status_t status;
     uint32_t animation_phase;
@@ -26,10 +22,6 @@ typedef struct {
     int32_t caption_scroll_position;
 } bobe_face_render_input_t;
 
-/*
- * One shared superset object tree covers every theme; switching a theme only
- * repositions, recolours, and hides objects.
- */
 typedef struct {
     lv_obj_t *screen;
     lv_obj_t *decor[BOBE_FACE_MAX_DECOR];

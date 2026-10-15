@@ -626,12 +626,15 @@ static void test_timeouts_and_stale_generations(void)
          index < sizeof(transport_cases) / sizeof(transport_cases[0]);
          ++index) {
         init_online(&context);
-        bobe_control_message_t volume = {
-            .kind = BOBE_CONTROL_VOLUME_SET,
-            .data.volume = {.percent = 55},
+        bobe_control_message_t theme = {
+            .kind = BOBE_CONTROL_THEME_SET,
+            .data.theme = {
+                .state_version = 1,
+                .theme = BOBE_FACE_THEME_SOLAR_CROWN,
+            },
         };
         bobe_policy_event_t event =
-            control_event(volume, UINT64_C(5000));
+            control_event(theme, UINT64_C(5000));
         event.data.transport.generation =
             transport_cases[index].generation;
         event.data.transport.current_generation =
@@ -640,7 +643,7 @@ static void test_timeouts_and_stale_generations(void)
         CHECK(
             has_effect(
                 &effects,
-                BOBE_POLICY_EFFECT_AUDIO_SET_VOLUME
+                BOBE_POLICY_EFFECT_DISPLAY_THEME
             ) == transport_cases[index].accepted
         );
     }
@@ -1496,39 +1499,6 @@ static void test_update_policy(void)
     CHECK(effect->data.update_state.progress_percent == 100);
 }
 
-static void test_claim_revocation(void)
-{
-    bobe_policy_context_t context;
-    bobe_policy_effect_batch_t effects;
-    init_online(&context);
-    const bobe_policy_event_t revoke = control_event(
-        (bobe_control_message_t){.kind = BOBE_CONTROL_CLAIM_REVOKE},
-        1000
-    );
-    reduce_event(&context, &revoke, &effects);
-    CHECK(context.pending_operation == BOBE_POLICY_OPERATION_CLAIM_REVOKE);
-    CHECK(has_effect(&effects, BOBE_POLICY_EFFECT_CLAIM_REVOKE));
-    CHECK(has_effect(&effects, BOBE_POLICY_EFFECT_WAKE_MONITOR_STOP));
-    check_result_effect_is_last(&effects);
-
-    complete_operation(
-        &context,
-        BOBE_POLICY_RESULT_OK,
-        1100,
-        0,
-        &effects
-    );
-    CHECK(context.state.lifecycle == BOBE_LIFECYCLE_UNPROVISIONED);
-    CHECK(
-        context.pending_operation ==
-        BOBE_POLICY_OPERATION_PROVISIONING_OPEN
-    );
-    CHECK(has_effect(
-        &effects,
-        BOBE_POLICY_EFFECT_CONNECTIVITY_OPEN_PROVISIONING
-    ));
-}
-
 static void test_boot_restores_user_settings(void)
 {
     bobe_policy_context_t context;
@@ -1796,7 +1766,6 @@ int main(void)
     test_persisted_microphone_mute_boot();
     test_ota_confirmation_deadline();
     test_update_policy();
-    test_claim_revocation();
     test_boot_restores_user_settings();
     test_theme_version_gating();
     test_local_notices();
