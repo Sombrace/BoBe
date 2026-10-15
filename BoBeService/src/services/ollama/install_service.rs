@@ -154,9 +154,11 @@ impl OllamaInstallService {
         let needs_managed_binary = !self.ollama_manager.health_check().await;
         let binary_path = if needs_managed_binary {
             info!("ollama_install.runtime_missing_downloading");
-            self.binary_manager
-                .ensure_managed_ollama(&runtime_tx, cancel_rx.clone())
-                .await?
+            Some(
+                self.binary_manager
+                    .ensure_managed_ollama(&runtime_tx, cancel_rx.clone())
+                    .await?,
+            )
         } else {
             info!("ollama_install.runtime_present_skipping_download");
             runtime_tx
@@ -166,7 +168,7 @@ impl OllamaInstallService {
                     percent: Some(100),
                 })
                 .ok();
-            self.binary_manager.managed_binary_path()
+            None
         };
         runtime_pump.abort();
 
@@ -174,14 +176,14 @@ impl OllamaInstallService {
             return Err(AppError::Canceled("Install canceled".into()));
         }
 
-        if needs_managed_binary {
+        if let Some(binary_path) = binary_path.as_deref() {
             self.binary_manager
-                .validate_ollama_binary(&binary_path)
+                .validate_ollama_binary(binary_path)
                 .await?;
         }
 
         self.ollama_manager
-            .ensure_daemon_running(Some(&binary_path), true)
+            .ensure_daemon_running(binary_path.as_deref(), true)
             .await?;
 
         if *cancel_rx.borrow() {

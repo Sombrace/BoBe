@@ -15,11 +15,14 @@ pub(crate) enum ArchiveFormat {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct OllamaArtifact {
+    pub(crate) version: &'static str,
     pub(crate) url: &'static str,
     pub(crate) sha256: &'static str,
     pub(crate) max_bytes: u64,
     pub(crate) archive_name: &'static str,
     pub(crate) format: ArchiveFormat,
+    pub(crate) binary: &'static str,
+    pub(crate) llama_server: &'static str,
 }
 
 pub(crate) const fn current_artifact() -> Result<OllamaArtifact, &'static str> {
@@ -27,20 +30,26 @@ pub(crate) const fn current_artifact() -> Result<OllamaArtifact, &'static str> {
         || cfg!(all(target_os = "macos", target_arch = "x86_64"))
     {
         return Ok(OllamaArtifact {
-            url: "https://github.com/ollama/ollama/releases/download/v0.31.2/ollama-darwin.tgz",
-            sha256: "d72381baa260f6ce014c8e942e605eac76cac5313fcb3401eaf5495f659cfd6d",
-            max_bytes: 150_000_000,
+            version: "0.40.4",
+            url: "https://github.com/ollama/ollama/releases/download/v0.40.4/ollama-darwin.tgz",
+            sha256: "a4ceae4b2aaf18df37ebcbfb56ba3a37a87838631112d66c2be07268693c8d58",
+            max_bytes: 200_000_000,
             archive_name: "ollama-darwin.tgz",
             format: ArchiveFormat::TarGz,
+            binary: "ollama",
+            llama_server: "llama-server",
         });
     }
     if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         return Ok(OllamaArtifact {
-            url: "https://github.com/ollama/ollama/releases/download/v0.31.2/ollama-linux-amd64.tar.zst",
-            sha256: "2c88f0f31a959bac5a3cad4cc5296ec568551d4aa79f548f554adb2b575b3133",
-            max_bytes: 1_500_000_000,
+            version: "0.40.4",
+            url: "https://github.com/ollama/ollama/releases/download/v0.40.4/ollama-linux-amd64.tar.zst",
+            sha256: "15f31e9576d15a481e099b4145dba6e9f8c1f295927d6b8895300ae30ed3740a",
+            max_bytes: 1_600_000_000,
             archive_name: "ollama-linux-amd64.tar.zst",
             format: ArchiveFormat::TarZstd,
+            binary: "bin/ollama",
+            llama_server: "lib/ollama/llama-server",
         });
     }
     Err("managed Ollama installation supports macOS and Linux x86_64 only")
@@ -50,11 +59,11 @@ const OLLAMA_DOWNLOAD_TIMEOUT: Duration = Duration::from_mins(30);
 
 pub(crate) async fn download_ollama(
     client: &reqwest::Client,
+    artifact: &OllamaArtifact,
     output_path: &Path,
     cancel_rx: watch::Receiver<bool>,
     on_progress: impl FnMut(u64, Option<u64>),
 ) -> Result<(), AppError> {
-    let artifact = current_artifact().map_err(|message| AppError::Config(message.into()))?;
     download_from_url(
         client,
         artifact.url,
@@ -214,9 +223,21 @@ mod tests {
                 .url
                 .starts_with("https://github.com/ollama/ollama/releases/")
         );
+        assert!(
+            artifact
+                .url
+                .contains(&format!("/download/v{}/", artifact.version))
+        );
+        assert!(artifact.url.ends_with(artifact.archive_name));
         assert_eq!(artifact.sha256.len(), 64);
         assert!(artifact.max_bytes > 100_000_000);
-        assert!(!artifact.archive_name.is_empty());
+        for relative in [artifact.binary, artifact.llama_server] {
+            assert!(
+                Path::new(relative)
+                    .components()
+                    .all(|component| matches!(component, std::path::Component::Normal(_)))
+            );
+        }
     }
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -225,6 +246,8 @@ mod tests {
         let artifact = current_artifact().expect("Linux x86_64 is supported");
         assert_eq!(artifact.archive_name, "ollama-linux-amd64.tar.zst");
         assert_eq!(artifact.format, ArchiveFormat::TarZstd);
+        assert_eq!(artifact.binary, "bin/ollama");
+        assert_eq!(artifact.llama_server, "lib/ollama/llama-server");
     }
 
     #[tokio::test]

@@ -8,7 +8,7 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use tokio::sync::watch;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::error::AppError;
 
@@ -33,8 +33,9 @@ impl BinaryManager {
     }
 
     pub(crate) fn find_managed_ollama(&self) -> Option<PathBuf> {
-        let managed = self.managed_binary_path();
-        if managed.exists() {
+        let artifact = download::current_artifact().ok()?;
+        let managed = self.managed_binary_path(&artifact);
+        if managed.is_file() {
             info!(path = %managed.display(), "binary_manager.found_managed");
             return Some(managed);
         }
@@ -57,15 +58,12 @@ impl BinaryManager {
             return Ok(path);
         }
 
-        let target_path = self.managed_binary_path();
-        let parent = target_path
-            .parent()
-            .ok_or_else(|| AppError::Config("Invalid binary path".into()))?;
-        std::fs::create_dir_all(parent)?;
-
         let artifact =
             download::current_artifact().map_err(|message| AppError::Config(message.into()))?;
-        let archive_path = self.data_dir.join("ollama").join(artifact.archive_name);
+        let target_path = self.managed_binary_path(&artifact);
+        let runtime_root = self.runtime_root();
+        std::fs::create_dir_all(&runtime_root)?;
+        let archive_path = runtime_root.join(artifact.archive_name);
 
         progress_tx
             .send(DownloadProgress {
@@ -77,6 +75,7 @@ impl BinaryManager {
 
         download::download_ollama(
             &self.http_client,
+            &artifact,
             &archive_path,
             cancel_rx,
             |current, total| {
@@ -106,14 +105,11 @@ impl BinaryManager {
             })
             .ok();
 
-        if let Err(error) =
-            extract::extract_ollama_archive(&archive_path, &target_path, artifact.format)
-        {
-            let _ignored = std::fs::remove_file(&archive_path);
-            let _ignored = std::fs::remove_file(&target_path);
-            return Err(error);
-        }
+        let install_dir = self.install_dir(&artifact);
+        let installed = extract::install_ollama_runtime(&archive_path, &install_dir, &artifact);
         let _ignored = std::fs::remove_file(&archive_path);
+        installed?;
+        self.prune_stale_runtimes(&install_dir);
 
         progress_tx
             .send(DownloadProgress {
@@ -167,8 +163,39 @@ impl BinaryManager {
         Ok(())
     }
 
-    pub(crate) fn managed_binary_path(&self) -> PathBuf {
-        self.data_dir.join("ollama").join("bin").join("ollama")
+    fn prune_stale_runtimes(&self, keep: &Path) {
+        let Ok(entries) = std::fs::read_dir(self.runtime_root()) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path == keep {
+                continue;
+            }
+            let removed = if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            };
+            match removed {
+                Ok(()) => info!(path = %path.display(), "binary_manager.pruned_stale_runtime"),
+                Err(error) => {
+                    warn!(path = %path.display(), %error, "binary_manager.prune_failed");
+                }
+            }
+        }
+    }
+
+    fn runtime_root(&self) -> PathBuf {
+        self.data_dir.join("ollama")
+    }
+
+    fn install_dir(&self, artifact: &download::OllamaArtifact) -> PathBuf {
+        self.runtime_root().join(format!("v{}", artifact.version))
+    }
+
+    pub(crate) fn managed_binary_path(&self, artifact: &download::OllamaArtifact) -> PathBuf {
+        self.install_dir(artifact).join(artifact.binary)
     }
 }
 
@@ -176,6 +203,7 @@ impl BinaryManager {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp)]
     use super::BinaryManager;
+    use super::download::current_artifact;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -246,18 +274,52 @@ mod tests {
     }
 
     #[test]
-    fn find_managed_ollama_returns_path_when_binary_exists() {
+    fn find_managed_ollama_returns_path_of_current_version() {
         let dir = temp_dir("find-present");
+        let artifact = current_artifact().expect("developer platform should be supported");
+        let binary = dir
+            .join("ollama")
+            .join(format!("v{}", artifact.version))
+            .join(artifact.binary);
+        std::fs::create_dir_all(binary.parent().expect("binary should have a parent"))
+            .expect("runtime dir should be created");
+        std::fs::write(&binary, "fake").expect("fake binary should be written");
+
+        let manager = BinaryManager::new(&dir, test_client());
+        assert_eq!(manager.find_managed_ollama(), Some(binary));
+    }
+
+    #[test]
+    fn find_managed_ollama_ignores_a_binary_only_legacy_install() {
+        let dir = temp_dir("find-legacy");
         let bin_dir = dir.join("ollama").join("bin");
         std::fs::create_dir_all(&bin_dir).expect("bin dir should be created");
         std::fs::write(bin_dir.join("ollama"), "fake").expect("fake binary should be written");
 
         let manager = BinaryManager::new(&dir, test_client());
-        let result = manager.find_managed_ollama();
-        assert!(result.is_some());
-        assert_eq!(
-            result.expect("file should exist after write"),
-            dir.join("ollama").join("bin").join("ollama")
-        );
+        assert_eq!(manager.find_managed_ollama(), None);
+    }
+
+    #[test]
+    fn prune_stale_runtimes_keeps_only_the_current_install() {
+        let dir = temp_dir("prune");
+        let root = dir.join("ollama");
+        let keep = root.join("v9.9.9");
+        for stale in [root.join("bin"), root.join("v0.31.2"), keep.clone()] {
+            std::fs::create_dir_all(&stale).expect("runtime dir should be created");
+            std::fs::write(stale.join("ollama"), "fake").expect("fake binary should be written");
+        }
+        std::fs::write(root.join("ollama-darwin.tgz.part"), "partial")
+            .expect("partial archive should be written");
+
+        BinaryManager::new(&dir, test_client()).prune_stale_runtimes(&keep);
+
+        let remaining: Vec<_> = std::fs::read_dir(&root)
+            .expect("runtime root should exist")
+            .map(|entry| entry.expect("entry should read").path())
+            .collect();
+        assert_eq!(remaining, vec![keep.clone()]);
+        assert!(keep.join("ollama").is_file());
+        let _ignored = std::fs::remove_dir_all(dir);
     }
 }
