@@ -58,12 +58,12 @@ Release secrets and keys must remain outside the repository. Do not commit certi
 
 ## Bundled agent runtime
 
-Node is pinned to 22.22.0. The SHA256 values in
+Node is pinned to 22.23.3. The SHA256 values in
 `scripts/lib/agent-runtime.sh` come from the official
-[release checksum list](https://nodejs.org/dist/v22.22.0/SHASUMS256.txt).
+[release checksum list](https://nodejs.org/dist/v22.23.3/SHASUMS256.txt).
 The build verifies the archive for each supported macOS/Linux ARM64/x64 host
 before extraction. `BoBeAgent/package-lock.json` pins the production graph,
-including pi 1.0.3. Never replace the archive digests with unverified values.
+including pi 1.2.0. Never replace the archive digests with unverified values.
 
 The app ships `Contents/MacOS/node` and
 `Contents/Resources/agent/{dist/main.js,assets/,bin/,package.json,node_modules/}`;
@@ -73,7 +73,7 @@ in Resources, not in a code-only directory; see Apple's
 Standalone archives put `node` and `agent/` beside `bin/bobe`.
 The agent directory includes the Node license and upstream package
 licenses, provider catalogs, templates, themes, and WebAssembly assets. Its
-private `bin/` includes ripgrep 15.1.0 and fd 10.3.0, verified against pinned
+private `bin/` includes ripgrep 15.2.0 and fd 10.5.0, verified against pinned
 upstream release archive digests. Search never depends on a user's global
 tools or unpinned first-use downloads.
 `scripts/tasks/notices.sh` writes BoBe's license, `TRADEMARKS.md`, the Rust crate

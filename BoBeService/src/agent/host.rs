@@ -1310,7 +1310,7 @@ input.on("line", line => {
       writeFileSync("initializing.pid", String(process.pid));
       return;
     }
-    send({ id: message.id, result: { protocol_version: 1, harness: "pi", version: "1.0.3" } });
+    send({ id: message.id, result: { protocol_version: 1, harness: "pi", version: "1.2.0" } });
   } else if (message.method === "chat") {
     callbacks.set(-message.id, message.id);
     send({ method: "event", params: { request_id: message.id, delta: {

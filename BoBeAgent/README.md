@@ -1,6 +1,6 @@
 # BoBe pi execution worker
 
-This private Node process embeds `@earendil-works/pi-coding-agent` 1.0.3. Rust
+This private Node process embeds `@earendil-works/pi-coding-agent` 1.2.0. Rust
 owns admission, identity, memory, goals, skills, secrets, voice and body state;
 the worker owns pi execution and its scoped resources.
 
@@ -28,11 +28,11 @@ point prepends that path. Developer runs may use installed `rg` and `fd`
 a tool error. SDK imports happen only after initialization selects the owner
 agent directory, including pi's import-time tool cache.
 
-`src/search.ts` adapts pi 1.0.3 search so `rg` and `fd`, like shell and MCP,
+`src/search.ts` adapts pi 1.2.0 search so `rg` and `fd`, like shell and MCP,
 start under Rust's process owner and capacity. Tool schemas and truncation
 helpers stay upstream and find uses its operations hook; grep has no process
 hook, so its bounded formatting and awaited cancellation are maintained here.
-The adapted code ([pi v1.0.3 tools](https://github.com/earendil-works/pi/tree/v1.0.3/packages/coding-agent/src/core/tools))
+The adapted code ([pi v1.2.0 tools](https://github.com/earendil-works/pi/tree/v1.2.0/packages/coding-agent/src/core/tools))
 is MIT, copyright 2025 Mario Zechner; `assets/pi-search.LICENSE` ships with it.
 
 Tests use real pi `AgentSession` objects, controlled provider adapters, a local
@@ -55,7 +55,7 @@ Requests are `{id, method, params}`, replies `{id, result}` or
 
 | Method | Parameters | Result |
 | --- | --- | --- |
-| `initialize` | Protocol v1 owner paths, profiles, routes, exported tool schemas, capability instructions, MCP servers, enabled tools, execution limits and all workload budgets | `{protocol_version:1,harness:"pi",version:"1.0.3"}` |
+| `initialize` | Protocol v1 owner paths, profiles, routes, exported tool schemas, capability instructions, MCP servers, enabled tools, execution limits and all workload budgets | `{protocol_version:1,harness:"pi",version:"1.2.0"}` |
 | `chat` | `{session_key?,text,channel:"text"\|"voice",context,memory_context}` | `{}` after settled success |
 | `background` | `{job_id,title,task,context,memory_context,attempt,route}` | `{session_id,output}` after the task and its resources settle |
 | `auxiliary` | `{class:"goals"\|"small"\|"consolidate",job:{job_id,kind,instructions,input},context}` | `{job_id,output,error}`; failed output is `null`, never a fabricated object |

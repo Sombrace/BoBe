@@ -20,7 +20,7 @@ scripts/tasks/bootstrap-tools.sh
 ```
 
 Developer tools are pinned under the ignored `.tools/` directory; install nothing
-globally. `scripts/tasks/build-agent.sh` downloads Node 22.22.0, verifies its
+globally. `scripts/tasks/build-agent.sh` downloads Node 22.23.3, verifies its
 pinned SHA-256 and builds `BoBeAgent` from its lockfile with lifecycle scripts
 disabled. It stages `build/agent-runtime/` with production packages, pi assets
 and checksum-pinned ripgrep and fd. Pins are in `scripts/lib/agent-runtime.sh`.

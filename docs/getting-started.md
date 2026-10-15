@@ -24,7 +24,7 @@ Everything above, plus:
 |---|---|
 | **Xcode 26 or later** | With Swift 6 and the command line tools |
 | **rustup** | From [rustup.rs](https://rustup.rs). The repository's `rust-toolchain.toml` selects Rust 1.98.1 |
-| **Network on the first build** | The build downloads pinned developer tools, Node 22.22.0, Swift packages and Rust crates. Downloaded tools and Node are checked against pinned hashes |
+| **Network on the first build** | The build downloads pinned developer tools, Node 22.23.3, Swift packages and Rust crates. Downloaded tools and Node are checked against pinned hashes |
 
 You do not need to install Node, npm, pi or any agent command line yourself.
 The build downloads a pinned Node and keeps it inside the checkout.
