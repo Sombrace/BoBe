@@ -39,7 +39,7 @@ OpenRAIL-M restrictions.
 
 ## Pocket TTS
 
-The daemon runs `ptts` 0.4.0-rc.1 (MIT or Apache-2.0) natively on the CPU with
+The daemon runs `ptts` 0.4.0-rc.2 (MIT or Apache-2.0) natively on the CPU with
 Q8 weights. No Python, model server or voice cloning is involved. The pack is
 `pocket-tts-en-b6369a24-q8` with six presets; Alba is the default and earlier
 Kokoro voice selections resolve to it. `BoBeService/src/voice/install_artifacts.rs`
