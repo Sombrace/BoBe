@@ -42,10 +42,13 @@ enum VoiceInstallOutcome: Equatable, Sendable {
         installing: Bool,
         snapshotRunning: Bool?,
         preparation: VoiceModelPreparation,
-        sttStatus: VoicePipeline.SttStatus
+        sttStatus: VoicePipeline.SttStatus,
+        snapshotRevision: UInt64 = 0,
+        staleThrough: UInt64? = nil
     ) -> Self {
         if installing { return .installing }
         guard let snapshotRunning else { return .failed(L10n.tr("setup.voice.daemon_unreachable")) }
+        if let staleThrough, snapshotRevision <= staleThrough { return .installing }
         if preparation == .ready { return .ready }
         if case let .failed(message) = sttStatus { return .failed(message) }
         if snapshotRunning || sttStatus == .downloading { return .installing }
@@ -62,6 +65,7 @@ final class VoiceModelInstaller {
     private(set) var isInstalling = false
     private(set) var isPreparingTts = false
     private(set) var supertonicInstalled = FluidAudioSupertonicModelPresence.isInstalled()
+    private var staleSnapshotRevision: UInt64?
 
     @ObservationIgnored private var installGeneration: UInt64 = 0
     @ObservationIgnored private var monitorTask: Task<Void, Never>?
@@ -120,8 +124,15 @@ final class VoiceModelInstaller {
             installing: self.isInstalling,
             snapshotRunning: self.pipeline.installSnapshot?.isRunning,
             preparation: self.preparation,
-            sttStatus: self.pipeline.sttStatus
+            sttStatus: self.pipeline.sttStatus,
+            snapshotRevision: self.pipeline.installSnapshotRevision,
+            staleThrough: self.staleSnapshotRevision
         )
+    }
+
+    private var awaitsDaemonStatus: Bool {
+        guard let stale = self.staleSnapshotRevision else { return false }
+        return self.pipeline.installSnapshotRevision <= stale
     }
 
     var selectedSttStatus: VoiceModelStatus {
@@ -202,6 +213,7 @@ final class VoiceModelInstaller {
     func cancel() async {
         self.installGeneration &+= 1
         self.isInstalling = false
+        self.staleSnapshotRevision = nil
         let client = DaemonClient(endpoint: self.pipeline.daemonStateSelection.endpoint)
         async let daemon: Void = { try? await client.cancelVoiceInstall() }()
         async let stt: Void = self.pipeline.cancelSttLoading()
@@ -263,6 +275,8 @@ final class VoiceModelInstaller {
         try await DaemonClient(endpoint: selection.endpoint).startVoiceInstall(kind: VoiceWire.modelKindTts)
         guard EndpointStore.shared.selection == selection else { return }
         if let refresh = pipeline.refreshDaemonTask { await refresh.value }
+        self.staleSnapshotRevision = pipeline.installSnapshotRevision
+        await pipeline.refreshDaemonState()
         guard EndpointStore.shared.selection == selection else { return }
         self.monitor()
     }
@@ -277,7 +291,7 @@ final class VoiceModelInstaller {
               let progress = snapshot.models.first(where: { $0.kind == VoiceWire.modelKindTts })
         else { return .unknown }
         if snapshot.ttsReady { return .installed }
-        if progress.status.starts(with: "downloading") || self.isPreparingTts {
+        if progress.status.starts(with: "downloading") || self.isPreparingTts || self.awaitsDaemonStatus {
             return .downloading(
                 percent: progress.percent,
                 bytesDownloaded: progress.bytesDownloaded,

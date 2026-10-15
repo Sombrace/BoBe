@@ -281,6 +281,36 @@ struct VoiceWsEndpointTests {
 
         @Test
         @MainActor
+        func retryAfterFailedDownloadWaitsForStatusFetchedAfterTheRequest() {
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: false,
+                preparation: .failed("download failed"), sttStatus: .ready,
+                snapshotRevision: 4, staleThrough: 4
+            ) == .installing)
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: true,
+                preparation: .installing, sttStatus: .ready,
+                snapshotRevision: 5, staleThrough: 4
+            ) == .installing)
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: false,
+                preparation: .failed("download failed again"), sttStatus: .ready,
+                snapshotRevision: 6, staleThrough: 4
+            ) == .failed("download failed again"))
+        }
+
+        @Test
+        @MainActor
+        func firstInstallIgnoresIdleStatusFromBeforeTheRequest() {
+            #expect(VoiceInstallOutcome.resolve(
+                installing: false, snapshotRunning: false,
+                preparation: .missing, sttStatus: .ready,
+                snapshotRevision: 1, staleThrough: 1
+            ) == .installing)
+        }
+
+        @Test
+        @MainActor
         func preparationFailureIsReported() {
             #expect(VoiceInstallOutcome.resolve(
                 installing: false, snapshotRunning: false,
