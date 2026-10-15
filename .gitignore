@@ -1,58 +1,42 @@
-# Rust build artifacts (covers root and BoBeService/)
 **/target/
 **/node_modules/
 
-# Python bytecode
 **/__pycache__/
 *.py[cod]
 
-# SwiftPM build cache
 **/.build/
 
-# Xcode user state
 *.xcuserstate
 xcuserdata/
 *.xcworkspace/
 *.xcodeproj/
 
-# macOS
 **/.DS_Store
 
-# Build output
 build/
 
-# Project-local developer tools
 .tools/
 
-# Git worktrees
 .worktrees/
 
-# IDE / editor config (local-only)
 .vscode/
 .idea/
 
-# Environment files
 .env
 .env.*
 
-# Sparkle signing keys
 sparkle_private_key
 sparkle_private_key.pem
 *.sparkle_private_key
 
-# Apple API keys and signing certificates
 *.p8
 *.p12
 
-# Personal AI assistant config files (local-only)
 .github/copilot-instructions.md
 .github/copilot/settings.json
 
-# Snyk Security Extension
 .github/instructions/snyk_rules.instructions.md
 .claude/
 !/esp32-sdk/examples/wb12/.claude/
 /esp32-sdk/examples/wb12/.claude/*
 !/esp32-sdk/examples/wb12/.claude/skills/
-
-.target/
