@@ -166,8 +166,10 @@ bobe service restart
 `bobe local-runtime install` uses an Ollama that is already running, or installs
 BoBe's pinned Ollama under the data root, and pulls the models. Models stay in
 Ollama's own `~/.ollama/`, so an Ollama you run yourself shares them, and
-removing the data root leaves them there. An Ollama that BoBe started is not started again by a later daemon start, so
-run Ollama as your own service if you want local inference to survive a
+removing the data root leaves them there. When the daemon stops, it stops the
+Ollama it started and any model that Ollama loaded; an Ollama you run yourself
+keeps running. A later daemon start does not start BoBe's Ollama again, so run
+Ollama as your own service if you want local inference to survive a restart or
 reboot. Continuous local inference is not a qualified path.
 
 ### Which model does which work

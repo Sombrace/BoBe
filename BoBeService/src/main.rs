@@ -3166,6 +3166,9 @@ async fn run_graceful_shutdown(state: &std::sync::Arc<app_state::AppState>) {
 
     drain_in_flight_text_turns(&state.runtime.in_flight_text_turns).await;
 
+    tracing::info!("Stopping managed Ollama...");
+    state.services.ollama_install.shutdown().await;
+
     tracing::info!("Closing database pool...");
     state.infra.db.close().await;
 
