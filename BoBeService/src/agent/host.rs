@@ -11,9 +11,10 @@ use tokio::process::Command;
 use tokio::sync::{Mutex, Notify, broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use super::process::{OwnedProcesses, ProcessPurpose, ProcessRequest, signal_group};
+use super::process::{OwnedProcesses, ProcessPurpose, ProcessRequest};
 use crate::error::AppError;
 use crate::provider::{ChatDelta, DomainTools, McpRuntimeConfig, SkillCreateParams, SkillStore};
+use crate::util::process_group::signal_group;
 
 const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
@@ -7,6 +8,8 @@ use tracing::{info, warn};
 use crate::error::AppError;
 use crate::services::ollama::binary_manager::{BinaryManager, DownloadProgress};
 use crate::services::ollama::manager::{OllamaManager, PullProgress};
+
+const INSTALL_SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InstallStage {
@@ -128,6 +131,21 @@ impl OllamaInstallService {
         if let Some(tx) = state.cancel_tx.as_ref() {
             tx.send(true).ok();
         }
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        self.cancel().await;
+        let in_flight = self.state.lock().await.in_flight.take();
+        if let Some(mut handle) = in_flight
+            && tokio::time::timeout(INSTALL_SHUTDOWN_GRACE, &mut handle)
+                .await
+                .is_err()
+        {
+            warn!("ollama_install.shutdown_aborted");
+            handle.abort();
+            drop(handle.await);
+        }
+        self.ollama_manager.stop().await;
     }
 
     async fn run(
