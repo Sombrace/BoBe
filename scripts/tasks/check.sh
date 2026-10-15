@@ -63,6 +63,17 @@ xcodebuild \
 ./scripts/check-swift-runtime-artifacts.sh \
     BoBeMacUI/.build/xcode-derived/Build/Products/Debug/BoBe.app
 
+"$TASK_DIR/build-pairing-ios.sh"
+(cd BoBeiOS && ../.tools/bin/xcodegen generate --quiet)
+xcodebuild \
+    -project BoBeiOS/BoBe.xcodeproj \
+    -scheme BoBe \
+    -configuration Debug \
+    -destination 'generic/platform=iOS Simulator' \
+    -derivedDataPath BoBeiOS/.build/xcode-derived \
+    CODE_SIGNING_ALLOWED=NO \
+    build
+
 if [[ -d BoBeService/target ]]; then
     target_kib="$(du -sk BoBeService/target | awk '{print $1}')"
     if (( target_kib > 15 * 1024 * 1024 )); then

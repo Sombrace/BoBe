@@ -37,7 +37,7 @@ The daemon, worker and CLI also build on Linux with
 
 | Command | Purpose |
 |---|---|
-| `scripts/tasks/check.sh` | The full gate on macOS: Rust, agent, Swift, contracts, dependencies, packaging |
+| `scripts/tasks/check.sh` | The full gate on macOS: Rust, agent, Mac and iPhone apps, contracts, translations, dependencies, packaging |
 | `scripts/tasks/run.sh` | Build and launch the debug app |
 | `scripts/tasks/backend.sh` | Run a development daemon |
 | `scripts/tasks/build-agent.sh` | Build and verify the pinned Node and pi worker |
