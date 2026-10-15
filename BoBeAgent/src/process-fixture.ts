@@ -59,7 +59,10 @@ export class ProcessFixture {
   private kill(child: ChildProcessWithoutNullStreams): void {
     if (!child.pid) return;
     try { process.kill(-child.pid, "SIGKILL"); }
-    catch (error) { if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error; }
+    catch (error) {
+      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      if (code !== "ESRCH" && code !== "EPERM") throw error;
+    }
   }
 
   async close(): Promise<void> {
