@@ -67,6 +67,8 @@ bobe service restart
 ```
 
 An Ollama that BoBe started is not restarted later; run it as your own service.
+BoBe starts Ollama with a 40,960-token context so its prompts are not cut
+off; start your own Ollama with `OLLAMA_CONTEXT_LENGTH=40960` as well.
 
 | Workload | Used for |
 |---|---|

@@ -52,6 +52,24 @@ pub(crate) struct OllamaManager {
     child: Mutex<Option<tokio::process::Child>>,
 }
 
+fn serve_command(binary: &Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(binary);
+    command
+        .arg("serve")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .env("OLLAMA_HOST", "127.0.0.1:11434")
+        .env("OLLAMA_ORIGINS", "http://127.0.0.1:*")
+        .env(
+            "OLLAMA_CONTEXT_LENGTH",
+            crate::provider::WorkerClass::largest_context_tokens()
+                .next_multiple_of(4096)
+                .to_string(),
+        )
+        .kill_on_drop(true);
+    command
+}
+
 impl OllamaManager {
     pub(crate) fn new(http_client: Arc<reqwest::Client>, base_url: &str) -> Self {
         Self {
@@ -86,14 +104,7 @@ impl OllamaManager {
     async fn spawn_daemon(&self, binary: &Path) -> Result<(), AppError> {
         info!(binary = %binary.display(), "ollama_manager.spawning");
 
-        let child = tokio::process::Command::new(binary)
-            .arg("serve")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .env("OLLAMA_HOST", "127.0.0.1:11434")
-            .env("OLLAMA_ORIGINS", "http://127.0.0.1:*")
-            .kill_on_drop(true)
-            .spawn()?;
+        let child = serve_command(binary).spawn()?;
 
         *self.child.lock().await = Some(child);
 
@@ -295,7 +306,27 @@ mod tests {
     use tokio::net::TcpListener;
     use tokio::sync::{Notify, watch};
 
-    use super::{OllamaManager, PullProgress, fetch_installed_models};
+    use super::{OllamaManager, PullProgress, fetch_installed_models, serve_command};
+    use crate::provider::WorkerClass;
+
+    #[test]
+    fn managed_ollama_serves_every_bobe_prompt_without_truncation() {
+        let command = serve_command(std::path::Path::new("/opt/ollama"));
+        let context: usize = command
+            .as_std()
+            .get_envs()
+            .find(|(key, _)| *key == "OLLAMA_CONTEXT_LENGTH")
+            .and_then(|(_, value)| value?.to_str()?.parse().ok())
+            .expect("the managed runtime sets a context length");
+        for class in [
+            WorkerClass::Goals,
+            WorkerClass::Small,
+            WorkerClass::Chat,
+            WorkerClass::Consolidate,
+        ] {
+            assert!(context >= class.budget().context_tokens());
+        }
+    }
 
     #[tokio::test]
     async fn stalled_model_pull_cancels_without_another_chunk() {
