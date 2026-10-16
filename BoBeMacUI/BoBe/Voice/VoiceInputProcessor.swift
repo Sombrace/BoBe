@@ -40,8 +40,8 @@ struct ProcessedVoiceAudio: Sendable {
 }
 
 actor VoiceInputProcessor {
-    private static let outputSampleRate = 16_000.0
-    private static let rmsFrameSamples = 320
+    private static let outputSampleRate = Double(VoiceWire.captureSampleRate)
+    private static let rmsFrameSamples = VoiceWire.captureFrameSamples
 
     private var converter: AVAudioConverter?
     private var converterSourceRate = 0.0

@@ -2,14 +2,11 @@ import Foundation
 
 struct AuthStatusResponse: Codable, Sendable {
     let isAuthenticated: Bool
-    let host: String?
     let login: String?
-    let statusMessage: String?
 
     enum CodingKeys: String, CodingKey {
         case isAuthenticated = "is_authenticated"
-        case login, host
-        case statusMessage = "status_message"
+        case login
     }
 }
 
@@ -53,7 +50,6 @@ struct VoiceInstallSnapshot: Codable, Sendable {
     let status: InstallStatusWire
     let error: String?
     let models: [VoiceModelProgress]
-    let installed: VoiceInstallPresence
     let ready: VoiceInstallPresence?
 
     var ttsReady: Bool {
@@ -71,7 +67,6 @@ struct VoiceInstallSnapshot: Codable, Sendable {
 
 struct VoiceModelProgress: Codable, Sendable, Identifiable {
     let kind: String
-    let label: String
     let status: String
     let bytesDownloaded: UInt64
     let bytesTotal: UInt64?
@@ -83,7 +78,6 @@ struct VoiceModelProgress: Codable, Sendable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case kind
-        case label
         case status
         case bytesDownloaded = "bytes_downloaded"
         case bytesTotal = "bytes_total"

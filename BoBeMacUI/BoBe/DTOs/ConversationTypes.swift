@@ -1,12 +1,10 @@
 import Foundation
 
 struct ConversationSnapshotResponse: Decodable, Sendable {
-    let conversationId: String?
     let turns: [ConversationSnapshotTurn]
     let pendingUpdates: [ConversationSnapshotTurn]
 
     enum CodingKeys: String, CodingKey {
-        case conversationId = "conversation_id"
         case turns
         case pendingUpdates = "pending_updates"
     }

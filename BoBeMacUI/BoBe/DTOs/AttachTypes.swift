@@ -43,7 +43,14 @@ struct SurfaceCapabilitiesWire: Codable, Sendable {
 }
 
 enum CapabilityStateWire: String, Codable, Sendable {
-    case ready, degraded, unsupported
+    case ready
+    case unsupported
+    case unknown
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = CapabilityStateWire(rawValue: raw) ?? .unknown
+    }
 }
 
 struct RuntimeCapabilitiesWire: Codable, Sendable {

@@ -3,7 +3,7 @@ import Foundation
 enum BrainError: Error, Equatable {
     case unauthorized
     case unreachable
-    case http(Int, String?)
+    case http(Int, code: String?)
     case invalidResponse
 }
 
@@ -17,7 +17,7 @@ struct EventCursor: Sendable, Equatable {
     let incarnation: UUID
 }
 
-final class BrainClient: Sendable {
+final class BrainClient: BrainLink {
     let origin: URL
     private let credential: String
     private let session: URLSession
@@ -51,25 +51,6 @@ final class BrainClient: Sendable {
         self.streamSession.invalidateAndCancel()
     }
 
-    func get<Response: Decodable & Sendable>(
-        _ path: [String],
-        query: [URLQueryItem] = []
-    ) async throws -> Response {
-        try self.decode(await self.send(path, method: "GET", body: nil, query: query))
-    }
-
-    func send<Response: Decodable & Sendable>(
-        _ path: [String],
-        method: String = "POST",
-        body: (any Encodable & Sendable)? = nil
-    ) async throws -> Response {
-        try self.decode(await self.send(path, method: method, body: body, query: []))
-    }
-
-    func call(_ path: [String], method: String = "POST", body: (any Encodable & Sendable)? = nil) async throws {
-        _ = try await self.send(path, method: method, body: body, query: [])
-    }
-
     func events(after cursor: EventCursor?) -> AsyncThrowingStream<BrainStreamItem, any Error> {
         var request = URLRequest(url: self.url(["events"], query: []))
         request.setValue("Bearer \(self.credential)", forHTTPHeaderField: "Authorization")
@@ -86,7 +67,7 @@ final class BrainClient: Sendable {
                     let (bytes, response) = try await session.bytes(for: prepared)
                     guard let http = response as? HTTPURLResponse else { throw BrainError.invalidResponse }
                     guard http.statusCode == 200 else {
-                        throw http.statusCode == 401 ? BrainError.unauthorized : BrainError.http(http.statusCode, nil)
+                        throw http.statusCode == 401 ? BrainError.unauthorized : BrainError.http(http.statusCode, code: nil)
                     }
                     continuation.yield(.connected)
                     let decoder = JSONDecoder()
@@ -107,10 +88,10 @@ final class BrainClient: Sendable {
         }
     }
 
-    private func send(
+    func exchange(
         _ path: [String],
         method: String,
-        body: (any Encodable & Sendable)?,
+        body: Data?,
         query: [URLQueryItem]
     ) async throws -> Data {
         var request = URLRequest(url: self.url(path, query: query))
@@ -118,7 +99,7 @@ final class BrainClient: Sendable {
         request.setValue("Bearer \(self.credential)", forHTTPHeaderField: "Authorization")
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONEncoder().encode(body)
+            request.httpBody = body
         }
         let data: Data
         let response: URLResponse
@@ -130,17 +111,9 @@ final class BrainClient: Sendable {
         guard let http = response as? HTTPURLResponse else { throw BrainError.invalidResponse }
         guard (200 ... 299).contains(http.statusCode) else {
             if http.statusCode == 401 { throw BrainError.unauthorized }
-            throw BrainError.http(http.statusCode, Self.message(from: data))
+            throw BrainError.http(http.statusCode, code: Self.code(from: data))
         }
         return data
-    }
-
-    private func decode<Response: Decodable>(_ data: Data) throws -> Response {
-        do {
-            return try JSONDecoder().decode(Response.self, from: data)
-        } catch {
-            throw BrainError.invalidResponse
-        }
     }
 
     private func url(_ path: [String], query: [URLQueryItem]) -> URL {
@@ -156,14 +129,14 @@ final class BrainClient: Sendable {
         return components.url ?? self.origin
     }
 
-    private static func message(from data: Data) -> String? {
+    private static func code(from data: Data) -> String? {
         struct Envelope: Decodable {
             struct Body: Decodable {
-                let message: String
+                let code: String
             }
 
             let error: Body
         }
-        return (try? JSONDecoder().decode(Envelope.self, from: data))?.error.message
+        return (try? JSONDecoder().decode(Envelope.self, from: data))?.error.code
     }
 }

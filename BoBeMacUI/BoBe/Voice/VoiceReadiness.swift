@@ -61,8 +61,7 @@ enum VoiceSetupPreference {
 @MainActor
 extension VoicePipeline {
     var activeSttLanguage: String {
-        let language = SettingsStore.shared.settings?.voiceSttLanguage ?? ""
-        return language.isEmpty ? "en" : language
+        Self.sttLanguage(from: SettingsStore.shared.settings)
     }
 
     var effectiveLanguage: String {

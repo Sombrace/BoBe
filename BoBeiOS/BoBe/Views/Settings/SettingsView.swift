@@ -35,11 +35,21 @@ struct SettingsView: View {
                             .foregroundStyle(self.theme.colors.textMuted)
                             .textSelection(.enabled)
                     }
-                    if self.model.link == .offline {
+                    if [.offline, .incompatible, .settingUp].contains(self.model.link) {
                         Button(L10n.tr("phone.connection.retry")) { self.model.reconnect() }
                     }
                 }
                 .listRowBackground(self.theme.colors.surface)
+
+                if self.model.forgetPending {
+                    Section {
+                        Text(L10n.tr("phone.settings.forget_pending"))
+                            .phoneText(.footnote)
+                            .foregroundStyle(self.theme.colors.textMuted)
+                        Button(L10n.tr("phone.connection.retry")) { self.model.retryForgetting() }
+                    }
+                    .listRowBackground(self.theme.colors.surface)
+                }
 
                 Section {
                     LabeledContent(L10n.tr("phone.settings.voice"), value: self.describe(self.voice))

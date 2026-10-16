@@ -1,8 +1,35 @@
 import SwiftUI
 
+@MainActor
+@Observable
+final class RuntimeRestartRequest {
+    private(set) var isRestarting = false
+    private(set) var errorMessage: String?
+    private let restart: @MainActor () async throws -> Void
+
+    init(restart: @escaping @MainActor () async throws -> Void = { try await BackendService.shared.userRestart() }) {
+        self.restart = restart
+    }
+
+    func perform() async -> Bool {
+        guard !self.isRestarting else { return false }
+        self.isRestarting = true
+        self.errorMessage = nil
+        defer { self.isRestarting = false }
+        do {
+            try await self.restart()
+            return true
+        } catch {
+            self.errorMessage = L10n.tr("settings.shared.restart_banner.failed")
+            return false
+        }
+    }
+}
+
 struct RestartRequiredBanner: View {
     let fields: Set<String>
     let onDismiss: () -> Void
+    @State private var request = RuntimeRestartRequest()
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -25,29 +52,45 @@ struct RestartRequiredBanner: View {
                         .foregroundStyle(self.theme.colors.textMuted)
                         .lineLimit(2)
                 }
+
+                if let errorMessage = self.request.errorMessage {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                        .bobeTextStyle(.helper)
+                        .foregroundStyle(self.theme.colors.error)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .transition(.bobeRise)
+                }
             }
 
             Spacer(minLength: 8)
 
             if DaemonConfig.endpoint.canRestartRuntime {
-                Button(L10n.tr("settings.shared.restart_banner.restart_now")) {
+                Button {
                     Task {
-                        do {
-                            try await BackendService.shared.userRestart()
+                        if await self.request.perform() {
                             self.onDismiss()
-                        } catch {
                         }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        if self.request.isRestarting {
+                            BobeSpinner(size: 10)
+                        }
+                        Text(L10n.tr("settings.shared.restart_banner.restart_now"))
                     }
                 }
                 .bobeButton(.primary, size: .mini)
+                .disabled(self.request.isRestarting)
             }
 
             Button(L10n.tr("settings.shared.restart_banner.dismiss"), action: self.onDismiss)
                 .bobeButton(.ghost, size: .mini)
+                .disabled(self.request.isRestarting)
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .bobeRaised(cornerRadius: 18)
+        .animation(BobeMotion.standard, value: self.request.errorMessage)
         .transition(.bobeRise)
     }
 }

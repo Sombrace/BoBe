@@ -193,7 +193,6 @@
 "settings.shared.restart_banner.message" = "Some changes need BoBe to restart before they take effect.";
 "settings.shared.restart_banner.restart_now" = "Restart now";
 "settings.shared.section.enabled_format" = "%@ enabled";
-"settings.shared.validation.content_min_length_format" = "Content must be at least %d characters";
 
 "settings.souls.delete.accessibility" = "Delete soul";
 "settings.souls.empty.description" = "Create one to define BoBe's personality";
@@ -358,6 +357,10 @@
 "setup.voice.skip" = "Skip for now";
 "setup.voice.install_button" = "Set up voice";
 "setup.voice.cancel" = "Cancel";
+"setup.voice.canceling" = "Canceling…";
+"setup.voice.cancel_failed_format" = "BoBe couldn’t stop the download. %@";
+"setup.voice.cancel_still_running" = "The download is still stopping. Try again in a moment.";
+"settings.voice.session_restart_failed_format" = "Voice couldn’t restart with your new settings. %@";
 "setup.voice.continue" = "Continue";
 "setup.voice.try_again" = "Try again";
 "setup.voice.continue_without" = "Continue without voice";
@@ -588,7 +591,6 @@
 "setup.runtime.phase.starting" = "Starting BoBe…";
 "setup.runtime.phase.checking" = "Looking for BoBe…";
 "setup.runtime.phase.pairing" = "Pairing securely…";
-"setup.runtime.phase.saving" = "Saving the connection…";
 "setup.runtime.phase.verifying" = "Checking the connection…";
 "setup.runtime.retry_connection" = "Try again";
 "setup.runtime.pair_again" = "Pair again";
@@ -847,3 +849,10 @@
 "settings.devices.access.failed" = "Couldn’t change that. Try again.";
 
 "settings.voice.language_unsupported" = "%@ does not have a voice for %@. Choose a supported language or another speech engine.";
+"app.common.expanded" = "Expanded";
+"app.common.collapsed" = "Collapsed";
+"setup.proactivity.error.not_saved" = "BoBe couldn’t save this choice. Try again.";
+"setup.local.cancel_failed" = "BoBe couldn’t stop the download. Try again.";
+"settings.shared.restart_banner.failed" = "BoBe couldn’t restart. Try again.";
+"settings.context_editor.raw.accessibility_format" = "Markdown for %@";
+"settings.mcp.editor.accessibility" = "Tool server configuration (JSON)";

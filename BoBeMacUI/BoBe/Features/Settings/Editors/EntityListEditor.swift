@@ -19,7 +19,6 @@ struct EntityActions<E: EditableEntity, CR: Sendable, UR: Sendable> {
     let disable: @Sendable (E.ID) async throws -> Void
     let buildCreateRequest: (_ name: String) -> CR
     let buildUpdateRequest: (_ content: String) -> UR
-    let validate: (_ content: String) -> String?
 }
 
 struct EntityEditorStrings {
@@ -31,7 +30,6 @@ struct EntityEditorStrings {
     let emptySelectPrompt: String
     let deleteAccessibility: String
     let toggleAccessibility: String
-    let defaultContent: (_ name: String) -> String
 }
 
 struct EntityListEditor<E: EditableEntity, CR: Sendable, UR: Sendable>: View {
@@ -232,8 +230,13 @@ struct EntityListEditor<E: EditableEntity, CR: Sendable, UR: Sendable>: View {
 
             Group {
                 if self.expertMode.isEnabled, self.editorMode == .raw {
-                    CodeEditor(text: self.$editorContent, theme: self.theme, fontSize: 13)
-                        .bobeRaised(cornerRadius: 16)
+                    CodeEditor(
+                        text: self.$editorContent,
+                        accessibilityLabel: L10n.tr("settings.context_editor.raw.accessibility_format", entity.name),
+                        theme: self.theme,
+                        fontSize: 13
+                    )
+                    .bobeRaised(cornerRadius: 16)
                 } else {
                     GuidedMarkdownEditor(
                         text: self.$editorContent,
@@ -314,9 +317,8 @@ struct EntityListEditor<E: EditableEntity, CR: Sendable, UR: Sendable>: View {
                 let request = self.actions.buildCreateRequest(self.newName.lowercased())
                 let created = try await self.actions.create(request)
                 self.entities.append(created)
-                self.editorState.select(created.id)
                 self.newName = ""
-                self.editorState.setCreating(false)
+                self.editCoordinator.selectCreated(created.id, in: self.$editorState)
             } catch {
                 self.editorState.setError(error)
             }
@@ -325,10 +327,6 @@ struct EntityListEditor<E: EditableEntity, CR: Sendable, UR: Sendable>: View {
 
     private func saveEntity() async -> Bool {
         guard let id = self.editorState.selectedId, !self.editorState.isSaving else { return false }
-        if let message = self.actions.validate(self.editorContent) {
-            self.editorState.setError(EntityValidationError(message: message))
-            return false
-        }
         let submitted = self.editorContent
         let selection = EndpointStore.shared.selection
         self.editorState.setSaving(true)
@@ -398,12 +396,5 @@ struct EntityListEditor<E: EditableEntity, CR: Sendable, UR: Sendable>: View {
             self.editorContent = entity.content
             self.editorState.setDirty(false)
         }
-    }
-}
-
-private struct EntityValidationError: LocalizedError {
-    let message: String
-    var errorDescription: String? {
-        self.message
     }
 }

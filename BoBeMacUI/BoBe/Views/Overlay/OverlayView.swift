@@ -60,6 +60,22 @@ final class OverlayModel {
     var avatarAreaHovered = false
     var satellitesShown = false
     @ObservationIgnored var satelliteHideTask: Task<Void, Never>?
+
+    func forgetMessages(keeping ids: Set<String>) {
+        if self.reachoutInbox.waiting.contains(where: { !ids.contains($0) }) {
+            self.reachoutInbox.prune(keeping: ids)
+        }
+        if self.reachoutKinds.keys.contains(where: { !ids.contains($0) }) {
+            self.reachoutKinds = self.reachoutKinds.filter { ids.contains($0.key) }
+        }
+        if let bubble = self.floatingBubbleMessageId, !ids.contains(bubble) {
+            self.floatingBubbleAutoDismissTask?.cancel()
+            self.floatingBubbleAutoDismissTask = nil
+            self.floatingBubbleTransitionGeneration &+= 1
+            self.floatingBubbleRecedeProgress = 0
+            self.floatingBubbleMessageId = nil
+        }
+    }
 }
 
 struct OverlayView: View {
@@ -234,8 +250,8 @@ struct OverlayView: View {
                     self.openChatManually()
                 }
             }
-            .onChange(of: self.store.messages.count) { oldCount, newCount in
-                self.handleMessagesChange(oldCount: oldCount, newCount: newCount)
+            .onChange(of: self.store.messages.map(\.id)) { _, ids in
+                self.handleMessagesChange(ids)
             }
             .onChange(of: self.store.latestLiveBobeMessageId) { _, messageId in
                 self.handleLiveBobeMessageChange(messageId)

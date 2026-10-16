@@ -211,7 +211,7 @@ struct ProviderConfigurationForm: View {
             }
             .buttonStyle(BobePressStyle())
             .accessibilityIdentifier("provider.advanced")
-            .accessibilityValue(self.showsAdvanced ? "expanded" : "collapsed")
+            .bobeExpansionValue(self.showsAdvanced)
             if self.showsAdvanced {
                 VStack(alignment: .leading, spacing: 8) {
                     self.advancedField(L10n.tr("settings.providers.profile")) {

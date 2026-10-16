@@ -37,7 +37,7 @@ final class BobeStore {
     }
 
     var isCapturing: Bool {
-        self.context.capturing
+        self.settingsStore.settings?.captureEnabled ?? false
     }
 
     var isThinking: Bool {
@@ -145,20 +145,28 @@ final class BobeStore {
 
     private let currentSelection: @MainActor () -> EndpointSelection
     private(set) var selection: EndpointSelection
+    let settingsStore: SettingsStore
     private let sendRequest: @MainActor (EndpointSelection, String, UUID) async throws -> SendMessageResponse
+    let conversationSnapshot: @MainActor (EndpointSelection) async throws -> ConversationSnapshotResponse
     private var endpointObserver: NSObjectProtocol?
     private var eventStreamGeneration: UInt64 = 0
 
     init(
         currentSelection: @escaping @MainActor () -> EndpointSelection = { EndpointStore.shared.selection },
+        settingsStore: SettingsStore = .shared,
         sendRequest: @escaping @MainActor (EndpointSelection, String, UUID) async throws -> SendMessageResponse = {
             selection, content, requestID in
             try await DaemonClient(endpoint: selection.endpoint).sendMessage(content, requestId: requestID)
+        },
+        conversationSnapshot: @escaping @MainActor (EndpointSelection) async throws -> ConversationSnapshotResponse = {
+            try await DaemonClient(endpoint: $0.endpoint).getCurrentConversation()
         }
     ) {
         self.currentSelection = currentSelection
         self.selection = currentSelection()
+        self.settingsStore = settingsStore
         self.sendRequest = sendRequest
+        self.conversationSnapshot = conversationSnapshot
         self.endpointObserver = NotificationCenter.default.addObserver(
             forName: .bobeEndpointIdentityChanged, object: nil, queue: .main
         ) { [weak self] _ in
@@ -359,29 +367,22 @@ final class BobeStore {
     }
 
     func toggleCapture() async -> Bool {
-        await self.setCapture(!self.context.capturing)
+        await self.setCapture(!self.isCapturing)
     }
 
     @discardableResult
     func setCapture(_ enabled: Bool) async -> Bool {
-        var request = SettingsUpdateRequest()
-        request.captureEnabled = enabled
-        do {
-            _ = try await self.client.updateSettings(request)
-            self.updateState { ctx in
-                ctx.capturing = enabled
-            }
-            if enabled, !CGPreflightScreenCaptureAccess() {
-                CGRequestScreenCaptureAccess()
-            }
-            if !enabled {
-                self.screenUnavailableNotice = false
-            }
-            return enabled
-        } catch {
-            bobeStoreLogger.error("Screen awareness change failed: \(error.localizedDescription)")
-            return self.context.capturing
+        guard await self.settingsStore.setCaptureEnabled(enabled) else {
+            bobeStoreLogger.error("Screen awareness change failed")
+            return self.isCapturing
         }
+        if enabled, !CGPreflightScreenCaptureAccess() {
+            CGRequestScreenCaptureAccess()
+        }
+        if !enabled {
+            self.screenUnavailableNotice = false
+        }
+        return enabled
     }
 
     func appendUserVoiceMessage(_ content: String) {

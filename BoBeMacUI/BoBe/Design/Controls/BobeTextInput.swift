@@ -1,13 +1,19 @@
 import SwiftUI
 
-private struct BobeInputChromeModifier: ViewModifier {
+private struct BobeInputFieldModifier: ViewModifier {
     let focused: Bool
     let hovered: Bool
+    let monospacedDigits: Bool
     @Environment(\.theme) private var theme
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: BobeRadius.control, style: .continuous)
+        let font = BobeTextStyle.inputField.font
         content
+            .textFieldStyle(.plain)
+            .font(self.monospacedDigits ? font.monospacedDigit() : font)
+            .foregroundStyle(self.theme.colors.text)
+            .tint(self.theme.colors.primary)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .bobeWell(in: shape)
@@ -33,17 +39,15 @@ private struct BobeFieldModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .textFieldStyle(.plain)
-            .font(.system(size: 13))
             .focused(self.$isFocused)
-            .bobeInputChrome(focused: self.isFocused, hovered: self.isHovered)
+            .bobeInputField(focused: self.isFocused, hovered: self.isHovered)
             .onHover { self.isHovered = $0 }
     }
 }
 
 extension View {
-    func bobeInputChrome(focused: Bool, hovered: Bool) -> some View {
-        modifier(BobeInputChromeModifier(focused: focused, hovered: hovered))
+    func bobeInputField(focused: Bool, hovered: Bool, monospacedDigits: Bool = false) -> some View {
+        modifier(BobeInputFieldModifier(focused: focused, hovered: hovered, monospacedDigits: monospacedDigits))
     }
 
     func bobeField() -> some View {
@@ -75,18 +79,13 @@ struct BobeTextField: View {
         self.onSubmit = onSubmit
     }
 
-    @Environment(\.theme) private var theme
     @FocusState private var isFocused: Bool
     @State private var isHovered = false
 
     var body: some View {
         TextField("", text: self.$text)
         .accessibilityLabel(self.placeholder)
-        .textFieldStyle(.plain)
-        .font(.system(size: 13))
-        .foregroundStyle(self.theme.colors.text)
         .multilineTextAlignment(self.alignment)
-        .tint(self.theme.colors.primary)
         .focused(self.$isFocused)
         .onChange(of: self.focused?.wrappedValue) { _, requested in
             guard let requested else { return }
@@ -105,7 +104,7 @@ struct BobeTextField: View {
         .background(alignment: self.alignment == .trailing ? .trailing : .leading) {
             BobePlaceholder(text: self.placeholder, isVisible: self.text.isEmpty)
         }
-        .bobeInputChrome(focused: self.isFocused, hovered: self.isHovered)
+        .bobeInputField(focused: self.isFocused, hovered: self.isHovered)
         .onHover { self.isHovered = $0 }
         .onSubmit { self.onSubmit?() }
         .frame(width: self.width)
@@ -120,7 +119,7 @@ struct BobePlaceholder: View {
     var body: some View {
         if self.isVisible {
             Text(self.text)
-                .font(.system(size: 13))
+                .bobeTextStyle(.inputField)
                 .foregroundStyle(self.theme.colors.textMuted.opacity(0.75))
                 .lineLimit(1)
                 .allowsHitTesting(false)
@@ -147,22 +146,17 @@ struct BobeSecureField: View {
         self.onSubmit = onSubmit
     }
 
-    @Environment(\.theme) private var theme
     @FocusState private var isFocused: Bool
     @State private var isHovered = false
 
     var body: some View {
         SecureField("", text: self.$text)
         .accessibilityLabel(self.placeholder)
-        .textFieldStyle(.plain)
-        .font(.system(size: 13))
-        .foregroundStyle(self.theme.colors.text)
-        .tint(self.theme.colors.primary)
         .focused(self.$isFocused)
         .background(alignment: .leading) {
             BobePlaceholder(text: self.placeholder, isVisible: self.text.isEmpty)
         }
-        .bobeInputChrome(focused: self.isFocused, hovered: self.isHovered)
+        .bobeInputField(focused: self.isFocused, hovered: self.isHovered)
         .onHover { self.isHovered = $0 }
         .onSubmit { self.onSubmit?() }
         .frame(width: self.width)

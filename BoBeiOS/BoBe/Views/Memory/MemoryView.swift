@@ -6,18 +6,22 @@ struct MemoryView: View {
     @Environment(\.theme) private var theme
 
     private var sections: [MemorySection] {
-        MemorySection.parse(self.model.memory ?? "").filter { !$0.lines.isEmpty }.compactMap { $0.matching(self.query) }
+        MemorySection.parse(self.model.work.memory ?? "").filter { !$0.lines.isEmpty }.compactMap { $0.matching(self.query) }
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if self.model.link == .offline || self.model.link == .removed {
+                    if self.model.needsAttention {
                         ConnectionCard(model: self.model)
+                    } else if self.model.work.memoryLoad.failed, self.model.work.memory != nil {
+                        PhoneTroubleNote(text: L10n.tr("phone.load.stale"))
                     }
-                    if self.model.memory == nil {
-                        if self.model.link == .online {
+                    if self.model.work.memory == nil {
+                        if self.model.work.memoryLoad.failed {
+                            PhoneTroubleNote(text: L10n.tr("phone.memory.failed"))
+                        } else if self.model.isConnected {
                             ProgressView()
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 40)
@@ -56,7 +60,7 @@ struct MemoryView: View {
                             }
                         }
                     }
-                    if self.model.memory != nil {
+                    if self.model.work.memory != nil {
                         Button(L10n.tr("phone.memory.forget")) { self.model.askToForget() }
                             .buttonStyle(.phoneSecondary)
                             .padding(.top, 4)
@@ -74,10 +78,10 @@ struct MemoryView: View {
                     SettingsButton(model: self.model)
                 }
             }
-            .refreshable { await self.model.loadMemory() }
-            .task(id: self.model.link) {
-                if self.model.link == .online {
-                    await self.model.loadMemory()
+            .refreshable { await self.model.work.loadMemory() }
+            .task(id: self.model.isConnected) {
+                if self.model.isConnected {
+                    await self.model.work.loadMemory()
                 }
             }
         }

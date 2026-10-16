@@ -175,7 +175,6 @@
 "settings.shared.restart_banner.message" = "Algumas alterações só passam a valer depois que a BoBe reiniciar.";
 "settings.shared.restart_banner.restart_now" = "Reiniciar agora";
 "settings.shared.section.enabled_format" = "%@ ativado";
-"settings.shared.validation.content_min_length_format" = "O conteúdo deve ter pelo menos %d caracteres";
 "settings.souls.delete.accessibility" = "Excluir soul";
 "settings.souls.empty.description" = "Crie uma para definir a personalidade da BoBe";
 "settings.souls.empty.select" = "Selecione uma soul para editar";
@@ -420,7 +419,6 @@
 "setup.runtime.phase.starting" = "Iniciando a BoBe…";
 "setup.runtime.phase.checking" = "Procurando a BoBe…";
 "setup.runtime.phase.pairing" = "Pareando com segurança…";
-"setup.runtime.phase.saving" = "Salvando a conexão…";
 "setup.runtime.phase.verifying" = "Verificando a conexão…";
 "setup.runtime.retry_connection" = "Tentar de novo";
 "setup.runtime.pair_again" = "Parear de novo";
@@ -511,6 +509,10 @@
 "setup.voice.skip" = "Pular por enquanto";
 "setup.voice.install_button" = "Configurar voz";
 "setup.voice.cancel" = "Cancelar";
+"setup.voice.canceling" = "Cancelando…";
+"setup.voice.cancel_failed_format" = "A BoBe não conseguiu parar o download. %@";
+"setup.voice.cancel_still_running" = "O download ainda está parando. Tente de novo daqui a pouco.";
+"settings.voice.session_restart_failed_format" = "A voz não conseguiu reiniciar com seus novos ajustes. %@";
 "setup.voice.continue" = "Continuar";
 
 "setup.proactivity.title" = "Quanto a BoBe deve estar presente?";
@@ -824,3 +826,10 @@
 "setup.permissions.card.status.allowed" = "Permitido";
 "setup.value.title" = "Oi, eu sou a BoBe";
 "setup.value.continue" = "Começar";
+"app.common.expanded" = "Expandido";
+"app.common.collapsed" = "Recolhido";
+"setup.proactivity.error.not_saved" = "A BoBe não conseguiu salvar essa escolha. Tente de novo.";
+"setup.local.cancel_failed" = "A BoBe não conseguiu parar o download. Tente de novo.";
+"settings.shared.restart_banner.failed" = "A BoBe não conseguiu reiniciar. Tente de novo.";
+"settings.context_editor.raw.accessibility_format" = "Markdown de %@";
+"settings.mcp.editor.accessibility" = "Configuração dos servidores de ferramentas (JSON)";

@@ -97,7 +97,8 @@ extension VoicePipeline {
             }
             guard !Task.isCancelled else { return }
             self.pendingAudioDeviceRebuild = false
-            self.rebuildAudioEngineForDeviceChange()
+            await self.rebuildAudioEngineForDeviceChange()
+            guard !Task.isCancelled else { return }
             self.deviceChangeReconfigureTask = nil
         }
     }
@@ -111,7 +112,7 @@ extension VoicePipeline {
             || self.audioStillPlaying()
     }
 
-    private func rebuildAudioEngineForDeviceChange() {
+    private func rebuildAudioEngineForDeviceChange() async {
         guard self.isWarm else {
             logger.debug("voice: device change while cold — skipping rebuild")
             return
@@ -119,8 +120,10 @@ extension VoicePipeline {
         logger.info("voice: rebuilding audio engine for new default device")
         self.tearDownAudio()
         do {
-            try self.configureEngine()
+            try await self.configureEngine()
             self.isWarm = true
+        } catch is CancellationError {
+            logger.debug("voice: device rebuild superseded")
         } catch {
             self.lastError = "voice device-change rebuild: \(error.localizedDescription)"
             logger.error(

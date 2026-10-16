@@ -159,13 +159,12 @@ struct MCPServer: Identifiable, Codable, Sendable {
     let name: String
     let command: String
     let args: [String]
-    var connected: Bool
     var status: String?
     var enabled: Bool
     var error: String?
 
     enum CodingKeys: String, CodingKey {
-        case name, command, args, connected, enabled, error, status
+        case name, command, args, enabled, error, status
     }
 }
 
@@ -181,11 +180,9 @@ struct MCPConfigDocumentResponse: Codable, Sendable {
 
 struct MCPConfigMutationRequest: Codable, Sendable {
     let rawJson: String
-    var secretKeys: [String: [String]]?
 
     enum CodingKeys: String, CodingKey {
         case rawJson = "raw_json"
-        case secretKeys = "secret_keys"
     }
 }
 

@@ -8,18 +8,30 @@ enum VoiceSttPreference: String, CaseIterable, Sendable {
     case daemon
 
     var placement: SpeechPlacementOverrideWire {
-        self == .daemon ? .daemon : .auto
+        switch self {
+        case .automatic: .auto
+        case .appleSpeech, .fluidAudio: .endpoint
+        case .daemon: .daemon
+        }
     }
 
     var usesEndpointEngine: Bool {
         self != .daemon
     }
 
+    var allowsDaemonRecognition: Bool {
+        self == .automatic || self == .daemon
+    }
+
     func speechRecognitionReady(
         endpointReady: Bool,
         daemonReady: Bool
     ) -> Bool {
-        self == .daemon ? daemonReady : endpointReady || daemonReady
+        switch self {
+        case .automatic: endpointReady || daemonReady
+        case .appleSpeech, .fluidAudio: endpointReady
+        case .daemon: daemonReady
+        }
     }
 
     var label: String {

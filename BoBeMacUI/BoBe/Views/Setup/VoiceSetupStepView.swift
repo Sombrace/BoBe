@@ -9,10 +9,10 @@ struct VoiceSetupStepView: View {
     @State private var errorMessage: String?
     @State private var installTask: Task<Void, Never>?
     @State private var installGeneration: UInt64 = 0
-    @State private var cancelingInstall = false
+    @State private var cancelError: String?
 
     enum Phase {
-        case checking, idle, installing, complete, failed
+        case checking, idle, installing, canceling, complete, failed
     }
 
     private var showsVoiceModel: Bool {
@@ -49,7 +49,6 @@ struct VoiceSetupStepView: View {
             Spacer()
 
             self.actionRow
-                .disabled(self.cancelingInstall)
         }
         .task { await self.refreshStatus() }
         .onDisappear {
@@ -69,6 +68,14 @@ struct VoiceSetupStepView: View {
             self.installPrompt
         case .installing:
             self.progressList
+        case .canceling:
+            HStack(spacing: 10) {
+                BobeSpinner(size: 14)
+                Text(L10n.tr("setup.voice.canceling"))
+                    .bobeTextStyle(.setupBody)
+                    .foregroundStyle(self.theme.colors.textMuted)
+            }
+            .padding(.top, 20)
         case .complete:
             self.completeSummary
         case .failed:
@@ -109,6 +116,12 @@ struct VoiceSetupStepView: View {
                 Spacer()
             }
             .padding(.horizontal, 4)
+            if let cancelError = self.cancelError {
+                Text(cancelError)
+                    .bobeTextStyle(.setupBody)
+                    .foregroundStyle(self.theme.colors.primary)
+                    .multilineTextAlignment(.center)
+            }
         }
         .task { await self.awaitInstall() }
     }
@@ -162,17 +175,13 @@ struct VoiceSetupStepView: View {
             }
         case .installing:
             Button(L10n.tr("setup.voice.cancel")) {
-                self.installGeneration &+= 1
-                self.installTask?.cancel()
-                self.installTask = nil
-                self.phase = .idle
-                self.cancelingInstall = true
-                Task {
-                    await self.installer.cancel()
-                    self.cancelingInstall = false
-                }
+                Task { await self.cancelInstall() }
             }
             .bobeButton(.secondary, size: .regular)
+        case .canceling:
+            Button(L10n.tr("setup.voice.canceling")) {}
+                .bobeButton(.secondary, size: .regular)
+                .disabled(true)
         case .complete:
             Button(L10n.tr("setup.voice.continue"), action: self.onContinue)
                 .bobeButton(.primary, size: .regular)
@@ -195,6 +204,22 @@ struct VoiceSetupStepView: View {
         self.onContinue()
     }
 
+    private func cancelInstall() async {
+        guard self.phase == .installing else { return }
+        self.installGeneration &+= 1
+        self.installTask?.cancel()
+        self.installTask = nil
+        self.cancelError = nil
+        self.phase = .canceling
+        do {
+            try await self.installer.cancel()
+            await self.refreshStatus()
+        } catch {
+            self.cancelError = L10n.tr("setup.voice.cancel_failed_format", error.localizedDescription)
+            self.phase = .installing
+        }
+    }
+
     private func refreshStatus() async {
         self.errorMessage = nil
         self.phase = .checking
@@ -206,9 +231,10 @@ struct VoiceSetupStepView: View {
     }
 
     private func kickoff() async {
-        guard self.phase != .installing else { return }
+        guard self.phase != .installing, self.phase != .canceling else { return }
         self.installGeneration &+= 1
         let generation = self.installGeneration
+        self.cancelError = nil
         self.phase = .installing
         do {
             try await self.installer.installSelected()

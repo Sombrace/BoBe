@@ -108,11 +108,29 @@ targets:
             exit 1
           fi
           cd "${PROJECT_DIR}" && "$SWIFTLINT" lint --quiet
+  BoBeTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/BoBeTests
+    dependencies:
+      - target: BoBe
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.bobe.ios.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/BoBe.app/BoBe"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
 
 schemes:
   BoBe:
     build:
       targets:
         BoBe: all
+        BoBeTests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - BoBeTests

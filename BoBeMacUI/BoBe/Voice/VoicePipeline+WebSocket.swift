@@ -65,6 +65,8 @@ extension VoicePipeline {
             }
             self.sessionSpeechPlan = plan
             self.handshakeComplete = true
+            self.renegotiating = false
+            self.sessionRestartError = nil
             logger.info(
                 "voice.speech_plan stt=\(plan.sttSite.rawValue, privacy: .public) tts=\(plan.ttsSite.rawValue, privacy: .public)"
             )
@@ -89,8 +91,8 @@ extension VoicePipeline {
             self.partialTranscript = text
         case let .sttFinal(_, text):
             self.partialTranscript = text
-        case let .state(phase, _):
-            self.applyPhase(phase)
+        case let .state(phase, turnId):
+            self.applyPhase(phase, turnId: turnId)
         case let .transcriptFinal(_, transcript):
             self.partialTranscript = ""
             if !transcript.isEmpty {
@@ -98,19 +100,19 @@ extension VoicePipeline {
             }
         case let .ttsEnd(turnId):
             self.partialTranscript = ""
-            if self.clientTtsTurnId == turnId {
+            if self.sessionSpeechPlan?.ttsSite == .endpoint {
                 await self.finishClientTtsTurn(turnId: turnId)
             } else {
                 self.reportServerPlaybackDrained(turnId: turnId)
             }
         case let .ttsText(turnId, sequence, text):
             await self.enqueueClientTts(turnId: turnId, sequence: sequence, text: text)
-        case .truncate:
-            if self.sessionSpeechPlan?.ttsSite == .endpoint {
-                self.cancelClientTtsTurn()
-            } else {
-                self.truncatePlayback()
+        case let .truncate(turnId, _):
+            if let playback = self.replyPlayback, playback.turnId != turnId {
+                logger.debug("voice.stale_truncate_ignored")
+                return
             }
+            self.stopReplyPlayback()
         case let .error(code, message):
             let reason = "\(code): \(message)"
             self.terminalServerErrorCode = code
@@ -158,13 +160,13 @@ extension VoicePipeline {
             && plan.downlink == .audio
     }
 
-    private func applyPhase(_ phase: VoicePhaseWire) {
-        switch phase {
-        case .idle:
-            if self.state != .idle {
-                self.state = .idle
-            }
-            self.stopTtsLevelDecay()
+    private func applyPhase(_ phase: VoicePhaseWire, turnId: String) {
+        guard let next = State(serverPhase: phase) else {
+            logger.info("voice.session_closed_by_daemon")
+            self.tearDownConnection(finalState: .idle, sendAbort: false)
+            return
+        }
+        switch next {
         case .listening:
             if self.clientTtsActive {
                 self.pendingServerListening = true
@@ -194,7 +196,12 @@ extension VoicePipeline {
                 self.startTtsLevelDecay()
                 self.state = .speaking
             }
+            if self.replyPlayback?.turnId != turnId {
+                self.replyPlayback = ReplyPlayback(turnId: turnId)
+            }
             self.ensureDecoder()
+        case .idle, .connecting, .capturing, .cancelling, .failed:
+            break
         }
     }
 

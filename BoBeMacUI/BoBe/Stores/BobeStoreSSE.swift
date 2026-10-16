@@ -1,57 +1,79 @@
 import Foundation
 
+enum CanonicalConversationReload: Equatable {
+    case applied
+    case skipped
+    case unavailable
+}
+
 extension BobeStore {
     @discardableResult
     func processBundle(_ bundle: StreamBundle) async -> Bool {
+        do {
+            return try await self.apply(bundle)
+        } catch {
+            bobeStoreLogger.error(
+                "Malformed \(bundle.type.rawValue, privacy: .public) event left unacknowledged: \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
+    }
+
+    private func apply(_ bundle: StreamBundle) async throws -> Bool {
         switch bundle.type {
         case .indicator:
-            if let payload = try? bundle.payload.decode(as: IndicatorPayload.self) {
-                if payload.indicator == .idle {
-                    self.eventSnapshotRecoveryActive = false
-                }
-                self.handleIndicator(payload)
+            let payload = try bundle.payload.decode(as: IndicatorPayload.self)
+            if payload.indicator == .idle {
+                self.eventSnapshotRecoveryActive = false
             }
+            self.handleIndicator(payload)
         case .textDelta:
-            if let payload = try? bundle.payload.decode(as: TextDeltaPayload.self),
-               !self.eventSnapshotRecoveryActive || payload.done {
+            let payload = try bundle.payload.decode(as: TextDeltaPayload.self)
+            if !self.eventSnapshotRecoveryActive || payload.done {
                 self.handleTextDelta(payload, messageId: bundle.messageId)
                 if payload.done {
                     self.eventSnapshotRecoveryActive = false
                 }
             }
-        case .toolCallStart, .toolCallComplete:
+        case .toolCallStart:
+            let payload = try bundle.payload.decode(as: ToolCallStartPayload.self)
             if !self.eventSnapshotRecoveryActive {
-                self.handleToolCall(bundle.payload)
+                self.toolExecutionController.start(payload)
+            }
+        case .toolCallComplete:
+            let payload = try bundle.payload.decode(as: ToolCallCompletePayload.self)
+            if !self.eventSnapshotRecoveryActive {
+                self.toolExecutionController.complete(payload)
             }
         case .conversationClosed:
-            if let payload = try? bundle.payload.decode(as: ConversationClosedPayload.self) {
-                self.handleConversationClosed(payload)
-            }
+            self.handleConversationClosed(try bundle.payload.decode(as: ConversationClosedPayload.self))
         case .conversationChanged:
-            if let payload = try? bundle.payload.decode(as: ConversationChangedPayload.self),
-               await self.reloadCanonicalConversation(expectedId: payload.conversationId) {
+            let payload = try bundle.payload.decode(as: ConversationChangedPayload.self)
+            bobeStoreLogger.info("Conversation \(payload.conversationId) changed; loading the current conversation")
+            switch await self.reloadCanonicalConversation() {
+            case .applied:
                 self.eventSnapshotRecoveryActive = false
+            case .skipped:
+                break
+            case .unavailable:
+                return false
             }
         case .snapshotRequired:
-            guard let payload = try? bundle.payload.decode(as: SnapshotRequiredPayload.self),
-                  payload.snapshotRequired
-            else { return false }
+            let payload = try bundle.payload.decode(as: SnapshotRequiredPayload.self)
+            guard payload.snapshotRequired else { return false }
             bobeStoreLogger.warning("Event stream snapshot required: \(payload.reason)")
             self.eventSnapshotRecoveryActive = true
-            guard await self.reloadCanonicalConversation(replacingActiveStream: true) else {
+            guard await self.reloadCanonicalConversation(replacingActiveStream: true) == .applied else {
                 bobeStoreLogger.error("Event stream snapshot recovery failed")
                 return false
             }
             self.eventSnapshotRecoveryActive = false
         case .error:
+            let payload = try bundle.payload.decode(as: ErrorPayload.self)
             self.eventSnapshotRecoveryActive = false
-            if let payload = try? bundle.payload.decode(as: ErrorPayload.self) {
-                self.handleErrorPayload(payload, messageId: bundle.messageId)
-            }
+            self.handleErrorPayload(payload, messageId: bundle.messageId)
         case .bodyRequest:
-            if let payload = try? bundle.payload.decode(as: BodyRequestPayload.self) {
-                self.handleBodyRequest(payload)
-            }
+            self.handleBodyRequest(try bundle.payload.decode(as: BodyRequestPayload.self))
         case .unknown:
             break
         }
@@ -219,10 +241,6 @@ extension BobeStore {
         }
     }
 
-    private func handleToolCall(_ payload: AnyCodablePayload) {
-        self.toolExecutionController.process(payload)
-    }
-
     private func handleConversationClosed(_ payload: ConversationClosedPayload) {
         bobeStoreLogger.info("Conversation closed: \(payload.conversationId) (\(payload.reason), \(payload.turnCount) turns)")
         self.updateState {
@@ -236,12 +254,10 @@ extension BobeStore {
 
     @discardableResult
     func reloadCanonicalConversation(
-        expectedId: String? = nil,
         replacingActiveStream: Bool = false
-    ) async -> Bool {
+    ) async -> CanonicalConversationReload {
         self.synchronizeEndpoint()
         let selection = self.selection
-        let client = DaemonClient(endpoint: selection.endpoint)
         let interrupted = replacingActiveStream
             ? self.freezeActiveStreamBeforeCanonicalReplacement()
             : nil
@@ -250,22 +266,19 @@ extension BobeStore {
         let mutationRevision = self.conversationMutationRevision
         let streamRevision = self.streamMutationRevision
         do {
-            let snapshot = try await client.getCurrentConversation()
-            guard self.isCurrent(selection), generation == self.conversationReloadGeneration,
+            let snapshot = try await self.conversationSnapshot(selection)
+            guard self.isCurrent(selection) else { return .unavailable }
+            guard generation == self.conversationReloadGeneration,
                   mutationRevision == self.conversationMutationRevision,
                   streamRevision == self.streamMutationRevision
             else {
-                return false
-            }
-            if let expectedId, snapshot.conversationId != expectedId {
-                bobeStoreLogger.warning("Conversation resync ignored a stale change event")
-                return false
+                return .skipped
             }
             guard replacingActiveStream
                 || (self.streamingMessageId == nil && self.context.currentMessage.isEmpty)
             else {
                 bobeStoreLogger.info("Conversation resync deferred during active streaming")
-                return false
+                return .skipped
             }
             let existingIds = Set(snapshot.turns.map(\.id))
             let pending = snapshot.pendingUpdates.filter { !existingIds.contains($0.id) }
@@ -287,12 +300,12 @@ extension BobeStore {
                 context.toolExecutions = []
                 context.conversationEnding = false
             }
-            return true
+            return .applied
         } catch {
             bobeStoreLogger.error(
                 "Conversation resync failed: \(error.localizedDescription, privacy: .public)"
             )
-            return false
+            return .unavailable
         }
     }
 

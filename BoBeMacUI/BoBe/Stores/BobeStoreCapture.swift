@@ -5,25 +5,16 @@ import Foundation
 extension BobeStore {
     func synchronizeCaptureStartup() {
         let selection = self.selection
-        let client = DaemonClient(endpoint: selection.endpoint)
+        let settingsStore = self.settingsStore
         self.captureStartupTask?.cancel()
         self.captureStartupTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let settings = try await client.getSettings()
-                guard self.isCurrent(selection), !Task.isCancelled else { return }
-
-                if settings.captureEnabled, !CGPreflightScreenCaptureAccess() {
-                    CGRequestScreenCaptureAccess()
-                    bobeStoreLogger.warning("Screen capture permission not granted")
-                }
-                self.updateState { ctx in
-                    ctx.capturing = settings.captureEnabled
-                }
-            } catch {
-                guard self.isCurrent(selection), !Task.isCancelled else { return }
-                bobeStoreLogger.warning("Capture startup sync skipped: \(error.localizedDescription)")
-            }
+            await settingsStore.refresh()
+            guard let self, self.isCurrent(selection), !Task.isCancelled,
+                  settingsStore.settings?.captureEnabled == true,
+                  !CGPreflightScreenCaptureAccess()
+            else { return }
+            CGRequestScreenCaptureAccess()
+            bobeStoreLogger.warning("Screen capture permission not granted")
         }
     }
 

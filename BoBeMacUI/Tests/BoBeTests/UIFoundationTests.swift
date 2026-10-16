@@ -1,6 +1,22 @@
 @testable import BoBe
 import Foundation
+import SwiftUI
 import Testing
+
+@MainActor
+private final class EditorStateBox {
+    var state = SettingsEditorState<String>()
+
+    init(selectedId: String) {
+        self.state.select(selectedId)
+        self.state.setDirty()
+        self.state.setCreating(true)
+    }
+
+    var binding: Binding<SettingsEditorState<String>> {
+        Binding(get: { self.state }, set: { self.state = $0 })
+    }
+}
 
 @Suite("UI foundations", .serialized)
 struct UIFoundationTests {
@@ -231,6 +247,54 @@ struct UIFoundationTests {
         coordinator.cancelTransition()
         #expect(!transitioned)
         #expect(coordinator.isDirty)
+    }
+
+    @Test
+    @MainActor
+    func creatingAnEntityAsksBeforeReplacingAnotherUnsavedDraft() {
+        let coordinator = SettingsEditCoordinator.shared
+        let editor = EditorStateBox(selectedId: "soul-a")
+        var discarded = false
+        coordinator.register(isDirty: true, save: { true }, discard: {
+            discarded = true
+            editor.state.setDirty(false)
+        })
+
+        coordinator.selectCreated("soul-b", in: editor.binding)
+
+        #expect(editor.state.selectedId == "soul-a")
+        #expect(editor.state.isDirty)
+        #expect(!editor.state.isCreating)
+        #expect(coordinator.showsConfirmation)
+
+        coordinator.discardAndContinue()
+
+        #expect(discarded)
+        #expect(editor.state.selectedId == "soul-b")
+        #expect(!editor.state.isDirty)
+        coordinator.unregister()
+    }
+
+    @Test
+    @MainActor
+    func creatingAGoalKeepsOrSavesTheOpenDraftBeforeSelectingIt() async {
+        let coordinator = SettingsEditCoordinator.shared
+        let editor = EditorStateBox(selectedId: "goal-a")
+        coordinator.register(isDirty: true, save: { true }, discard: {})
+
+        coordinator.selectCreated("goal-b", in: editor.binding)
+        coordinator.cancelTransition()
+
+        #expect(editor.state.selectedId == "goal-a")
+        #expect(editor.state.isDirty)
+
+        coordinator.selectCreated("goal-c", in: editor.binding)
+        await coordinator.saveAndContinue()
+
+        #expect(editor.state.selectedId == "goal-c")
+        #expect(!editor.state.isDirty)
+        #expect(!coordinator.showsConfirmation)
+        coordinator.unregister()
     }
 
     @Test

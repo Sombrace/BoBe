@@ -158,13 +158,6 @@ actor FluidAudioNemotronStt: VoiceSttEngine {
         }
     }
 
-    func finish() async throws -> String {
-        self.eouTimer?.cancel()
-        self.eouTimer = nil
-        guard let manager = self.manager else { return "" }
-        return try await manager.finish()
-    }
-
     func reset() async throws {
         self.eouTimer?.cancel()
         self.eouTimer = nil

@@ -18,7 +18,6 @@ private let memoryConsolidationDeltaThreshold = 200
 struct MemoriesEditor: View {
     @State private var text = ""
     @State private var savedText = ""
-    @State private var bytes = 0
     @State private var isLoading = false
     @State private var isSaving = false
     @State private var status: String?
@@ -107,9 +106,17 @@ struct MemoriesEditor: View {
                 .frame(maxWidth: .infinity, minHeight: 360, alignment: .center)
             } else {
                 if self.expertMode.isEnabled, self.editorMode == .raw {
-                    CodeEditor(text: self.$text, theme: self.theme, fontSize: 13)
-                        .frame(minHeight: 360, maxHeight: .infinity)
-                        .bobeRaised(cornerRadius: 16)
+                    CodeEditor(
+                        text: self.$text,
+                        accessibilityLabel: L10n.tr(
+                            "settings.context_editor.raw.accessibility_format",
+                            L10n.tr("settings.memory.title")
+                        ),
+                        theme: self.theme,
+                        fontSize: 13
+                    )
+                    .frame(minHeight: 360, maxHeight: .infinity)
+                    .bobeRaised(cornerRadius: 16)
                 } else {
                     GuidedMarkdownEditor(
                         text: self.$text,
@@ -198,7 +205,6 @@ struct MemoriesEditor: View {
             let resp = try await DaemonClient.shared.getMemory()
             self.text = resp.content
             self.savedText = resp.content
-            self.bytes = resp.bytes
             self.status = nil
             self.statusIsError = false
         } catch {
@@ -220,7 +226,6 @@ struct MemoriesEditor: View {
             guard EndpointStore.shared.selection == selection else { return false }
             self.savedText = resp.content
             self.text = reconcileSavedDraft(current: self.text, submitted: submitted, saved: resp.content)
-            self.bytes = resp.bytes
             self.statusIsError = false
             self.status = L10n.tr("settings.memory.saved")
             self.consolidationHintShown = abs(resp.bytes - sentLength) > memoryConsolidationDeltaThreshold

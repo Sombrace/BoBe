@@ -42,6 +42,8 @@
 "phone.status.connecting" = "Wird verbunden…";
 "phone.status.offline" = "Offline";
 "phone.status.removed" = "Nicht gekoppelt";
+"phone.status.setting_up" = "Einrichtung wird abgeschlossen";
+"phone.status.update" = "Update nötig";
 "phone.status.replying" = "Antwortet…";
 "phone.status.working" = "Arbeitet daran…";
 "phone.status.thinking" = "Denkt nach…";
@@ -59,10 +61,16 @@
 "phone.thread.trouble" = "Das hat nicht geklappt. Versuch es noch einmal.";
 "phone.thread.reached_out" = "BoBe hat sich gemeldet";
 "phone.thread.retry" = "Nicht gesendet. Tippen zum Wiederholen";
+"phone.thread.unconfirmed" = "Diese Nachricht ist vielleicht nicht angekommen. Sieh im Gespräch nach, bevor du sie noch einmal sendest.";
+"phone.thread.send_again" = "Erneut senden";
 "phone.connection.offline.title" = "BoBe ist nicht erreichbar";
 "phone.connection.removed.title" = "Dieses iPhone ist nicht gekoppelt";
 "phone.connection.retry" = "Erneut versuchen";
 "phone.connection.pair_again" = "Erneut koppeln";
+"phone.connection.setting_up.title" = "BoBe wird noch eingerichtet";
+"phone.connection.setting_up.body" = "Du kannst chatten, sobald die Einrichtung abgeschlossen ist.";
+"phone.connection.incompatible.title" = "Ein Update ist nötig";
+"phone.connection.incompatible.body" = "Aktualisiere diese App und BoBe auf deinem Computer und versuch es dann noch einmal.";
 "phone.question.label" = "BoBe fragt";
 "phone.question.placeholder" = "Deine Antwort";
 "phone.question.send" = "Antwort senden";
@@ -81,6 +89,7 @@
 "phone.talk.permission" = "Schalte in den Einstellungen Mikrofon und Spracherkennung ein.";
 "phone.settings.title" = "Einstellungen";
 "phone.settings.address" = "Adresse";
+"phone.settings.forget_pending" = "Deine bisherige BoBe hat dieses iPhone noch nicht vergessen. Das passiert, sobald dieses iPhone sie erreicht.";
 "phone.settings.voice" = "Sprechen";
 "phone.settings.unpair" = "Dieses iPhone entkoppeln";
 "phone.settings.unpair.title" = "Dieses iPhone entkoppeln?";
@@ -94,7 +103,9 @@
 "phone.work.needs_you" = "Braucht dich";
 "phone.work.goals" = "Ziele";
 "phone.work.goals.empty" = "Noch keine Ziele.";
+"phone.work.goals.failed" = "Ziele konnten nicht geladen werden.";
 "phone.work.loading" = "Wird geladen…";
+"phone.load.stale" = "Einiges konnte nicht aktualisiert werden. Zum Wiederholen nach unten ziehen.";
 "phone.work.goals.new" = "Neues Ziel";
 "phone.work.coming_up" = "Demnächst";
 "phone.work.recently" = "Zuletzt";
@@ -134,6 +145,7 @@
 "phone.schedule.repeats" = "Wiederholt sich";
 "phone.memory.title" = "Gedächtnis";
 "phone.memory.empty" = "Noch nichts.";
+"phone.memory.failed" = "Das Gedächtnis konnte nicht geladen werden. Zum Wiederholen nach unten ziehen.";
 "phone.memory.no_match" = "Keine Treffer.";
 "phone.memory.forget" = "Etwas vergessen lassen";
 "phone.memory.forget.prefill" = "Bitte vergiss ";

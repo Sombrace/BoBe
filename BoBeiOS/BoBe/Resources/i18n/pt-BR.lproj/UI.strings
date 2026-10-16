@@ -42,6 +42,8 @@
 "phone.status.connecting" = "Conectando…";
 "phone.status.offline" = "Sem conexão";
 "phone.status.removed" = "Não emparelhado";
+"phone.status.setting_up" = "Concluindo a configuração";
+"phone.status.update" = "Precisa de atualização";
 "phone.status.replying" = "Respondendo…";
 "phone.status.working" = "Trabalhando nisso…";
 "phone.status.thinking" = "Pensando…";
@@ -59,10 +61,16 @@
 "phone.thread.trouble" = "Não deu certo. Tente de novo.";
 "phone.thread.reached_out" = "A BoBe puxou conversa";
 "phone.thread.retry" = "Não enviada. Toque para tentar de novo";
+"phone.thread.unconfirmed" = "Esta mensagem pode não ter sido enviada. Confira a conversa antes de enviá-la de novo.";
+"phone.thread.send_again" = "Enviar de novo";
 "phone.connection.offline.title" = "Não é possível falar com a BoBe";
 "phone.connection.removed.title" = "Este iPhone não está emparelhado";
 "phone.connection.retry" = "Tentar de novo";
 "phone.connection.pair_again" = "Emparelhar de novo";
+"phone.connection.setting_up.title" = "A BoBe ainda está sendo configurada";
+"phone.connection.setting_up.body" = "Você poderá conversar quando a configuração terminar.";
+"phone.connection.incompatible.title" = "É preciso atualizar";
+"phone.connection.incompatible.body" = "Atualize este app e a BoBe no seu computador e tente de novo.";
 "phone.question.label" = "A BoBe pergunta";
 "phone.question.placeholder" = "Sua resposta";
 "phone.question.send" = "Enviar resposta";
@@ -81,6 +89,7 @@
 "phone.talk.permission" = "Ative Microfone e Reconhecimento de Fala nos Ajustes.";
 "phone.settings.title" = "Ajustes";
 "phone.settings.address" = "Endereço";
+"phone.settings.forget_pending" = "Sua BoBe anterior ainda não esqueceu este iPhone. Isso vai acontecer quando este iPhone conseguir falar com ela.";
 "phone.settings.voice" = "Voz";
 "phone.settings.unpair" = "Desemparelhar este iPhone";
 "phone.settings.unpair.title" = "Desemparelhar este iPhone?";
@@ -94,7 +103,9 @@
 "phone.work.needs_you" = "Precisa de você";
 "phone.work.goals" = "Metas";
 "phone.work.goals.empty" = "Nenhuma meta ainda.";
+"phone.work.goals.failed" = "Não foi possível carregar as metas.";
 "phone.work.loading" = "Carregando…";
+"phone.load.stale" = "Parte disto não pôde ser atualizada. Puxe para baixo para tentar de novo.";
 "phone.work.goals.new" = "Nova meta";
 "phone.work.coming_up" = "Em breve";
 "phone.work.recently" = "Recentes";
@@ -134,6 +145,7 @@
 "phone.schedule.repeats" = "Repete";
 "phone.memory.title" = "Memória";
 "phone.memory.empty" = "Nada ainda.";
+"phone.memory.failed" = "Não foi possível carregar a memória. Puxe para baixo para tentar de novo.";
 "phone.memory.no_match" = "Nenhum resultado.";
 "phone.memory.forget" = "Esquecer algo";
 "phone.memory.forget.prefill" = "Por favor, esqueça ";

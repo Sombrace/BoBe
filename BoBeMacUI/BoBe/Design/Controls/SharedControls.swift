@@ -56,6 +56,18 @@ struct BobeHairline: View {
     }
 }
 
+enum BobeExpansion {
+    static func accessibilityValue(isExpanded: Bool) -> String {
+        L10n.tr(isExpanded ? "app.common.expanded" : "app.common.collapsed")
+    }
+}
+
+extension View {
+    func bobeExpansionValue(_ isExpanded: Bool) -> some View {
+        self.accessibilityValue(BobeExpansion.accessibilityValue(isExpanded: isExpanded))
+    }
+}
+
 struct BobeDisclosure<Content: View>: View {
     let title: String
     private let external: Binding<Bool>?
@@ -98,7 +110,7 @@ struct BobeDisclosure<Content: View>: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(BobePressStyle(scale: 0.99))
-            .accessibilityValue(self.isExpanded ? "expanded" : "collapsed")
+            .bobeExpansionValue(self.isExpanded)
             if self.isExpanded {
                 self.content
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -273,45 +285,74 @@ struct ThemedSplitPane<Left: View, Right: View>: View {
     }
 }
 
+@MainActor
+final class NumberInputDebouncer {
+    private let delay: Duration
+    private var task: Task<Void, Never>?
+
+    init(delay: Duration = .milliseconds(600)) {
+        self.delay = delay
+    }
+
+    static func value(from text: String, in range: ClosedRange<Int>) -> Int? {
+        guard let parsed = Int(text), range.contains(parsed) else { return nil }
+        return parsed
+    }
+
+    func schedule(_ text: String, in range: ClosedRange<Int>, commit: @escaping @MainActor (Int) -> Void) {
+        self.task?.cancel()
+        let delay = self.delay
+        self.task = Task { @MainActor in
+            do {
+                try await Task.sleep(for: delay)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled, let value = Self.value(from: text, in: range) else { return }
+            commit(value)
+        }
+    }
+
+    func commitNow(_ text: String, in range: ClosedRange<Int>, commit: (Int) -> Void) {
+        self.cancel()
+        guard let value = Self.value(from: text, in: range) else { return }
+        commit(value)
+    }
+
+    func cancel() {
+        self.task?.cancel()
+        self.task = nil
+    }
+}
+
 struct DebouncedNumberInput: View {
     @Binding var value: Int
+    let accessibilityLabel: String
     var range: ClosedRange<Int> = 0 ... 9999
     var width: CGFloat = 80
 
     @State private var text = ""
-    @State private var debounceTask: Task<Void, Never>?
+    @State private var debouncer = NumberInputDebouncer()
     @FocusState private var isFocused: Bool
     @State private var isHovered = false
-    @Environment(\.theme) private var theme
 
     var body: some View {
         TextField("", text: self.$text)
-            .textFieldStyle(.plain)
-            .font(.system(size: 13, weight: .medium).monospacedDigit())
+            .accessibilityLabel(self.accessibilityLabel)
             .multilineTextAlignment(.trailing)
-            .foregroundStyle(self.theme.colors.text)
-            .tint(self.theme.colors.primary)
             .focused(self.$isFocused)
-            .bobeInputChrome(focused: self.isFocused, hovered: self.isHovered)
+            .bobeInputField(focused: self.isFocused, hovered: self.isHovered, monospacedDigits: true)
             .onHover { self.isHovered = $0 }
             .frame(width: self.width)
             .onChange(of: self.text) { _, newText in
                 guard self.isFocused else { return }
-                self.debounceTask?.cancel()
-                self.debounceTask = Task { @MainActor in
-                    try? await Task.sleep(for: .seconds(0.6))
-                    if let parsed = Int(newText), range.contains(parsed) {
-                        self.value = parsed
-                    }
-                }
+                self.debouncer.schedule(newText, in: self.range) { self.value = $0 }
             }
             .onSubmit {
-                self.debounceTask?.cancel()
-                if let parsed = Int(text), range.contains(parsed) {
-                    self.value = parsed
-                }
+                self.debouncer.commitNow(self.text, in: self.range) { self.value = $0 }
             }
             .onAppear { self.text = String(self.value) }
+            .onDisappear { self.debouncer.cancel() }
             .onChange(of: self.value) { _, newVal in
                 guard !self.isFocused else { return }
                 let str = String(newVal)
@@ -419,7 +460,7 @@ struct CollapsibleSection<Content: View>: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityValue(self.isExpanded ? L10n.tr("settings.providers.on") : L10n.tr("settings.providers.off"))
+            .bobeExpansionValue(self.isExpanded)
 
             if let toggleBinding {
                 BobeToggle(
@@ -473,7 +514,7 @@ struct CollapsibleSection<Content: View>: View {
     #Preview("DebouncedNumberInput") {
         @Previewable @State var value = 4096
         SettingsRow(label: "Max Tokens") {
-            DebouncedNumberInput(value: $value, range: 1 ... 8192)
+            DebouncedNumberInput(value: $value, accessibilityLabel: "Max Tokens", range: 1 ... 8192)
         }
         .environment(\.theme, allThemes[0])
         .padding()

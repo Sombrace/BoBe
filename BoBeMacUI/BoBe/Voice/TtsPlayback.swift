@@ -30,20 +30,17 @@ extension VoicePipeline {
     }
 
     func handleAudioFrame(_ bytes: Data) {
+        guard self.replyPlayback?.failed != true else { return }
         guard let parsed = TtsFrameHeader.parse(bytes) else {
             logger.warning("voice.malformed_tts_frame size=\(bytes.count)")
+            self.failReplyPlayback("decode: malformed reply audio frame")
             return
         }
         guard let format = self.ttsOutputFormat else { return }
         let selectedDecoder: OpusDecoder?
         if parsed.header.isFiller {
             if parsed.header.chunkId == 0 {
-                do {
-                    self.fillerDecoder = try OpusDecoder(outputFormat: format)
-                } catch {
-                    self.lastError = "decoder init: \(error.localizedDescription)"
-                    return
-                }
+                self.fillerDecoder = try? OpusDecoder(outputFormat: format)
             }
             selectedDecoder = self.fillerDecoder
         } else {
@@ -51,9 +48,12 @@ extension VoicePipeline {
             self.ensureDecoder()
             selectedDecoder = self.decoder
         }
-        guard let decoder = selectedDecoder else { return }
-        guard let outBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_440)
-        else { return }
+        guard let decoder = selectedDecoder,
+              let outBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1_440)
+        else {
+            self.dropUndecodableFrame(isFiller: parsed.header.isFiller, reason: "decoder unavailable")
+            return
+        }
         do {
             try parsed.payload.withUnsafeBytes { raw in
                 let typed = UnsafeBufferPointer(
@@ -62,22 +62,51 @@ extension VoicePipeline {
                 )
                 try decoder.decode(typed, to: outBuffer)
             }
-            let chunk = ScheduledTtsChunk(
-                chunkId: parsed.header.chunkId,
-                buffer: outBuffer,
-                startFrame: Playhead.startFrame(
-                    scheduledThrough: self.nextScheduleFrame,
-                    played: self.playedFramesThisTurn()
-                ),
-                isFiller: parsed.header.isFiller
-            )
-            self.noteScheduled(chunk)
-            self.playerNode.scheduleBuffer(outBuffer, completionHandler: nil)
-            self.schedulePlaybackAcknowledgement(chunkId: parsed.header.chunkId)
-            self.trimPlayedChunks()
         } catch {
-            self.lastError = "decode: \(error.localizedDescription)"
-            logger.error("decode: \(error.localizedDescription, privacy: .public)")
+            self.dropUndecodableFrame(isFiller: parsed.header.isFiller, reason: error.localizedDescription)
+            return
+        }
+        let chunk = ScheduledTtsChunk(
+            chunkId: parsed.header.chunkId,
+            buffer: outBuffer,
+            startFrame: Playhead.startFrame(
+                scheduledThrough: self.nextScheduleFrame,
+                played: self.playedFramesThisTurn()
+            ),
+            isFiller: parsed.header.isFiller
+        )
+        self.noteScheduled(chunk)
+        self.playerNode.scheduleBuffer(outBuffer, completionHandler: nil)
+        if !parsed.header.isFiller {
+            self.replyPlayback?.noteRendered()
+        }
+        self.schedulePlaybackAcknowledgement(chunkId: parsed.header.chunkId)
+        self.trimPlayedChunks()
+    }
+
+    private func dropUndecodableFrame(isFiller: Bool, reason: String) {
+        guard !isFiller else {
+            logger.warning("voice.filler_frame_dropped reason=\(reason, privacy: .public)")
+            return
+        }
+        self.failReplyPlayback("decode: \(reason)")
+    }
+
+    func failReplyPlayback(_ reason: String) {
+        guard var playback = self.replyPlayback, !playback.failed else { return }
+        playback.noteFailure()
+        self.replyPlayback = playback
+        self.lastError = reason
+        logger.error("voice.reply_playback_failed turn=\(playback.turnId, privacy: .public) reason=\(reason, privacy: .public)")
+        self.stopReplyPlayback()
+        self.abortCurrentTurn()
+    }
+
+    func stopReplyPlayback() {
+        if self.sessionSpeechPlan?.ttsSite == .endpoint {
+            self.cancelClientTtsTurn()
+        } else {
+            self.truncatePlayback()
         }
     }
 
@@ -108,7 +137,7 @@ extension VoicePipeline {
         )
     }
 
-    func waitForPlaybackDrain() async {
+    func waitForPlaybackDrain() async -> Bool {
         let remainingFrames = max(0, self.nextScheduleFrame - self.playedFramesThisTurn())
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(
@@ -117,17 +146,38 @@ extension VoicePipeline {
         while self.audioStillPlaying(), clock.now < deadline, !Task.isCancelled {
             try? await clock.sleep(for: .milliseconds(40))
         }
+        return !self.audioStillPlaying()
     }
 
     func reportServerPlaybackDrained(turnId: String) {
+        guard self.replyPlayback?.turnId == turnId else {
+            logger.debug("voice.stale_tts_end_ignored")
+            return
+        }
         self.serverDrainTask?.cancel()
         self.serverDrainTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.waitForPlaybackDrain()
-            guard !Task.isCancelled else { return }
+            let drained = await self.waitForPlaybackDrain()
+            guard !Task.isCancelled,
+                  let playback = self.replyPlayback,
+                  playback.turnId == turnId
+            else { return }
             self.serverDrainTask = nil
-            await self.sendPlaybackAcknowledgement()
-            await self.sendClient(.ttsPlaybackComplete(turnId: turnId))
+            await self.settleReplyPlayback(playback, drained: drained)
+        }
+    }
+
+    func settleReplyPlayback(_ playback: ReplyPlayback, drained: Bool) async {
+        switch playback.outcome(drained: drained) {
+        case .heard:
+            await self.sendPlaybackAcknowledgement(turnId: playback.turnId)
+            await self.sendClient(.ttsPlaybackComplete(turnId: playback.turnId))
+        case .unheard where playback.failed:
+            break
+        case .unheard:
+            self.failReplyPlayback(
+                drained ? "playback: no reply audio was rendered" : "playback: reply audio did not finish"
+            )
         }
     }
 
@@ -152,13 +202,18 @@ extension VoicePipeline {
     }
 
     func sendPlaybackAcknowledgement() async {
+        await self.sendPlaybackAcknowledgement(turnId: self.replyPlayback?.turnId)
+    }
+
+    func sendPlaybackAcknowledgement(turnId: String?) async {
         let frames = max(0, self.playedFramesThisTurn())
         let playedMs = UInt64(Double(frames) * 1_000.0 / self.playbackSampleRate)
         guard playedMs > self.lastPlaybackAckMs else { return }
         self.lastPlaybackAckMs = playedMs
         await self.sendClient(.playbackAck(
             chunkId: self.lastPlaybackAckChunkId,
-            playedMs: playedMs
+            playedMs: playedMs,
+            turnId: turnId
         ))
     }
 
@@ -208,8 +263,9 @@ extension VoicePipeline {
         self.playbackAckTask?.cancel()
         self.playbackAckTask = nil
         self.playbackAckGeneration &+= 1
+        let turnId = self.replyPlayback?.turnId
         Task { [weak self] in
-            await self?.sendPlaybackAcknowledgement()
+            await self?.sendPlaybackAcknowledgement(turnId: turnId)
         }
         let played = self.playedFramesThisTurn()
 

@@ -12,6 +12,14 @@ struct ComposerBar: View {
             && !self.model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var placeholder: String {
+        switch self.model.link {
+        case .offline: L10n.tr("phone.composer.offline")
+        case .settingUp: L10n.tr("phone.connection.setting_up.title")
+        default: L10n.tr("phone.composer.placeholder")
+        }
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             if self.model.talk.state == .listening {
@@ -26,7 +34,7 @@ struct ComposerBar: View {
             }
             HStack(alignment: .bottom, spacing: 10) {
                 TextField(
-                    L10n.tr(self.model.link == .offline ? "phone.composer.offline" : "phone.composer.placeholder"),
+                    self.placeholder,
                     text: self.$model.draft,
                     axis: .vertical
                 )

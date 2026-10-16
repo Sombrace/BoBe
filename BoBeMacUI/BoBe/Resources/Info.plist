@@ -37,8 +37,6 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<key>NSAppleEventsUsageDescription</key>
-	<string>BoBe uses AppleScript to detect which app you're using, so it can provide context-aware assistance.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>BoBe uses your microphone to let you talk to it instead of typing.</string>
 	<key>NSHighResolutionCapable</key>

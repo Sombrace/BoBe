@@ -94,6 +94,7 @@ struct BehaviorPanel: View {
             SettingsRow(label: L10n.tr("settings.behavior.capture.interval"), suffix: L10n.tr("settings.units.seconds")) {
                 DebouncedNumberInput(
                     value: self.store.binding(\.captureIntervalSeconds, fallback: 120),
+                    accessibilityLabel: L10n.tr("settings.behavior.capture.interval"),
                     range: 1 ... 600
                 )
             }
@@ -177,6 +178,7 @@ struct BehaviorPanel: View {
             SettingsRow(label: L10n.tr("settings.behavior.checkins.jitter"), suffix: L10n.tr("settings.units.minutes")) {
                 DebouncedNumberInput(
                     value: self.store.binding(\.checkinJitterMinutes, fallback: 0),
+                    accessibilityLabel: L10n.tr("settings.behavior.checkins.jitter"),
                     range: 0 ... 30
                 )
             }
@@ -197,6 +199,7 @@ struct BehaviorPanel: View {
             ) {
                 DebouncedNumberInput(
                     value: self.store.binding(\.conversationAutoCloseMinutes, fallback: 10),
+                    accessibilityLabel: L10n.tr("settings.behavior.conversation.auto_close_after"),
                     range: 1 ... 60
                 )
             }
@@ -208,6 +211,7 @@ struct BehaviorPanel: View {
             ) {
                 DebouncedNumberInput(
                     value: self.store.binding(\.conversationInactivityTimeoutSeconds, fallback: 300),
+                    accessibilityLabel: L10n.tr("settings.behavior.conversation.inactivity_timeout"),
                     range: 5 ... 600
                 )
             }
@@ -231,6 +235,7 @@ struct BehaviorPanel: View {
                         \.goalCheckIntervalSeconds,
                         fallbackSeconds: 3600
                     ),
+                    accessibilityLabel: L10n.tr("settings.behavior.goals.check_interval"),
                     range: 1 ... 120
                 )
             }

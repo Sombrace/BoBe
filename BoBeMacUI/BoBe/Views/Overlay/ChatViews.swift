@@ -312,7 +312,16 @@ struct MessageRow: View {
                 self.reply
             }
         }
-        .onScrollVisibilityChange(threshold: 0.5) { self.visible = $0 }
+        .onGeometryChange(for: Bool.self) { geometry in
+            guard let viewport = geometry.bounds(of: .scrollView) else { return false }
+            let row = geometry.frame(in: .local)
+            let visible = row.intersection(viewport)
+            return MessagePresentation.isPresented(
+                visibleHeight: visible.isNull ? 0 : visible.height,
+                rowHeight: row.height,
+                viewportHeight: viewport.height
+            )
+        } action: { self.visible = $0 }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             self.appActive = true
         }
@@ -365,11 +374,7 @@ struct MessageRow: View {
             if self.message.isStreaming {
                 StreamingText(content: self.message.content)
             } else {
-                StructuredText(markdown: self.message.content)
-                    .textual.structuredTextStyle(.gitHub)
-                    .textual.textSelection(.enabled)
-                    .foregroundStyle(self.theme.colors.text)
-                    .fixedSize(horizontal: false, vertical: true)
+                CompletedReplyText(markdown: self.message.content)
             }
             if !self.message.isComplete, !self.message.isStreaming {
                 Label(L10n.tr("overlay.chat.interrupted"), systemImage: "exclamationmark.circle")
@@ -379,7 +384,128 @@ struct MessageRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(L10n.tr("overlay.chat.sender.bobe")): \(self.message.content)")
+        .accessibilityLabel(
+            "\(L10n.tr("overlay.chat.sender.bobe")): \(CompletedReplyText.plainText(fromMarkdown: self.message.content))"
+        )
+    }
+}
+
+enum MessagePresentation {
+    static func isPresented(visibleHeight: CGFloat, rowHeight: CGFloat, viewportHeight: CGFloat) -> Bool {
+        let required = min(rowHeight, viewportHeight) / 2
+        return required > 0 && visibleHeight >= required
+    }
+}
+
+struct CompletedReplyText: View {
+    let markdown: String
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        StructuredText(markdown: self.markdown)
+            .textual.inlineStyle(ReplyMarkdownTheme.inlineStyle(for: self.theme))
+            .textual.codeBlockStyle(ReplyCodeBlockStyle(background: self.theme.well))
+            .textual.highlighterTheme(ReplyMarkdownTheme.highlighterTheme(for: self.theme))
+            .textual.structuredTextStyle(.gitHub)
+            .textual.textSelection(.enabled)
+            .foregroundStyle(self.theme.colors.text)
+            .environment(\.colorScheme, self.theme.isDark ? .dark : .light)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Self.plainText(fromMarkdown: self.markdown))
+    }
+
+    nonisolated static func plainText(fromMarkdown markdown: String) -> String {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .full,
+            failurePolicy: .returnPartiallyParsedIfPossible
+        )
+        guard let attributed = try? AttributedString(markdown: markdown, options: options) else {
+            return markdown
+        }
+        var blocks: [String] = []
+        var block = ""
+        var intent: PresentationIntent?
+        for run in attributed.runs {
+            if run.presentationIntent != intent, !block.isEmpty {
+                blocks.append(block)
+                block = ""
+            }
+            intent = run.presentationIntent
+            block += String(attributed[run.range].characters)
+        }
+        blocks.append(block)
+        return blocks
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
+    }
+}
+
+private enum ReplyMarkdownTheme {
+    static func inlineStyle(for theme: ThemeConfig) -> InlineStyle {
+        InlineStyle.gitHub.code(
+            .monospaced,
+            .fontScale(0.85),
+            .foregroundColor(theme.colors.text),
+            .backgroundColor(theme.well)
+        )
+    }
+
+    static func highlighterTheme(for theme: ThemeConfig) -> StructuredText.HighlighterTheme {
+        let colors = theme.colors
+        let keyword = AnyTextProperty(.foregroundColor(colors.primary), .fontWeight(.semibold))
+        let string = AnyTextProperty(.foregroundColor(colors.secondary))
+        let symbol = AnyTextProperty(.foregroundColor(colors.tertiary))
+        let comment = AnyTextProperty(.foregroundColor(colors.textMuted))
+        return StructuredText.HighlighterTheme(
+            foregroundColor: DynamicColor(colors.text),
+            backgroundColor: DynamicColor(theme.well),
+            tokenProperties: [
+                .keyword: keyword,
+                .literal: keyword,
+                .boolean: keyword,
+                .string: string,
+                .char: string,
+                .regex: string,
+                .url: string,
+                .attributeValue: string,
+                .number: symbol,
+                .constant: symbol,
+                .className: symbol,
+                .builtin: symbol,
+                .function: symbol,
+                .functionName: symbol,
+                .attribute: symbol,
+                .attributeName: symbol,
+                .tag: symbol,
+                .preprocessor: symbol,
+                .directive: symbol,
+                .comment: comment,
+                .blockComment: comment,
+                .docComment: comment,
+                .inserted: AnyTextProperty(.foregroundColor(colors.success)),
+                .deleted: AnyTextProperty(.foregroundColor(colors.error)),
+            ]
+        )
+    }
+}
+
+private struct ReplyCodeBlockStyle: StructuredText.CodeBlockStyle {
+    let background: Color
+
+    func makeBody(configuration: Configuration) -> some View {
+        Overflow {
+            configuration.label
+                .textual.lineSpacing(.fontScaled(0.225))
+                .textual.fontScale(0.85)
+                .fixedSize(horizontal: false, vertical: true)
+                .monospaced()
+                .padding(16)
+        }
+        .background(self.background)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .textual.blockSpacing(.init(top: 0, bottom: 16))
     }
 }
 

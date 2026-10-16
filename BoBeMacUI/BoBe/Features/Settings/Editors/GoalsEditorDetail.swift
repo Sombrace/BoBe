@@ -40,13 +40,25 @@ extension GoalsEditor {
                     }
 
                     self.labeledField(L10n.tr("settings.goals.section.summary")) {
-                        self.proseEditor(text: self.$draft.summary, minHeight: 80)
+                        BobeProseEditor(
+                            text: self.$draft.summary,
+                            accessibilityLabel: L10n.tr("settings.goals.section.summary"),
+                            minHeight: 80
+                        )
                     }
                     self.labeledField(L10n.tr("settings.goals.section.why_it_matters")) {
-                        self.proseEditor(text: self.$draft.whyItMatters, minHeight: 100)
+                        BobeProseEditor(
+                            text: self.$draft.whyItMatters,
+                            accessibilityLabel: L10n.tr("settings.goals.section.why_it_matters"),
+                            minHeight: 100
+                        )
                     }
                     self.labeledField(L10n.tr("settings.goals.section.notes")) {
-                        self.proseEditor(text: self.$draft.notes, minHeight: 220)
+                        BobeProseEditor(
+                            text: self.$draft.notes,
+                            accessibilityLabel: L10n.tr("settings.goals.section.notes"),
+                            minHeight: 220
+                        )
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
@@ -201,10 +213,6 @@ extension GoalsEditor {
 
     static func priorityLabel(_ priority: Int) -> String {
         L10n.tr("settings.goals.priority.\(min(max(priority, 0), 5))")
-    }
-
-    func proseEditor(text: Binding<String>, minHeight: CGFloat) -> some View {
-        BobeProseEditor(text: text, minHeight: minHeight)
     }
 
     func aiCuratedSection(title: String, icon: String, body: String) -> some View {

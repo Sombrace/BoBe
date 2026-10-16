@@ -3,6 +3,7 @@ import SwiftUI
 
 struct CodeEditor: NSViewRepresentable {
     @Binding var text: String
+    let accessibilityLabel: String
     let theme: ThemeConfig
     var fontSize: CGFloat = 13
 
@@ -45,6 +46,7 @@ struct CodeEditor: NSViewRepresentable {
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.lineFragmentPadding = 4
         textView.focusRingType = .none
+        textView.setAccessibilityLabel(self.accessibilityLabel)
         self.applyTheme(to: textView)
         self.applyTypography(to: textView)
         textView.font = .monospacedSystemFont(ofSize: self.fontSize, weight: .regular)
@@ -75,6 +77,7 @@ struct CodeEditor: NSViewRepresentable {
             textView.selectedRanges = clamped.isEmpty ? [NSValue(range: NSRange(location: maxLen, length: 0))] : clamped
         }
         textView.font = .monospacedSystemFont(ofSize: self.fontSize, weight: .regular)
+        textView.setAccessibilityLabel(self.accessibilityLabel)
         self.applyTypography(to: textView)
         self.applyTheme(to: textView)
         context.coordinator.updateFocusBorder(theme: self.theme)
@@ -153,7 +156,7 @@ final class FocusAwareTextView: NSTextView {
         Be helpful, proactive, and concise.
         Observe the user's workflow and offer suggestions.
         """
-        CodeEditor(text: $text, theme: allThemes[0])
+        CodeEditor(text: $text, accessibilityLabel: "Soul", theme: allThemes[0])
             .frame(width: 500, height: 300)
             .padding()
     }

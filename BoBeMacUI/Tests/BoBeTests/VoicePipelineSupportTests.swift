@@ -119,16 +119,21 @@ struct VoiceWsEndpointTests {
         @Test
         func daemonPreferenceForcesDaemonPlacement() {
             #expect(VoiceSttPreference.daemon.placement == .daemon)
+            #expect(VoiceSttPreference.daemon.allowsDaemonRecognition)
         }
 
-        @Test(arguments: [
-            VoiceSttPreference.automatic,
-            VoiceSttPreference.appleSpeech,
-            VoiceSttPreference.fluidAudio,
-        ])
-        func endpointPreferencesPreserveDaemonAuthority(_ preference: VoiceSttPreference) {
-            #expect(preference.placement == .auto)
+        @Test
+        func automaticPreferenceLetsTheDaemonChoose() {
+            #expect(VoiceSttPreference.automatic.placement == .auto)
+            #expect(VoiceSttPreference.automatic.usesEndpointEngine)
+            #expect(VoiceSttPreference.automatic.allowsDaemonRecognition)
+        }
+
+        @Test(arguments: [VoiceSttPreference.appleSpeech, VoiceSttPreference.fluidAudio])
+        func explicitOnDeviceRecognitionNeverUploadsAudio(_ preference: VoiceSttPreference) {
+            #expect(preference.placement == .endpoint)
             #expect(preference.usesEndpointEngine)
+            #expect(!preference.allowsDaemonRecognition)
         }
 
         @Test
@@ -144,20 +149,65 @@ struct VoiceWsEndpointTests {
             ))
         }
 
-        @Test(arguments: [
-            VoiceSttPreference.automatic,
-            VoiceSttPreference.appleSpeech,
-            VoiceSttPreference.fluidAudio,
-        ])
-        func endpointPreferencesCanFallBackToDaemon(_ preference: VoiceSttPreference) {
-            #expect(preference.speechRecognitionReady(
+        @Test
+        func automaticPreferenceCanFallBackToDaemon() {
+            #expect(VoiceSttPreference.automatic.speechRecognitionReady(
                 endpointReady: false,
                 daemonReady: true
             ))
-            #expect(!preference.speechRecognitionReady(
+            #expect(!VoiceSttPreference.automatic.speechRecognitionReady(
                 endpointReady: false,
                 daemonReady: false
             ))
+        }
+
+        @Test(arguments: [VoiceSttPreference.appleSpeech, VoiceSttPreference.fluidAudio])
+        func explicitOnDeviceRecognitionNeedsItsOwnEngine(_ preference: VoiceSttPreference) {
+            #expect(!preference.speechRecognitionReady(
+                endpointReady: false,
+                daemonReady: true
+            ))
+            #expect(preference.speechRecognitionReady(
+                endpointReady: true,
+                daemonReady: false
+            ))
+        }
+    }
+
+    @Suite("Shared recognition models")
+    struct SharedRecognitionModelTests {
+        @Test
+        @MainActor
+        func uninstallingMultilingualClearsEveryNemotronLanguage() {
+            let nemotron = VoiceSttEngineId.fluidAudioNemotron
+            let parakeet = VoiceSttEngineId.fluidAudioParakeet
+            let loaded: Set = [
+                VoicePipeline.sttReadinessKey(engineId: nemotron, language: "es"),
+                VoicePipeline.sttReadinessKey(engineId: nemotron, language: "zh"),
+                VoicePipeline.sttReadinessKey(engineId: parakeet, language: "en"),
+            ]
+            let unloaded = VoicePipeline.unloading(
+                engineId: nemotron,
+                loadedKeys: loaded,
+                activeEngineId: nemotron,
+                activeStatus: .ready
+            )
+            #expect(unloaded.loadedKeys == [VoicePipeline.sttReadinessKey(engineId: parakeet, language: "en")])
+            #expect(unloaded.activeStatus == .notLoaded)
+        }
+
+        @Test
+        @MainActor
+        func uninstallingAnotherModelLeavesTheActiveRecognizerReady() {
+            let apple = VoiceSttEngineId.appleSpeechAnalyzer
+            let unloaded = VoicePipeline.unloading(
+                engineId: VoiceSttEngineId.fluidAudioNemotron,
+                loadedKeys: [VoicePipeline.sttReadinessKey(engineId: apple, language: "es")],
+                activeEngineId: apple,
+                activeStatus: .ready
+            )
+            #expect(unloaded.loadedKeys == [VoicePipeline.sttReadinessKey(engineId: apple, language: "es")])
+            #expect(unloaded.activeStatus == .ready)
         }
     }
 

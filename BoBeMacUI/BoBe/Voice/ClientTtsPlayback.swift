@@ -157,6 +157,9 @@ extension VoicePipeline {
 
     private func startClientTtsTurn(turnId: String) {
         self.cancelClientTtsTurn()
+        if self.replyPlayback?.turnId != turnId {
+            self.replyPlayback = ReplyPlayback(turnId: turnId)
+        }
         let queue = ClientTtsSentenceQueue()
         self.clientTtsQueue = queue
         self.clientTtsTurnId = turnId
@@ -182,7 +185,13 @@ extension VoicePipeline {
                         speed: speed
                     )
                     guard !Task.isCancelled else { return }
-                    self.scheduleClientTts(samples, sequence: sentence.sequence)
+                    guard self.scheduleClientTts(samples, sequence: sentence.sequence) else {
+                        self.failReplyPlayback("speech synthesis: no audio for a sentence")
+                        return
+                    }
+                    if self.replyPlayback?.turnId == turnId {
+                        self.replyPlayback?.noteRendered()
+                    }
                     if !self.clientTtsFirstAudioSent {
                         self.clientTtsFirstAudioSent = true
                         let synthesisMs = synthesisStart.duration(to: .now)
@@ -199,16 +208,19 @@ extension VoicePipeline {
                 } catch is CancellationError {
                     return
                 } catch {
-                    logger.error(
-                        "client TTS failed: \(error.localizedDescription, privacy: .public)"
-                    )
+                    guard !Task.isCancelled else { return }
+                    self.failReplyPlayback("speech synthesis: \(error.localizedDescription)")
+                    return
                 }
             }
-            await self.waitForPlaybackDrain()
-            guard !Task.isCancelled, self.clientTtsTurnId == turnId else { return }
-            await self.sendPlaybackAcknowledgement()
-            await self.sendClient(.ttsPlaybackComplete(turnId: turnId))
-            guard self.clientTtsTurnId == turnId else { return }
+            let drained = await self.waitForPlaybackDrain()
+            guard !Task.isCancelled,
+                  self.clientTtsTurnId == turnId,
+                  let playback = self.replyPlayback,
+                  playback.turnId == turnId
+            else { return }
+            await self.settleReplyPlayback(playback, drained: drained)
+            guard self.clientTtsTurnId == turnId, playback.outcome(drained: drained) == .heard else { return }
             self.clientTtsTurnId = nil
             self.clientTtsActive = false
             self.clientTtsTask = nil
@@ -222,14 +234,15 @@ extension VoicePipeline {
         }
     }
 
-    private func scheduleClientTts(_ samples: [Int16], sequence: UInt64) {
-        guard let format = self.ttsOutputFormat,
+    private func scheduleClientTts(_ samples: [Int16], sequence: UInt64) -> Bool {
+        guard !samples.isEmpty,
+              let format = self.ttsOutputFormat,
               let buffer = AVAudioPCMBuffer(
                   pcmFormat: format,
                   frameCapacity: AVAudioFrameCount(samples.count)
               ),
               let data = buffer.int16ChannelData?[0]
-        else { return }
+        else { return false }
         buffer.frameLength = AVAudioFrameCount(samples.count)
         samples.withUnsafeBufferPointer { source in
             guard let base = source.baseAddress else { return }
@@ -251,5 +264,6 @@ extension VoicePipeline {
             self.playerNode.play()
         }
         self.trimPlayedChunks()
+        return true
     }
 }

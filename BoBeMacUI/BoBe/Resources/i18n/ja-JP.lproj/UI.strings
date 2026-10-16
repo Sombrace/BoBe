@@ -185,7 +185,6 @@
 "settings.shared.restart_banner.message" = "一部の変更を反映するには、BoBeの再起動が必要です。";
 "settings.shared.restart_banner.restart_now" = "今すぐ再起動";
 "settings.shared.section.enabled_format" = "%@ が有効";
-"settings.shared.validation.content_min_length_format" = "内容は%d文字以上にしてください";
 "settings.souls.delete.accessibility" = "ソウルを削除";
 "settings.souls.empty.description" = "作成してBoBeの個性を定義しましょう";
 "settings.souls.empty.select" = "編集するソウルを選択";
@@ -374,6 +373,10 @@
 "setup.voice.skip" = "今はスキップ";
 "setup.voice.install_button" = "音声を準備";
 "setup.voice.cancel" = "キャンセル";
+"setup.voice.canceling" = "キャンセルしています…";
+"setup.voice.cancel_failed_format" = "BoBeがダウンロードを停止できませんでした。%@";
+"setup.voice.cancel_still_running" = "ダウンロードを停止しています。少ししてから、もう一度お試しください。";
+"settings.voice.session_restart_failed_format" = "新しい設定で音声を再開できませんでした。%@";
 "setup.voice.continue" = "続ける";
 "setup.voice.try_again" = "もう一度試す";
 "setup.voice.continue_without" = "音声なしで続ける";
@@ -464,7 +467,6 @@
 "setup.runtime.phase.starting" = "BoBeを起動中…";
 "setup.runtime.phase.checking" = "BoBeを探しています…";
 "setup.runtime.phase.pairing" = "安全にペアリング中…";
-"setup.runtime.phase.saving" = "接続を保存中…";
 "setup.runtime.phase.verifying" = "接続を確認中…";
 "setup.runtime.retry_connection" = "もう一度試す";
 "setup.runtime.pair_again" = "もう一度ペアリング";
@@ -824,3 +826,10 @@
 "setup.permissions.card.status.allowed" = "許可済み";
 "setup.value.title" = "こんにちは、BoBeです";
 "setup.value.continue" = "はじめる";
+"app.common.expanded" = "展開";
+"app.common.collapsed" = "折りたたみ";
+"setup.proactivity.error.not_saved" = "BoBeはこの選択を保存できませんでした。もう一度お試しください。";
+"setup.local.cancel_failed" = "BoBeはダウンロードを停止できませんでした。もう一度お試しください。";
+"settings.shared.restart_banner.failed" = "BoBeを再起動できませんでした。もう一度お試しください。";
+"settings.context_editor.raw.accessibility_format" = "%@のMarkdown";
+"settings.mcp.editor.accessibility" = "ツールサーバーの設定（JSON）";

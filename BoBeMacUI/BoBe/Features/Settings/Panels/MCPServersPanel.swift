@@ -8,7 +8,6 @@ struct MCPServersPanel: View {
     @State private var isSaving = false
     @State private var status: String?
     @State private var error: String?
-    @State private var lastValidSecretMap: [String: [String]]?
     @Environment(ExpertMode.self) private var expertMode
     @Environment(SettingsStore.self) private var store
     @Environment(\.theme) private var theme
@@ -48,9 +47,14 @@ struct MCPServersPanel: View {
                 }
 
                 if self.expertMode.isEnabled {
-                    CodeEditor(text: self.$rawJson, theme: self.theme, fontSize: 12)
-                        .frame(height: 260)
-                        .bobeRaised(cornerRadius: 16)
+                    CodeEditor(
+                        text: self.$rawJson,
+                        accessibilityLabel: L10n.tr("settings.mcp.editor.accessibility"),
+                        theme: self.theme,
+                        fontSize: 12
+                    )
+                    .frame(height: 260)
+                    .bobeRaised(cornerRadius: 16)
 
                     HStack(spacing: 8) {
                         Button(L10n.tr("settings.mcp.action.reload")) { self.reloadConfig() }
@@ -296,11 +300,7 @@ struct MCPServersPanel: View {
         self.isValidating = true
         self.status = nil
         self.error = nil
-        let capturedJson = self.rawJson
-        let request = MCPConfigMutationRequest(
-            rawJson: capturedJson,
-            secretKeys: self.extractSecretKeyMap(from: capturedJson)
-        )
+        let request = Self.mutationRequest(for: self.rawJson)
 
         Task {
             defer { self.isValidating = false }
@@ -327,11 +327,7 @@ struct MCPServersPanel: View {
         self.isSaving = true
         self.status = nil
         self.error = nil
-        let capturedJson = self.rawJson
-        let request = MCPConfigMutationRequest(
-            rawJson: capturedJson,
-            secretKeys: self.extractSecretKeyMap(from: capturedJson)
-        )
+        let request = Self.mutationRequest(for: self.rawJson)
 
         Task {
             defer { self.isSaving = false }
@@ -364,51 +360,7 @@ struct MCPServersPanel: View {
         }
     }
 
-    private func extractSecretKeyMap(from json: String) -> [String: [String]]? {
-        guard let data = json.data(using: .utf8),
-              let doc = try? JSONDecoder().decode(InputDoc.self, from: data)
-        else {
-            return self.lastValidSecretMap
-        }
-
-        let allServers = doc.mcpServers ?? doc.servers ?? [:]
-        var secretMap: [String: [String]] = [:]
-
-        for (serverName, entry) in allServers {
-            guard let env = entry.env else {
-                continue
-            }
-
-            let keys = env.compactMap { key, value -> String? in
-                let upper = key.uppercased()
-                if value.isEmpty || value.contains("${") || value.hasPrefix("bobe-secret://") {
-                    return nil
-                }
-                if upper.contains("SECRET")
-                    || upper.contains("TOKEN")
-                    || upper.contains("PASSWORD")
-                    || upper.hasSuffix("API_KEY") {
-                    return key
-                }
-                return nil
-            }
-
-            if !keys.isEmpty {
-                secretMap[serverName] = keys.sorted()
-            }
-        }
-
-        let result = secretMap.isEmpty ? nil : secretMap
-        self.lastValidSecretMap = result
-        return result
+    nonisolated static func mutationRequest(for rawJson: String) -> MCPConfigMutationRequest {
+        MCPConfigMutationRequest(rawJson: rawJson)
     }
-}
-
-private struct InputServerEntry: Decodable {
-    let env: [String: String]?
-}
-
-private struct InputDoc: Decodable {
-    let mcpServers: [String: InputServerEntry]?
-    let servers: [String: InputServerEntry]?
 }

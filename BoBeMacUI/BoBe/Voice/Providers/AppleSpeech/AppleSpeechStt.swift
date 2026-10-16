@@ -32,7 +32,7 @@ actor AppleSpeechStt: VoiceSttEngine {
 
     private let inputFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
-        sampleRate: 16_000,
+        sampleRate: Double(VoiceWire.captureSampleRate),
         channels: 1,
         interleaved: false
     )
@@ -130,29 +130,6 @@ actor AppleSpeechStt: VoiceSttEngine {
 
         guard case .terminated = continuation.yield(AnalyzerInput(buffer: buffer)) else { return }
         throw AppleSpeechSttError.analyzerStopped
-    }
-
-    func finish() async throws -> String {
-        guard self.loaded, let analyzer = self.analyzer else { return "" }
-        self.finishing = true
-        self.eouTask?.cancel()
-        self.eouTask = nil
-        self.analyzerInputContinuation?.finish()
-        self.analyzerInputContinuation = nil
-        do {
-            try await analyzer.finalizeAndFinishThroughEndOfInput()
-        } catch {
-            await self.stopRuntime()
-            throw error
-        }
-        await self.awaitRuntimeTasks()
-        let transcript = self.currentTranscript
-        self.analyzer = nil
-        self.analyzerFormat = nil
-        self.inputConverter = nil
-        self.clearTranscript()
-        self.finishing = false
-        return transcript
     }
 
     func reset() async throws {

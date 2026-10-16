@@ -17,7 +17,7 @@ actor FluidAudioStt: VoiceSttEngine {
     private var callbackTask: Task<Void, Never>?
     private let inputFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32,
-        sampleRate: 16_000,
+        sampleRate: Double(VoiceWire.captureSampleRate),
         channels: 1,
         interleaved: false
     )

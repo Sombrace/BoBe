@@ -5,8 +5,14 @@ import Testing
 @Suite("VoiceCaptureFrameEncoder")
 struct VoiceCaptureFrameEncoderTests {
     @Test
+    func captureFramesCarryTwentyMillisecondsOfSixteenBitAudio() {
+        #expect(VoiceWire.captureFrameSamples * 1_000 / VoiceWire.captureSampleRate == 20)
+        #expect(VoiceWire.capturePayloadBytes == VoiceWire.captureFrameSamples * MemoryLayout<Int16>.size)
+    }
+
+    @Test
     func encodesExactPcmFrameAndClampsSamples() {
-        var samples = Array(repeating: Float(0), count: 320)
+        var samples = Array(repeating: Float(0), count: VoiceWire.captureFrameSamples)
         samples[0] = 1
         samples[1] = -1
         let frame = VoiceCaptureFrameEncoder.encode(
@@ -14,16 +20,18 @@ struct VoiceCaptureFrameEncoderTests {
             sequence: 7,
             samples: samples[...]
         )
+        let header = VoiceWire.captureHeaderBytes
         #expect(frame?.count == 653)
+        #expect(frame?.count == header + VoiceWire.capturePayloadBytes)
         #expect(Array(frame?.prefix(4) ?? Data()) == [1, 2, 3, 4])
-        #expect(Array(frame?[13 ..< 17] ?? Data()) == [0xFF, 0x7F, 0x01, 0x80])
+        #expect(Array(frame?[header ..< header + 4] ?? Data()) == [0xFF, 0x7F, 0x01, 0x80])
     }
 
     @Test
     func rejectsWrongFrameSizeAndZeroStream() {
-        let samples = Array(repeating: Float(0), count: 319)
+        let samples = Array(repeating: Float(0), count: VoiceWire.captureFrameSamples - 1)
         #expect(VoiceCaptureFrameEncoder.encode(streamId: 1, sequence: 0, samples: samples[...]) == nil)
-        let full = Array(repeating: Float(0), count: 320)
+        let full = Array(repeating: Float(0), count: VoiceWire.captureFrameSamples)
         #expect(VoiceCaptureFrameEncoder.encode(streamId: 0, sequence: 0, samples: full[...]) == nil)
     }
 }
@@ -184,7 +192,7 @@ struct ClientVoiceMessageEncodingTests {
 
     private let macOffer = SpeechOfferWire(
         endpointId: UUID(uuidString: "00000000-0000-0000-0000-000000000001") ?? UUID(),
-        endpointKind: "mac_app",
+        endpointKind: SpeechOfferWire.macEndpointKind,
         language: "en",
         playbackRates: [24_000],
         endpointStt: [SpeechEngineOfferWire(
@@ -226,37 +234,43 @@ struct ClientVoiceMessageEncodingTests {
     }
 
     @Test
-    func bargeInCarriesAtomicPartialEvidence() throws {
+    func bargeInCarriesAtomicPartialEvidenceForItsReply() throws {
         let obj = try encode(.bargeIn(
             tsMs: 1_000,
             playbackMsPlayed: 420,
             partialText: "please stop now",
-            playheadChunk: 3
+            playheadChunk: 3,
+            turnId: "voice_a"
         ))
         #expect(obj["type"] as? String == "barge_in")
         #expect(obj["playback_ms_played"] as? Int == 420)
         #expect(obj["partial_text"] as? String == "please stop now")
         #expect(obj["playhead_chunk"] as? Int == 3)
+        #expect(obj["turn_id"] as? String == "voice_a")
     }
 
     @Test
-    func bargeInOmitsMissingPartialEvidence() throws {
+    func bargeInOmitsMissingEvidence() throws {
         let obj = try encode(.bargeIn(
             tsMs: 1_000,
             playbackMsPlayed: 420,
             partialText: nil,
-            playheadChunk: 0
+            playheadChunk: 0,
+            turnId: nil
         ))
         #expect(obj["partial_text"] == nil)
+        #expect(obj["turn_id"] == nil)
         #expect(obj["playhead_chunk"] as? Int == 0)
     }
 
     @Test
-    func playbackAckEncodesMonotonicPositionFields() throws {
-        let obj = try encode(.playbackAck(chunkId: 17, playedMs: 925))
+    func playbackAckEncodesMonotonicPositionForItsReply() throws {
+        let obj = try encode(.playbackAck(chunkId: 17, playedMs: 925, turnId: "voice_a"))
         #expect(obj["type"] as? String == "playback_ack")
         #expect(obj["chunk_id"] as? Int == 17)
         #expect(obj["played_ms"] as? Int == 925)
+        #expect(obj["turn_id"] as? String == "voice_a")
+        #expect(try encode(.playbackAck(chunkId: 17, playedMs: 925, turnId: nil))["turn_id"] == nil)
     }
 
     @Test
@@ -278,15 +292,42 @@ struct ClientVoiceMessageEncodingTests {
     }
 
     @Test
-    func helloEncodesCapabilityOffer() throws {
+    func helloEncodesTheOfferFieldsEveryDaemonVersionRequires() throws {
         let obj = try encode(.hello(sessionId: "s1", voiceId: "af_bella", speed: 1, speechOffer: self.macOffer))
-        let encodedOffer = obj["speech_offer"] as? [String: Any]
-        #expect(encodedOffer?["endpoint_kind"] as? String == "mac_app")
-        #expect(encodedOffer?["language"] as? String == "en")
-        #expect(encodedOffer?["playback_rates"] as? [Int] == [24_000])
-        #expect(encodedOffer?["daemon_is_non_loopback"] as? Bool == false)
-        let stt = encodedOffer?["endpoint_stt"] as? [[String: Any]]
+        let encodedOffer = try #require(obj["speech_offer"] as? [String: Any])
+        #expect(encodedOffer["endpoint_id"] as? String == "00000000-0000-0000-0000-000000000001")
+        #expect(encodedOffer["endpoint_kind"] as? String == "mac_app")
+        #expect(encodedOffer["daemon_is_non_loopback"] as? Bool == false)
+        #expect(encodedOffer["language"] as? String == "en")
+        #expect(encodedOffer["playback_rates"] as? [Int] == [24_000])
+        let stt = encodedOffer["endpoint_stt"] as? [[String: Any]]
         #expect(stt?.first?["id"] as? String == "parakeet")
+    }
+
+    @MainActor
+    @Test
+    func builtOfferNamesThisMacAndARemoteDaemon() throws {
+        let surface = try #require(UUID(uuidString: "00000000-0000-0000-0000-0000000000AB"))
+        let offer = VoicePipeline.speechOffer(
+            settings: VoiceSessionSettings(
+                language: "en",
+                persona: "alba",
+                speed: 1,
+                ttsBackend: .serverPocket,
+                sttPreference: .fluidAudio,
+                remoteAudioConsent: false
+            ),
+            endpointSttEngineId: VoiceSttEngineId.fluidAudioParakeet,
+            endpointId: surface,
+            daemonIsNonLoopback: true
+        )
+        let obj = try encode(.hello(sessionId: "s1", voiceId: "alba", speed: 1, speechOffer: offer))
+        let encodedOffer = try #require(obj["speech_offer"] as? [String: Any])
+        #expect(encodedOffer["endpoint_id"] as? String == surface.uuidString)
+        #expect(encodedOffer["endpoint_kind"] as? String == "mac_app")
+        #expect(encodedOffer["daemon_is_non_loopback"] as? Bool == true)
+        #expect(encodedOffer["audio_uplink"] as? Bool == false)
+        #expect((encodedOffer["overrides"] as? [String: Any])?["stt"] as? String == "endpoint")
     }
 
     @MainActor

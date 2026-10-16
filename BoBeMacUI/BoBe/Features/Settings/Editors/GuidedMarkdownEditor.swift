@@ -190,7 +190,11 @@ struct GuidedMarkdownEditor: View {
                     label: L10n.tr("settings.context_editor.overview"),
                     help: L10n.tr("settings.context_editor.overview.help")
                 ) {
-                    BobeProseEditor(text: self.$draft.introduction, minHeight: 110)
+                    BobeProseEditor(
+                        text: self.$draft.introduction,
+                        accessibilityLabel: L10n.tr("settings.context_editor.overview"),
+                        minHeight: 110
+                    )
                 }
 
                 ForEach(self.$draft.sections) { $section in
@@ -214,7 +218,11 @@ struct GuidedMarkdownEditor: View {
                             .accessibilityLabel(self.deleteLabel(for: section.title))
                         }
 
-                        BobeProseEditor(text: $section.body, minHeight: 96)
+                        BobeProseEditor(
+                            text: $section.body,
+                            accessibilityLabel: self.sectionLabel(for: section.title),
+                            minHeight: 96
+                        )
                     }
                     .padding(12)
                     .bobeRaised(cornerRadius: 16)
@@ -265,6 +273,11 @@ struct GuidedMarkdownEditor: View {
         L10n.tr("settings.context_editor.section.delete_accessibility_format", title)
     }
 
+    private func sectionLabel(for title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? L10n.tr("settings.context_editor.section.new_title") : trimmed
+    }
+
     private func field(
         label: String,
         help: String,
@@ -284,12 +297,14 @@ struct GuidedMarkdownEditor: View {
 
 struct BobeProseEditor: View {
     @Binding var text: String
+    let accessibilityLabel: String
     var minHeight: CGFloat
 
     @Environment(\.theme) private var theme
 
     var body: some View {
         TextEditor(text: self.$text)
+            .accessibilityLabel(self.accessibilityLabel)
             .font(.body)
             .foregroundStyle(self.theme.colors.text)
             .scrollContentBackground(.hidden)

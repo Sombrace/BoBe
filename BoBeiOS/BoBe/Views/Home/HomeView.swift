@@ -51,7 +51,7 @@ private struct EmptyPresence: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                if self.model.link == .offline || self.model.link == .removed {
+                if self.model.needsAttention {
                     ConnectionCard(model: self.model)
                 }
                 BobeCharacter(mood: self.model.mood, size: 150, palette: self.theme.avatar)
@@ -96,7 +96,7 @@ struct ThreadView: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                if self.model.link == .offline || self.model.link == .removed {
+                if self.model.needsAttention {
                     ConnectionCard(model: self.model)
                 }
                 ForEach(self.model.questions) { question in
@@ -142,7 +142,13 @@ struct MessageRow: View {
     }
 
     private var presentationKey: String {
-        "\(self.message.id):\(self.visible):\(self.message.isComplete):\(self.scenePhase == .active)"
+        [
+            self.message.id,
+            "\(self.visible)",
+            "\(self.message.isComplete)",
+            "\(self.message.isStreaming)",
+            "\(self.scenePhase == .active)",
+        ].joined(separator: ":")
     }
 
     var body: some View {
@@ -163,13 +169,26 @@ struct MessageRow: View {
                             .phoneText(.footnote)
                     }
                     .foregroundStyle(self.theme.colors.warning)
+                } else if self.message.delivery == .unconfirmed {
+                    Text(L10n.tr("phone.thread.unconfirmed"))
+                        .phoneText(.footnote)
+                        .foregroundStyle(self.theme.colors.textMuted)
+                        .multilineTextAlignment(.trailing)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button {
+                        self.model.sendAgain(self.message)
+                    } label: {
+                        Label(L10n.tr("phone.thread.send_again"), systemImage: "arrow.clockwise")
+                            .phoneText(.footnote)
+                    }
+                    .foregroundStyle(self.theme.colors.warning)
                 }
             }
             if !self.isMine { Spacer(minLength: 36) }
         }
         .onScrollVisibilityChange(threshold: 0.5) { self.visible = $0 }
         .task(id: self.presentationKey) {
-            if self.visible, self.scenePhase == .active, !self.isMine, self.message.isComplete {
+            if self.visible, self.scenePhase == .active, !self.isMine, self.message.isComplete, !self.message.isStreaming {
                 self.model.presented(self.message)
             }
         }
@@ -193,7 +212,7 @@ struct MessageRow: View {
                     .phoneText(.body)
                     .foregroundStyle(self.theme.colors.text)
                     .textSelection(.enabled)
-                if !self.message.isComplete {
+                if self.message.isStreaming {
                     BobeBreathingDot(size: 7)
                 }
             }
@@ -231,18 +250,50 @@ struct ConnectionCard: View {
         self.model.link == .removed
     }
 
+    private var symbol: String {
+        switch self.model.link {
+        case .removed: "iphone.slash"
+        case .incompatible: "arrow.triangle.2.circlepath"
+        case .settingUp: "hourglass"
+        default: "wifi.exclamationmark"
+        }
+    }
+
+    private var title: String {
+        switch self.model.link {
+        case .removed: L10n.tr("phone.connection.removed.title")
+        case .incompatible: L10n.tr("phone.connection.incompatible.title")
+        case .settingUp: L10n.tr("phone.connection.setting_up.title")
+        default: L10n.tr("phone.connection.offline.title")
+        }
+    }
+
+    private var detail: String? {
+        switch self.model.link {
+        case .incompatible: L10n.tr("phone.connection.incompatible.body")
+        case .settingUp: L10n.tr("phone.connection.setting_up.body")
+        default: nil
+        }
+    }
+
     var body: some View {
         PhoneCard {
             HStack(alignment: .top, spacing: 12) {
                 BobeIconTile(
-                    systemName: self.removed ? "iphone.slash" : "wifi.exclamationmark",
+                    systemName: self.symbol,
                     tint: self.theme.colors.warning,
                     size: 32
                 )
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(L10n.tr(self.removed ? "phone.connection.removed.title" : "phone.connection.offline.title"))
+                    Text(self.title)
                         .phoneText(.heading)
                         .foregroundStyle(self.theme.colors.text)
+                    if let detail {
+                        Text(detail)
+                            .phoneText(.callout)
+                            .foregroundStyle(self.theme.colors.textMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if case let .failed(message) = self.model.pairing {
                         Text(message)
                             .phoneText(.callout)
