@@ -100,7 +100,7 @@ from `BoBeiOS/project.yml` after `scripts/tasks/build-pairing-ios.sh`.
 | She is not on screen | Menu bar icon → **Show BoBe** |
 | The provider rejects the key | Paste it again in **Settings → AI & tools**; `bobe doctor --probe` shows which part fails |
 | A model change did nothing | Changes apply after a restart; the app restarts only a daemon it started |
-| Local models stopped | BoBe stops its Ollama with the daemon; reinstall the local runtime or run Ollama yourself |
+| Local models stopped | BoBe starts its own Ollama with the daemon; restart BoBe, start your own Ollama if you run one, and `bobe doctor --probe` shows which part fails |
 | She does not hear you | Allow the microphone in System Settings and check **Settings → Voice** |
 | She answers too soon or too late | Change **Pause sensitivity** |
 | She does not see your screen | Leave Quiet mode, allow Screen Recording, reopen BoBe |

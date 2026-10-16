@@ -50,6 +50,17 @@ pub(crate) struct InstallRequest {
     pub(crate) batch_model: String,
 }
 
+pub(crate) fn uses_managed_runtime<'a>(
+    profiles: &crate::provider::profile::ProvidersConfig,
+    used: impl IntoIterator<Item = &'a crate::provider::ProfileId>,
+) -> bool {
+    used.into_iter().any(|profile| {
+        profiles.profiles.get(profile).is_some_and(|profile| {
+            profile.local_runtime == Some(crate::provider::LocalRuntimeKind::Ollama)
+        })
+    })
+}
+
 pub(crate) struct OllamaInstallService {
     binary_manager: Arc<BinaryManager>,
     ollama_manager: Arc<OllamaManager>,
@@ -83,6 +94,13 @@ impl OllamaInstallService {
 
     pub(crate) async fn subscribe(&self) -> watch::Receiver<InstallSnapshot> {
         self.state.lock().await.snapshot_rx.clone()
+    }
+
+    pub(crate) async fn ensure_running(&self) -> Result<(), AppError> {
+        match self.binary_manager.installed_binary() {
+            Some(binary) => self.ollama_manager.ensure_daemon_running(&binary).await,
+            None => Ok(()),
+        }
     }
 
     pub(crate) async fn start(self: &Arc<Self>, req: InstallRequest) -> Result<(), AppError> {
@@ -332,5 +350,37 @@ impl OllamaInstallService {
             },
         };
         snapshot_tx.send(updated).ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_routes_on_the_managed_runtime_need_it_started() {
+        let providers = crate::config::Config::default().providers;
+        let local = crate::provider::ProfileId::from_static("local");
+        let copilot = crate::provider::ProfileId::from_static("copilot");
+        let missing = crate::provider::ProfileId::from_static("missing");
+        assert!(uses_managed_runtime(&providers, [&copilot, &local]));
+        assert!(!uses_managed_runtime(&providers, [&copilot, &missing]));
+    }
+
+    #[tokio::test]
+    async fn a_runtime_that_was_never_installed_is_not_started() {
+        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
+        let root =
+            std::env::temp_dir().join(format!("bobe-ollama-ensure-{}", uuid::Uuid::new_v4()));
+        let client = Arc::new(reqwest::Client::new());
+        let service = OllamaInstallService::new(
+            Arc::new(BinaryManager::new(&root, Arc::clone(&client))),
+            Arc::new(OllamaManager::new(client, "http://127.0.0.1:9")),
+        );
+        service
+            .ensure_running()
+            .await
+            .expect("there is nothing to start");
+        assert!(!root.join("ollama").exists());
     }
 }

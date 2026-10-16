@@ -47,6 +47,11 @@ impl BinaryManager {
         Some(managed)
     }
 
+    pub(crate) fn installed_binary(&self) -> Option<PathBuf> {
+        let artifact = download::current_artifact().ok()?;
+        self.find_installation(&artifact)
+    }
+
     pub(crate) async fn ensure_managed_ollama(
         &self,
         progress_tx: &watch::Sender<DownloadProgress>,

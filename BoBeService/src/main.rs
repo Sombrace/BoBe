@@ -2979,6 +2979,22 @@ fn spawn_background_tasks(
 ) -> tokio::task::JoinSet<&'static str> {
     let mut set = tokio::task::JoinSet::new();
     {
+        let state = Arc::clone(state);
+        let token = shutdown.clone();
+        set.spawn(async move {
+            let profiles = state
+                .runtime
+                .active_routes
+                .iter()
+                .map(|route| &route.profile);
+            tokio::select! {
+                () = token.cancelled() => {}
+                () = api::handlers::health::start_local_runtime(&state, profiles) => {}
+            }
+            "local_runtime"
+        });
+    }
+    {
         let background = Arc::clone(&state.runtime.background);
         let token = shutdown.clone();
         set.spawn(async move {

@@ -142,6 +142,7 @@ pub(crate) async fn diagnose_profile(
         model: Some(request.model.clone()),
         reasoning_effort: request.reasoning_effort,
     };
+    start_local_runtime(&state, [&profile]).await;
     let checks = state.auth.agent.probe_profile(route).await?;
     Ok(Json(ProviderDiagnosticResponse {
         ok: checks.passed(),
@@ -170,6 +171,7 @@ pub(super) async fn probe_provider(
     .ok_or_else(|| {
         crate::error::AppError::Conflict("a provider diagnostic is already running".into())
     })?;
+    start_local_runtime(state, [&state.runtime.active_routes.chat.profile]).await;
     let checks = match state.runtime.workers.probe_chat_provider().await {
         Ok(checks) => checks,
         Err(error) => crate::provider::diagnostics::ProviderProbe {
@@ -178,6 +180,21 @@ pub(super) async fn probe_provider(
         },
     };
     Ok(checks)
+}
+
+pub(crate) async fn start_local_runtime<'a>(
+    state: &AppState,
+    profiles: impl IntoIterator<Item = &'a crate::provider::ProfileId>,
+) {
+    if !crate::services::ollama::install_service::uses_managed_runtime(
+        &state.config().providers,
+        profiles,
+    ) {
+        return;
+    }
+    if let Err(error) = state.services.ollama_install.ensure_running().await {
+        tracing::warn!(%error, "local_runtime.start_failed");
+    }
 }
 
 #[derive(Debug, Serialize)]
