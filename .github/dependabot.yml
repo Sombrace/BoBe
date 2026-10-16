@@ -7,23 +7,14 @@ updates:
       day: monday
     open-pull-requests-limit: 5
 
-  - package-ecosystem: cargo
-    directories:
-      - /PairingCore
-      - /PairingFFI
-    schedule:
-      interval: weekly
-      day: monday
-    groups:
-      pairing:
-        group-by: dependency-name
-    open-pull-requests-limit: 5
-
   - package-ecosystem: npm
     directory: /BoBeAgent
     schedule:
       interval: weekly
       day: monday
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 5
 
   - package-ecosystem: swift
