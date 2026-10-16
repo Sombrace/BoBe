@@ -1,7 +1,6 @@
 import Darwin
 import Foundation
 
-
 enum DaemonEndpoint: Sendable, Equatable {
     case unavailable
     case managedLocal(bearerToken: String?)

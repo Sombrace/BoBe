@@ -138,7 +138,6 @@ final class SettingsStore {
         self.publish()
     }
 
-
     func loadIfNeeded(force: Bool = false) async {
         self.synchronizeEndpoint()
         self.startBackendObserverIfNeeded()
@@ -356,7 +355,6 @@ final class SettingsStore {
         self.restartFields.removeAll()
     }
 
-
     func binding<V>(
         _ keyPath: WritableKeyPath<DaemonSettings, V>,
         fallback: @autoclosure @escaping () -> V
@@ -385,7 +383,6 @@ final class SettingsStore {
             }
         )
     }
-
 
     func flushPendingSave() async {
         await self.debouncer.flush()

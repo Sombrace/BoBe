@@ -1,6 +1,5 @@
 import Foundation
 
-
 enum EventType: String, Codable, Sendable {
     case indicator
     case textDelta = "text_delta"
@@ -128,7 +127,6 @@ struct ConversationChangedPayload: Codable, Sendable {
         case conversationId = "conversation_id"
     }
 }
-
 
 struct AnyCodablePayload: Codable, Sendable {
     let data: Data

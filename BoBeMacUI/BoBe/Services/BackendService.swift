@@ -187,7 +187,6 @@ actor BackendService {
         try await self.start()
     }
 
-
     private struct LocalEnrollmentRequest: Encodable {
         let bootstrapSecret: String
         let endpointId: String
@@ -472,7 +471,6 @@ actor BackendService {
         throw BackendServiceError.healthCheckFailed
     }
 
-
     private func handleExit(pid: Int32, exitCode: Int) {
         guard self.process?.processIdentifier == pid else {
             logger.debug("Ignoring stale termination callback for PID \(pid)")
@@ -536,7 +534,6 @@ actor BackendService {
             self.scheduleAutomaticRestart()
         }
     }
-
 
     private func writePID(_ pid: Int32) {
         do { try "\(pid)".write(to: self.pidFilePath, atomically: true, encoding: .utf8) }
@@ -646,7 +643,6 @@ actor BackendService {
     private func createDataDirIfNeeded() throws {
         try FileManager.default.createDirectory(at: self.dataDir, withIntermediateDirectories: true)
     }
-
 
     struct AgentRuntimePaths: Equatable, Sendable {
         let node: String

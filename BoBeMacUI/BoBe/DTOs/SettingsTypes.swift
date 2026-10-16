@@ -1,6 +1,5 @@
 import Foundation
 
-
 enum PhysicalBodyTheme: String, Codable, CaseIterable, Identifiable, Sendable {
     case warmAperture = "warm-aperture"
     case warmLintel = "warm-lintel"
@@ -108,7 +107,6 @@ struct SettingsUpdateResponse: Codable, Sendable {
         case bodyThemeDelivered = "body_theme_delivered"
     }
 }
-
 
 struct SendMessageRequest: Codable, Sendable {
     let content: String

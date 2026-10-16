@@ -11,7 +11,6 @@ final class BobeStore {
     static let shared = BobeStore()
     static let messageWindowCapacity = 200
 
-
     private(set) var context = BobeContext()
     var isReconnecting = false
     var repairIssue: RuntimeIssue?
@@ -19,7 +18,6 @@ final class BobeStore {
     var hasConnectedOnce = false
 
     var proactiveSilenced = false
-
 
     private static let localeOverrideKey = "bobe.locale_override"
     static let supportedLocales = [
@@ -120,7 +118,6 @@ final class BobeStore {
         }
         return nil
     }
-
 
     let client = DaemonClient.shared
     var streamingMessage = ""
@@ -235,7 +232,6 @@ final class BobeStore {
         }
     }
 
-
     func connect() {
         self.synchronizeEndpoint()
         let selection = self.selection
@@ -319,7 +315,6 @@ final class BobeStore {
     func applyPersistedLocale() {
         L10n.setLocaleOverride(self.localeOverride.isEmpty ? nil : self.localeOverride)
     }
-
 
     func retryRuntimeConnection() async {
         do {

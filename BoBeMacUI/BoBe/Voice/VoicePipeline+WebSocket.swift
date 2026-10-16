@@ -205,7 +205,6 @@ extension VoicePipeline {
         }
     }
 
-
     func startKeepalive() {
         self.keepaliveTask?.cancel()
         self.keepaliveTask = Task { [weak self] in
@@ -228,7 +227,6 @@ extension VoicePipeline {
         self.keepaliveTask?.cancel()
         self.keepaliveTask = nil
     }
-
 
     func sendClient(_ msg: ClientVoiceMessage) async {
         guard let task = self.task else { return }
