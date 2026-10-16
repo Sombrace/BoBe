@@ -126,7 +126,6 @@ actor DaemonClient {
         self.encoder = JSONEncoder()
     }
 
-
     func connectSSE(
         generation: UInt64,
         selection: EndpointSelection,
@@ -310,7 +309,6 @@ actor DaemonClient {
         }
     }
 
-
     private func send(
         url: URL,
         routeLabel: String,
@@ -466,7 +464,6 @@ actor DaemonClient {
         return (String(data: data, encoding: .utf8) ?? "Unknown error", nil)
     }
 
-
     func health() async throws -> HealthResponse {
         try await self.fetch("/health")
     }
@@ -493,11 +490,9 @@ actor DaemonClient {
         )
     }
 
-
     func completeBodyRequest(_ requestId: String, reply: BodyReply) async throws {
         try await self.fetchVoid(pathSegments: ["body", "requests", requestId], body: reply)
     }
-
 
     @discardableResult
     func sendMessage(_ content: String, requestId: UUID) async throws -> SendMessageResponse {
@@ -507,7 +502,6 @@ actor DaemonClient {
             body: SendMessageRequest(content: content, requestId: requestId)
         )
     }
-
 
     func getMemory() async throws -> MemoryResponse {
         try await self.fetch("/memory")
@@ -521,7 +515,6 @@ actor DaemonClient {
             body: MemoryUpdateRequest(content: content)
         )
     }
-
 
     func listGoals(status: GoalStatus? = nil, includeArchived: Bool = false) async throws -> GoalListResponse {
         var queryItems: [URLQueryItem] = []
@@ -554,7 +547,6 @@ actor DaemonClient {
         try await self.fetchVoid(pathSegments: ["goals", id, "archive"], method: "POST")
     }
 
-
     func listSouls() async throws -> SoulListResponse {
         try await self.fetch("/souls")
     }
@@ -578,7 +570,6 @@ actor DaemonClient {
     func disableSoul(_ id: String) async throws {
         try await self.fetchVoid(pathSegments: ["souls", id, "disable"], method: "POST")
     }
-
 
     func listUserProfiles() async throws -> UserProfileListResponse {
         try await self.fetch("/user-profiles")

@@ -57,7 +57,6 @@ extension VoicePipeline {
         }
     }
 
-
     private func handleDefaultDeviceChange(kind: DeviceKind) {
         logger.info("voice: default-\(kind.rawValue, privacy: .public) device changed")
         if self.audioRebuildMustWait {

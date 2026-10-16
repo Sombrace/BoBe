@@ -128,7 +128,6 @@ struct GoalsEditor: View {
         )
     }
 
-
     var listPane: some View {
         VStack(alignment: .leading, spacing: 8) {
             SettingsPaneHeader(title: L10n.tr("settings.goals.title")) {
@@ -292,7 +291,6 @@ struct GoalsEditor: View {
                 .accessibilityLabel("\(goal.title), \(Self.statusLabel(goal.status))")
         }
     }
-
 
     func priorityColor(_ priority: Int) -> Color {
         switch priority {

@@ -144,7 +144,6 @@ extension VoicePipeline {
         logger.info("voice engine configured; input \(describe(inputFormat), privacy: .public)")
     }
 
-
     func handleProcessedInput(_ processed: ProcessedVoiceAudio) async {
         guard self.task != nil, self.state.acceptsMicrophoneInput else { return }
 
@@ -214,7 +213,6 @@ extension VoicePipeline {
             self.captureCreditFrames -= 1
         }
     }
-
 
     private func publishInputLevel(frameRms: Float) {
         let floor: Float = -50

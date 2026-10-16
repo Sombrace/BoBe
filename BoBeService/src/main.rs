@@ -658,6 +658,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             let shutdown_handle = handle.clone();
             let shutdown_for_server = shutdown.clone();
             let requests = Arc::clone(&state.runtime.message_requests);
+            let connections = Arc::clone(&state.infra.connection_manager);
             let managing_app = managed_bootstrap_stdin.then(managing_process_id);
             let signal_task = tokio::spawn(async move {
                 tokio::select! {
@@ -670,6 +671,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 }
                 requests.begin_shutdown();
                 shutdown_for_server.cancel();
+                connections.disconnect_all();
                 shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(5)));
             });
 

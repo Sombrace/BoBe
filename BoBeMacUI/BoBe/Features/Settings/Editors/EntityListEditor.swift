@@ -74,7 +74,6 @@ struct EntityListEditor<E: EditableEntity, CR: Sendable, UR: Sendable>: View {
         .onDisappear { self.editCoordinator.unregister() }
     }
 
-
     private var listPane: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingsPaneHeader(title: self.strings.paneTitle) { self.editorState.isCreating.toggle() }
@@ -295,7 +294,6 @@ struct EntityListEditor<E: EditableEntity, CR: Sendable, UR: Sendable>: View {
                 .foregroundStyle(self.theme.colors.textMuted)
         }
     }
-
 
     private func loadEntities() async {
         self.editorState.setLoading(true)

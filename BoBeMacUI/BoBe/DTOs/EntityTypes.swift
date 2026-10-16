@@ -1,6 +1,5 @@
 import Foundation
 
-
 enum GoalStatus: String, Codable, Sendable, CaseIterable {
     case active, paused, completed, archived, unknown
 
@@ -73,7 +72,6 @@ struct GoalUpdateRequest: Codable, Sendable {
     }
 }
 
-
 struct MemoryResponse: Codable, Sendable {
     let content: String
     let bytes: Int
@@ -82,7 +80,6 @@ struct MemoryResponse: Codable, Sendable {
 struct MemoryUpdateRequest: Codable, Sendable {
     let content: String
 }
-
 
 struct Soul: Identifiable, Codable, Sendable {
     let id: String
@@ -117,7 +114,6 @@ struct SoulUpdateRequest: Codable, Sendable {
     var enabled: Bool?
 }
 
-
 struct UserProfile: Identifiable, Codable, Sendable {
     let id: String
     var name: String
@@ -149,7 +145,6 @@ struct UserProfileUpdateRequest: Codable, Sendable {
     var content: String?
     var enabled: Bool?
 }
-
 
 struct MCPServer: Identifiable, Codable, Sendable {
     var id: String {

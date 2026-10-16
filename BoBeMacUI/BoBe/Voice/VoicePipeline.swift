@@ -39,7 +39,6 @@ public final class VoicePipeline {
     private(set) var sttLoadProgress: VoiceSttLoadProgress?
     private(set) var sttDownloadLanguage: String?
 
-
     var permission: AVAuthorizationStatus =
         AVCaptureDevice.authorizationStatus(for: .audio)
 
@@ -224,7 +223,6 @@ public final class VoicePipeline {
             }
         }
     }
-
 
     public func prewarm() async -> Bool {
         self.bootstrapSttPresence()

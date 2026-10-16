@@ -10,7 +10,6 @@ struct AuthStatusResponse: Codable, Sendable {
     }
 }
 
-
 struct LocalRuntimeInstallRequest: Codable, Sendable {
     let profile: String
     let chatModel: String
@@ -44,7 +43,6 @@ struct LocalRuntimeDownload: Codable, Sendable {
 struct LocalRuntimePull: Codable, Sendable {
     let percent: Int?
 }
-
 
 struct VoiceInstallSnapshot: Codable, Sendable {
     let status: InstallStatusWire
@@ -88,7 +86,6 @@ struct VoiceModelProgress: Codable, Sendable, Identifiable {
 struct VoiceInstallPresence: Codable, Sendable {
     let tts: Bool
 }
-
 
 enum ProviderLoginPhase: Equatable, Sendable {
     case preparing

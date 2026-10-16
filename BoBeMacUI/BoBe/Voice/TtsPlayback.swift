@@ -236,7 +236,6 @@ extension VoicePipeline {
         }
     }
 
-
     func playedFramesThisTurn() -> AVAudioFramePosition {
         guard let lrt = self.playerNode.lastRenderTime,
               let pt = self.playerNode.playerTime(forNodeTime: lrt)
@@ -255,7 +254,6 @@ extension VoicePipeline {
         }
         return max(0, pt.sampleTime)
     }
-
 
     func truncatePlayback() {
         self.serverDrainTask?.cancel()
@@ -279,7 +277,6 @@ extension VoicePipeline {
         self.sampleTimeBase = self.currentPlayerSampleTime()
         self.playerNode.play()
     }
-
 
     func handlePlaybackRms(_ rms: Float) {
         let normalized = Self.normalizeRmsToLevel(rms)
@@ -345,7 +342,6 @@ extension VoicePipeline {
         self.audibleHangoverTask = nil
         if self.isTtsAudible { self.isTtsAudible = false }
     }
-
 
     private static func normalizeRmsToLevel(_ rms: Float) -> Float {
         let dbfs = 20 * log10(max(rms, 1e-6))
