@@ -26,6 +26,7 @@ class UpdateOfferToolTests(unittest.TestCase):
             "target": "esp32s3",
             "project_name": "bobe_wb12",
             "app_version": "0.3.0",
+            "build_number": 3,
         }
         self.artifact.write_text(json.dumps(self.metadata))
         self.key = self.root / "key.pem"
@@ -73,6 +74,19 @@ class UpdateOfferToolTests(unittest.TestCase):
             create_update_offer.build_offer(self.args(build_number=2))
         with self.assertRaisesRegex(ValueError, "bounded HTTPS"):
             create_update_offer.build_offer(self.args(url="http://updates.example/body.bin"))
+
+    def test_rejects_build_number_the_image_does_not_report(self) -> None:
+        with self.assertRaisesRegex(ValueError, "does not match the image"):
+            create_update_offer.build_offer(self.args(build_number=4))
+        self.assertFalse((self.root / "offer.json").exists())
+        del self.metadata["build_number"]
+        self.artifact.write_text(json.dumps(self.metadata))
+        with self.assertRaisesRegex(ValueError, "does not record"):
+            create_update_offer.build_offer(self.args())
+        self.metadata["build_number"] = True
+        self.artifact.write_text(json.dumps(self.metadata))
+        with self.assertRaisesRegex(ValueError, "does not record"):
+            create_update_offer.build_offer(self.args(build_number=1, current_build_number=0))
 
     def test_rejects_values_the_firmware_cannot_parse(self) -> None:
         with self.assertRaisesRegex(ValueError, "build number is outside"):

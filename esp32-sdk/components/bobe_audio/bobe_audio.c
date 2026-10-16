@@ -521,17 +521,49 @@ static void playback_task(void *unused)
     }
 }
 
+static void release_audio(void)
+{
+    if (playback_task_handle != NULL) {
+        vTaskDelete(playback_task_handle);
+        playback_task_handle = NULL;
+    }
+    if (capture_task_handle != NULL) {
+        vTaskDelete(capture_task_handle);
+        capture_task_handle = NULL;
+    }
+    if (speaker_channel != NULL) {
+        (void)i2s_del_channel(speaker_channel);
+        speaker_channel = NULL;
+    }
+    if (microphone_channel != NULL) {
+        (void)i2s_del_channel(microphone_channel);
+        microphone_channel = NULL;
+    }
+    if (playback_events != NULL) {
+        vEventGroupDelete(playback_events);
+        playback_events = NULL;
+    }
+    if (state_lock != NULL) {
+        vSemaphoreDelete(state_lock);
+        state_lock = NULL;
+    }
+}
+
 esp_err_t bobe_audio_init(void)
 {
     state_lock = xSemaphoreCreateMutex();
     playback_events = xEventGroupCreate();
-    if (state_lock == NULL || playback_events == NULL) {
-        return ESP_ERR_NO_MEM;
+    esp_err_t result = state_lock != NULL && playback_events != NULL
+                           ? ESP_OK
+                           : ESP_ERR_NO_MEM;
+    if (result == ESP_OK) {
+        result = init_microphone();
     }
-
-    ESP_RETURN_ON_ERROR(init_microphone(), TAG, "initialize microphone");
-    ESP_RETURN_ON_ERROR(init_speaker(), TAG, "initialize speaker");
-    if (xTaskCreatePinnedToCore(
+    if (result == ESP_OK) {
+        result = init_speaker();
+    }
+    if (result == ESP_OK &&
+        xTaskCreatePinnedToCore(
             capture_task,
             "bobe_audio_rx",
             4096,
@@ -539,7 +571,11 @@ esp_err_t bobe_audio_init(void)
             BOBE_TASK_PRIORITY_AUDIO,
             &capture_task_handle,
             BOBE_REALTIME_CORE
-        ) != pdPASS ||
+        ) != pdPASS) {
+        capture_task_handle = NULL;
+        result = ESP_ERR_NO_MEM;
+    }
+    if (result == ESP_OK &&
         xTaskCreatePinnedToCore(
             playback_task,
             "bobe_audio_tx",
@@ -549,9 +585,14 @@ esp_err_t bobe_audio_init(void)
             &playback_task_handle,
             BOBE_REALTIME_CORE
         ) != pdPASS) {
-        return ESP_ERR_NO_MEM;
+        playback_task_handle = NULL;
+        result = ESP_ERR_NO_MEM;
     }
-    return ESP_OK;
+    if (result != ESP_OK) {
+        ESP_LOGE(TAG, "audio initialization failed: %s", esp_err_to_name(result));
+        release_audio();
+    }
+    return result;
 }
 
 void bobe_audio_set_playback_progress_sink(
@@ -924,6 +965,16 @@ void bobe_audio_set_muted(bool muted)
     }
     xSemaphoreTake(state_lock, portMAX_DELAY);
     if (muted) {
+        if (atomic_load(&capturing) || atomic_load(&monitoring)) {
+            const esp_err_t result = i2s_channel_disable(microphone_channel);
+            if (result != ESP_OK) {
+                ESP_LOGW(
+                    TAG,
+                    "microphone disable on mute failed: %s",
+                    esp_err_to_name(result)
+                );
+            }
+        }
         atomic_store(&capturing, false);
         atomic_store(&monitoring, false);
         atomic_store(&capture_stream_id, 0);

@@ -6,12 +6,7 @@ disable-model-invocation: true
 compatibility: ESP-IDF project with a WB-12 connected over USB.
 ---
 
-# WB-12 device operations
-
-Run only the operation in `$ARGUMENTS`, after reading its `--help`.
-
-- Build: `tools/idf.sh build`.
-- Status, identity, observation and flashing: `tools/bobe_hil.sh device ...`.
-
-Flashing changes hardware: check the image and the target first, and flash only
-when asked to. Report missing hardware as a blocker; never simulate it.
+Run only the operation in `$ARGUMENTS`, after reading its `--help`:
+`tools/idf.sh build` or `tools/bobe_hil.sh device status|identify|observe|flash`.
+Flash only when asked, after checking the image and the target. Report missing
+hardware as a blocker; never simulate it.

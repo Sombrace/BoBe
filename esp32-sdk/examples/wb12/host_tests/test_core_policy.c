@@ -1499,6 +1499,85 @@ static void test_update_policy(void)
     CHECK(effect->data.update_state.progress_percent == 100);
 }
 
+static bobe_policy_event_t battery_sample(uint8_t percent, bool charging)
+{
+    const bobe_policy_event_t event = {
+        .kind = BOBE_POLICY_EVENT_BATTERY,
+        .now_us = UINT64_C(9000),
+        .data.battery = {
+            .valid = true,
+            .state = {
+                .percent = percent,
+                .charging = charging,
+            },
+            .transport_connected = true,
+        },
+    };
+    return event;
+}
+
+static void reduce_battery_samples(
+    bobe_policy_context_t *context,
+    uint8_t percent,
+    bool charging,
+    size_t count,
+    bobe_policy_effect_batch_t *effects
+)
+{
+    const bobe_policy_event_t sample = battery_sample(percent, charging);
+    for (size_t index = 0; index < count; ++index) {
+        reduce_event(context, &sample, effects);
+    }
+}
+
+static void test_low_battery_shutdown(void)
+{
+    bobe_policy_context_t context;
+    bobe_policy_effect_batch_t effects;
+
+    for (uint8_t percent = 0; percent < 5; ++percent) {
+        init_online(&context);
+        reduce_battery_samples(&context, percent, false, 2, &effects);
+        CHECK(context.low_battery_samples == 2);
+        CHECK(context.state.lifecycle == BOBE_LIFECYCLE_ONLINE);
+        CHECK(!has_effect(&effects, BOBE_POLICY_EFFECT_BOARD_SHUTDOWN));
+        CHECK(has_effect(&effects, BOBE_POLICY_EFFECT_SEND_BATTERY));
+
+        reduce_battery_samples(&context, percent, false, 1, &effects);
+        CHECK(context.state.lifecycle == BOBE_LIFECYCLE_SHUTTING_DOWN);
+        CHECK(has_effect(&effects, BOBE_POLICY_EFFECT_BOARD_SHUTDOWN));
+        CHECK(!has_effect(&effects, BOBE_POLICY_EFFECT_SEND_BATTERY));
+    }
+
+    init_online(&context);
+    reduce_battery_samples(&context, 4, false, 2, &effects);
+    reduce_battery_samples(&context, 5, false, 1, &effects);
+    CHECK(context.low_battery_samples == 0);
+    reduce_battery_samples(&context, 1, false, 2, &effects);
+    CHECK(context.state.lifecycle == BOBE_LIFECYCLE_ONLINE);
+    CHECK(!has_effect(&effects, BOBE_POLICY_EFFECT_BOARD_SHUTDOWN));
+
+    init_online(&context);
+    reduce_battery_samples(&context, 5, false, 5, &effects);
+    CHECK(context.low_battery_samples == 0);
+    CHECK(context.state.lifecycle == BOBE_LIFECYCLE_ONLINE);
+
+    init_online(&context);
+    reduce_battery_samples(&context, 0, true, 5, &effects);
+    CHECK(context.low_battery_samples == 0);
+    CHECK(context.state.lifecycle == BOBE_LIFECYCLE_ONLINE);
+    CHECK(!has_effect(&effects, BOBE_POLICY_EFFECT_BOARD_SHUTDOWN));
+
+    init_online(&context);
+    reduce_battery_samples(&context, 2, false, 2, &effects);
+    reduce_battery_samples(&context, 2, true, 1, &effects);
+    CHECK(context.low_battery_samples == 0);
+    reduce_battery_samples(&context, 2, false, 2, &effects);
+    CHECK(context.state.lifecycle == BOBE_LIFECYCLE_ONLINE);
+    reduce_battery_samples(&context, 2, false, 1, &effects);
+    CHECK(context.state.lifecycle == BOBE_LIFECYCLE_SHUTTING_DOWN);
+}
+
 static void test_boot_restores_user_settings(void)
 {
     bobe_policy_context_t context;
@@ -1766,6 +1845,7 @@ int main(void)
     test_persisted_microphone_mute_boot();
     test_ota_confirmation_deadline();
     test_update_policy();
+    test_low_battery_shutdown();
     test_boot_restores_user_settings();
     test_theme_version_gating();
     test_local_notices();

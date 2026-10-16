@@ -8,6 +8,7 @@ endif()
 
 idf_component_register(
     SRCS
+        "bobe_claim_store.c"
         "bobe_provisioning.c"
         "${credentials_source}"
     INCLUDE_DIRS "include"

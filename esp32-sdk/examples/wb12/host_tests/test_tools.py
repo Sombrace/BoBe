@@ -113,6 +113,57 @@ class BoBeImageToolTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "does not match"):
                     bobe_image.load_manifest(manifest_path, image)
 
+                manifest["image_sha256"] = "b" * 64
+                manifest["build_number"] = 3
+                manifest_path.write_text(json.dumps(manifest))
+                self.assertEqual(
+                    bobe_image.load_manifest(manifest_path, image)["build_number"],
+                    3,
+                )
+                for malformed in ("3", 0, True):
+                    manifest["build_number"] = malformed
+                    manifest_path.write_text(json.dumps(manifest))
+                    with self.assertRaisesRegex(ValueError, "build number"):
+                        bobe_image.load_manifest(manifest_path, image)
+
+    def test_manifest_records_the_built_firmware_build_number(self) -> None:
+        inspected = {
+            "schema_version": 1,
+            "target": "esp32s3",
+            "project_name": "bobe_wb12",
+            "app_version": "1",
+            "idf_version": "v6.0.2",
+            "app_elf_sha256": "a" * 64,
+            "image_size": 64,
+            "image_sha256": "b" * 64,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            image = build / "bobe_wb12.bin"
+            image.write_bytes(b"x")
+            elf = build / "bobe_wb12.elf"
+            elf.write_bytes(b"elf")
+            configuration = build / "config" / "sdkconfig.json"
+            configuration.parent.mkdir()
+            configuration.write_text(json.dumps({"BOBE_BUILD_NUMBER": 5}))
+            with (
+                mock.patch.object(
+                    bobe_image,
+                    "inspect_application",
+                    return_value=dict(inspected),
+                ),
+                mock.patch.object(
+                    bobe_image,
+                    "git_metadata",
+                    return_value=("d" * 40, False),
+                ),
+            ):
+                manifest = bobe_image.create_manifest(build, image, elf, "edge")
+                self.assertEqual(manifest["build_number"], 5)
+                configuration.unlink()
+                with self.assertRaisesRegex(ValueError, "build configuration"):
+                    bobe_image.create_manifest(build, image, elf, "edge")
+
     def test_manifest_signature_covers_provenance(self) -> None:
         manifest = {
             "schema_version": 1,

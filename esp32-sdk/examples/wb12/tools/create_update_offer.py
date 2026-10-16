@@ -55,6 +55,13 @@ def build_offer(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("build number is outside the firmware range")
     if args.build_number <= args.current_build_number:
         raise ValueError("build number must increase")
+    recorded = metadata.get("build_number")
+    if not isinstance(recorded, int) or isinstance(recorded, bool):
+        raise ValueError("artifact manifest does not record the firmware build number")
+    if recorded != args.build_number:
+        raise ValueError(
+            f"build number {args.build_number} does not match the image's CONFIG_BOBE_BUILD_NUMBER {recorded}"
+        )
     parsed = urlparse(args.url)
     if (
         parsed.scheme != "https"

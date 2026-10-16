@@ -810,6 +810,7 @@ def main() -> None:
                     "manifest": str(output),
                     "image_sha256": manifest["image_sha256"],
                     "app_elf_sha256": manifest["app_elf_sha256"],
+                    "build_number": manifest["build_number"],
                     "source_dirty": manifest["source_dirty"],
                 }
             )

@@ -79,6 +79,26 @@ add_executable(
     test_power.c
     ${ESP_BOBE_SDK_ROOT}/components/bobe_common/bobe_power.c
 )
+add_executable(
+    bobe_audio_tests
+    test_audio.c
+    idf/idf_mock.c
+    ${ESP_BOBE_SDK_ROOT}/components/bobe_audio/bobe_audio.c
+)
+add_executable(
+    bobe_voice_frontend_tests
+    test_voice_frontend.c
+    idf/idf_mock.c
+    ${ESP_BOBE_SDK_ROOT}/components/bobe_voice_frontend/bobe_voice_frontend.c
+)
+add_executable(
+    bobe_claim_store_tests
+    test_claim_store.c
+    idf/idf_mock.c
+    ${ESP_BOBE_SDK_ROOT}/components/bobe_provisioning/bobe_claim_store.c
+    ${ESP_BOBE_SDK_ROOT}/components/bobe_platform/bobe_storage.c
+    ${ESP_BOBE_SDK_ROOT}/components/bobe_common/bobe_claim.c
+)
 set_source_files_properties(
     ../managed_components/espressif__cjson/cJSON/cJSON.c
     PROPERTIES
@@ -148,6 +168,29 @@ target_include_directories(
     PRIVATE
         ${ESP_BOBE_SDK_ROOT}/components/bobe_common/include
 )
+foreach(target bobe_audio_tests bobe_voice_frontend_tests bobe_claim_store_tests)
+    target_include_directories(${target} BEFORE PRIVATE idf)
+endforeach()
+target_include_directories(
+    bobe_audio_tests
+    PRIVATE
+        ${ESP_BOBE_SDK_ROOT}/components/bobe_audio/include
+        ${ESP_BOBE_SDK_ROOT}/components/bobe_board/include
+        ${ESP_BOBE_SDK_ROOT}/components/bobe_platform/include
+)
+target_include_directories(
+    bobe_voice_frontend_tests
+    PRIVATE
+        ${ESP_BOBE_SDK_ROOT}/components/bobe_voice_frontend/include
+        ${ESP_BOBE_SDK_ROOT}/components/bobe_platform/include
+)
+target_include_directories(
+    bobe_claim_store_tests
+    PRIVATE
+        ${ESP_BOBE_SDK_ROOT}/components/bobe_provisioning
+        ${ESP_BOBE_SDK_ROOT}/components/bobe_platform/include
+        ${ESP_BOBE_SDK_ROOT}/components/bobe_common/include
+)
 
 target_compile_definitions(
     bobe_host_tests
@@ -158,6 +201,16 @@ target_compile_definitions(
     bobe_theme_tests
     PRIVATE
         CONFIG_BOBE_AUDIO_PLAYBACK_CREDIT_MS=300
+)
+target_compile_definitions(
+    bobe_audio_tests
+    PRIVATE
+        CONFIG_BOBE_AUDIO_PLAYBACK_CREDIT_MS=300
+)
+target_compile_definitions(
+    bobe_voice_frontend_tests
+    PRIVATE
+        CONFIG_BOBE_ENABLE_ESP_SR=1
 )
 
 foreach(
@@ -172,6 +225,9 @@ foreach(
     bobe_update_offer_tests
     bobe_claim_tests
     bobe_power_tests
+    bobe_audio_tests
+    bobe_voice_frontend_tests
+    bobe_claim_store_tests
 )
     target_compile_features(${target} PRIVATE c_std_11)
     target_compile_options(
@@ -207,3 +263,6 @@ add_test(NAME bobe_update_manifest_tests COMMAND bobe_update_manifest_tests)
 add_test(NAME bobe_update_offer_tests COMMAND bobe_update_offer_tests)
 add_test(NAME bobe_claim_tests COMMAND bobe_claim_tests)
 add_test(NAME bobe_power_tests COMMAND bobe_power_tests)
+add_test(NAME bobe_audio_tests COMMAND bobe_audio_tests)
+add_test(NAME bobe_voice_frontend_tests COMMAND bobe_voice_frontend_tests)
+add_test(NAME bobe_claim_store_tests COMMAND bobe_claim_store_tests)

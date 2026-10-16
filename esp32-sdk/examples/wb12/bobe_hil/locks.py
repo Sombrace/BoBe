@@ -3,13 +3,11 @@ import json
 import os
 import re
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 from bobe_hil.image import (
     PROFILES,
-    inspect_application,
-    sha256_file,
+    artifact_manifest,
     write_json,
 )
 
@@ -94,25 +92,16 @@ def create_snapshot_lock(
         raise ValueError("snapshot lock output already exists")
     image = build / "bobe_wb12.bin"
     elf = build / "bobe_wb12.elf"
-    application = inspect_application(image)
-    elf_sha256 = sha256_file(elf)
-    if application["app_elf_sha256"] != elf_sha256:
+    manifest = artifact_manifest(image, elf, profile, source_commit, False)
+    if manifest["app_elf_sha256"] != manifest["elf_file_sha256"]:
         raise ValueError("snapshot ELF does not match the image descriptor")
     values = {
         "SNAPSHOT_SOURCE_COMMIT": source_commit,
-        "SNAPSHOT_IMAGE_SHA256": str(application["image_sha256"]),
-        "SNAPSHOT_ELF_SHA256": elf_sha256,
-        "SNAPSHOT_APP_ELF_SHA256": str(application["app_elf_sha256"]),
-        "SNAPSHOT_IMAGE_SIZE": str(application["image_size"]),
+        "SNAPSHOT_IMAGE_SHA256": str(manifest["image_sha256"]),
+        "SNAPSHOT_ELF_SHA256": str(manifest["elf_file_sha256"]),
+        "SNAPSHOT_APP_ELF_SHA256": str(manifest["app_elf_sha256"]),
+        "SNAPSHOT_IMAGE_SIZE": str(manifest["image_size"]),
         "SNAPSHOT_BUILD_DIRECTORY": build.name,
-    }
-    manifest = {
-        **application,
-        "profile": profile,
-        "elf_file_sha256": elf_sha256,
-        "source_commit": source_commit,
-        "source_dirty": False,
-        "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
     write_json(Path(f"{image}.manifest.json"), manifest)
     descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
