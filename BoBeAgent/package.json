@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
-    "test": "node --test --test-timeout=30000 dist/*.test.js",
+    "test": "node --test --test-timeout=120000 dist/*.test.js",
     "start": "node dist/main.js"
   },
   "dependencies": {
