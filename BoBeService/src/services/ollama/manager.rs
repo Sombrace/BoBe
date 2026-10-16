@@ -53,6 +53,7 @@ pub(crate) struct OllamaManager {
     http_client: Arc<reqwest::Client>,
     base_url: String,
     child: Mutex<Option<tokio::process::Child>>,
+    start: Mutex<()>,
 }
 
 fn serve_command(binary: &Path) -> tokio::process::Command {
@@ -81,6 +82,7 @@ impl OllamaManager {
             http_client,
             base_url: base_url.trim_end_matches('/').to_string(),
             child: Mutex::new(None),
+            start: Mutex::new(()),
         }
     }
 
@@ -99,6 +101,7 @@ impl OllamaManager {
     }
 
     pub(crate) async fn ensure_daemon_running(&self, binary: &Path) -> Result<(), AppError> {
+        let _start = self.start.lock().await;
         if self.health_check().await {
             info!("ollama_manager.already_running");
             return Ok(());
