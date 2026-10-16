@@ -42,6 +42,8 @@
 "phone.status.connecting" = "Σύνδεση…";
 "phone.status.offline" = "Εκτός σύνδεσης";
 "phone.status.removed" = "Το iPhone αφαιρέθηκε";
+"phone.status.setting_up" = "Ολοκλήρωση ρύθμισης";
+"phone.status.update" = "Χρειάζεται ενημέρωση";
 "phone.status.replying" = "Απαντά…";
 "phone.status.working" = "Το δουλεύει…";
 "phone.status.thinking" = "Σκέφτεται…";
@@ -59,10 +61,16 @@
 "phone.thread.trouble" = "Δεν πέτυχε. Δοκίμασε ξανά.";
 "phone.thread.reached_out" = "Η BoBe σού έγραψε";
 "phone.thread.retry" = "Δεν στάλθηκε. Πάτησε για νέα προσπάθεια";
+"phone.thread.unconfirmed" = "Αυτό το μήνυμα ίσως δεν στάλθηκε. Έλεγξε τη συζήτηση πριν το στείλεις ξανά.";
+"phone.thread.send_again" = "Αποστολή ξανά";
 "phone.connection.offline.title" = "Η BoBe δεν απαντά";
 "phone.connection.removed.title" = "Αυτό το iPhone αφαιρέθηκε";
 "phone.connection.retry" = "Δοκίμασε ξανά";
 "phone.connection.pair_again" = "Νέα σύνδεση";
+"phone.connection.setting_up.title" = "Η BoBe ρυθμίζεται ακόμα";
+"phone.connection.setting_up.body" = "Θα μπορείς να συζητήσεις μόλις ολοκληρωθεί η ρύθμιση.";
+"phone.connection.incompatible.title" = "Απαιτείται ενημέρωση";
+"phone.connection.incompatible.body" = "Ενημέρωσε αυτή την εφαρμογή και την BoBe στον υπολογιστή σου και δοκίμασε ξανά.";
 "phone.question.label" = "Η BoBe ρωτά";
 "phone.question.placeholder" = "Η απάντησή σου";
 "phone.question.send" = "Αποστολή απάντησης";
@@ -81,6 +89,7 @@
 "phone.talk.permission" = "Ενεργοποίησε το Μικρόφωνο και την Αναγνώριση ομιλίας στις Ρυθμίσεις.";
 "phone.settings.title" = "Ρυθμίσεις";
 "phone.settings.address" = "Διεύθυνση";
+"phone.settings.forget_pending" = "Η προηγούμενη BoBe δεν έχει ξεχάσει ακόμα αυτό το iPhone. Θα γίνει μόλις αυτό το iPhone μπορέσει να επικοινωνήσει μαζί της.";
 "phone.settings.voice" = "Φωνή";
 "phone.settings.unpair" = "Αποσύνδεση αυτού του iPhone";
 "phone.settings.unpair.title" = "Αποσύνδεση αυτού του iPhone;";
@@ -94,7 +103,9 @@
 "phone.work.needs_you" = "Σε χρειάζεται";
 "phone.work.goals" = "Στόχοι";
 "phone.work.goals.empty" = "Κανένας στόχος ακόμα.";
+"phone.work.goals.failed" = "Οι στόχοι δεν φόρτωσαν.";
 "phone.work.loading" = "Φόρτωση…";
+"phone.load.stale" = "Κάποια στοιχεία δεν ανανεώθηκαν. Σύρε προς τα κάτω για νέα προσπάθεια.";
 "phone.work.goals.new" = "Νέος στόχος";
 "phone.work.coming_up" = "Επόμενα";
 "phone.work.recently" = "Πρόσφατα";
@@ -134,6 +145,7 @@
 "phone.schedule.repeats" = "Επαναλαμβάνεται";
 "phone.memory.title" = "Μνήμη";
 "phone.memory.empty" = "Τίποτα ακόμα.";
+"phone.memory.failed" = "Η μνήμη δεν φόρτωσε. Σύρε προς τα κάτω για νέα προσπάθεια.";
 "phone.memory.no_match" = "Κανένα αποτέλεσμα.";
 "phone.memory.forget" = "Να ξεχάσει κάτι";
 "phone.memory.forget.prefill" = "Σε παρακαλώ, ξέχασε ";

@@ -169,7 +169,10 @@ export class OwnedMcpTransport implements McpTransport {
   }
 
   close(): Promise<void> {
-    this.closePromise ??= this.stop();
+    this.closePromise ??= this.stop().catch(error => {
+      this.closePromise = undefined;
+      throw error;
+    });
     return this.closePromise;
   }
 

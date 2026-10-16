@@ -9,6 +9,7 @@ private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline.
 extension VoicePipeline {
 
     func tearDownAudio() {
+        self.audioLifecycle.invalidate()
         if self.inputTapInstalled {
             self.audioEngine.inputNode.removeTap(onBus: 0)
             self.inputTapInstalled = false
@@ -30,21 +31,31 @@ extension VoicePipeline {
         }
         self.audioInputContinuation?.finish()
         self.audioInputContinuation = nil
-        self.audioInputTask?.cancel()
+        let inputTask = self.audioInputTask
         self.audioInputTask = nil
-        Task { await self.inputProcessor.reset() }
+        inputTask?.cancel()
+        let processor = self.inputProcessor
+        let engine = self.activeStt
+        self.audioLifecycle.enqueue {
+            await inputTask?.value
+            await processor.reset()
+            try? await engine.reset()
+        }
         self.pendingTurnId = nil
         self.partialSendTask?.cancel()
         self.partialSendTask = nil
         self.pendingPartialForServer = nil
-        let engine = self.activeStt
-        Task { try? await engine.reset() }
         self.bargeInCount = 0
         self.bargeInSent = false
         self.isWarm = false
     }
 
-    func configureEngine() throws {
+    func configureEngine() async throws {
+        let generation = self.audioLifecycle.generation
+        await self.audioLifecycle.settled()
+        guard generation == self.audioLifecycle.generation else {
+            throw CancellationError()
+        }
         do {
             try self.configureEngineTransaction()
         } catch {
@@ -70,15 +81,14 @@ extension VoicePipeline {
             bufferingPolicy: .bufferingNewest(16)
         )
         self.audioInputContinuation = continuation
-        let engine = self.activeStt
         let processor = self.inputProcessor
         self.audioInputTask = Task { @MainActor [weak self] in
             for await captured in audioStream {
                 guard !Task.isCancelled else { return }
                 do {
                     let processed = try await processor.process(captured)
-                    guard let self else { return }
-                    await self.handleProcessedInput(processed, engine: engine)
+                    guard let self, !Task.isCancelled else { return }
+                    await self.handleProcessedInput(processed)
                 } catch {
                     guard let self else { return }
                     self.lastError = "input processing: \(error.localizedDescription)"
@@ -135,17 +145,8 @@ extension VoicePipeline {
     }
 
 
-    func handleProcessedInput(
-        _ processed: ProcessedVoiceAudio,
-        engine: any VoiceSttEngine
-    ) async {
-        guard self.task != nil else { return }
-        switch self.state {
-        case .idle, .connecting, .failed:
-            return
-        case .listening, .capturing, .thinking, .speaking, .cancelling:
-            break
-        }
+    func handleProcessedInput(_ processed: ProcessedVoiceAudio) async {
+        guard self.task != nil, self.state.acceptsMicrophoneInput else { return }
 
         guard !self.muted else {
             self.inputLevel = 0
@@ -163,7 +164,7 @@ extension VoicePipeline {
         }
         guard self.sttStatus == .ready, self.sttLoaded else { return }
         do {
-            try await engine.acceptSamples(processed.samples16k)
+            try await self.activeStt.acceptSamples(processed.samples16k)
         } catch {
             if case FluidAudioSttError.notLoaded = error {
                 logger.debug("stt.acceptSamples_notLoaded_race")
@@ -177,19 +178,19 @@ extension VoicePipeline {
 
     private func sendCaptureSamples(_ samples: [Float]) async {
         self.captureSamples.append(contentsOf: samples)
-        while self.captureSamples.count >= 320 {
+        while self.captureSamples.count >= VoiceWire.captureFrameSamples {
             guard let streamId = self.captureStreamId,
                   self.captureCreditFrames > 0,
                   let task = self.task
             else {
-                if self.captureSamples.count > 16_000 {
+                if self.captureSamples.count > VoiceWire.captureSampleRate {
                     let reason = "Speech server stopped accepting microphone audio"
                     self.lastError = reason
                     self.tearDownConnection(finalState: .failed(reason), sendAbort: false)
                 }
                 return
             }
-            guard let frameSamples = self.captureSamples.firstFrame(count: 320),
+            guard let frameSamples = self.captureSamples.firstFrame(count: VoiceWire.captureFrameSamples),
                   let frame = VoiceCaptureFrameEncoder.encode(
                       streamId: streamId,
                       sequence: self.captureSequence,
@@ -207,7 +208,7 @@ extension VoicePipeline {
             guard self.task === task,
                   self.captureStreamId == streamId,
                   self.captureCreditFrames > 0,
-                  self.captureSamples.consumeFirst(320)
+                  self.captureSamples.consumeFirst(VoiceWire.captureFrameSamples)
             else { return }
             self.captureSequence &+= 1
             self.captureCreditFrames -= 1
@@ -255,19 +256,18 @@ extension VoicePipeline {
         guard !self.bargeInSent else { return }
         self.bargeInSent = true
         let playheadChunk = self.overlapPlayheadChunk ?? self.playheadChunk()
-        if self.clientTtsActive, BargeInPolicy.judge(self.partialTranscript) == .interrupt {
-            self.cancelClientTtsTurn()
-        }
         let tsMs = UInt64(Date.now.timeIntervalSince1970 * 1_000)
         logger.info("voice.barge_in_sending playedMs=\(playedMs)")
         let evidence = self.partialTranscript
+        let turnId = self.replyPlayback?.turnId
         Task { [weak self] in
             guard let self else { return }
             await self.sendClient(.bargeIn(
                 tsMs: tsMs,
                 playbackMsPlayed: playedMs,
                 partialText: evidence.isEmpty ? nil : evidence,
-                playheadChunk: playheadChunk
+                playheadChunk: playheadChunk,
+                turnId: turnId
             ))
             try? await Task.sleep(for: .milliseconds(250))
             guard self.state == .speaking else { return }

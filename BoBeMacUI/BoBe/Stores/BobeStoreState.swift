@@ -90,7 +90,6 @@ enum MessageComposerBlockReason: Sendable, Equatable {
 struct BobeContext: Sendable {
     var daemonConnected = false
     var daemonError = false
-    var capturing = false
     var thinking = false
     var speaking = false
     var shuttingDown = false

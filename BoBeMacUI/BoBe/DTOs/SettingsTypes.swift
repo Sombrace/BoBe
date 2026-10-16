@@ -17,7 +17,7 @@ enum PhysicalBodyTheme: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
-struct DaemonSettings: Codable, Sendable {
+struct DaemonSettings: Codable, Sendable, Equatable {
     var bodyTheme: PhysicalBodyTheme
     var bodyConnected: Bool
     var captureEnabled: Bool
@@ -57,7 +57,7 @@ struct DaemonSettings: Codable, Sendable {
     }
 }
 
-struct SettingsUpdateRequest: Codable, Sendable {
+struct SettingsUpdateRequest: Codable, Sendable, Equatable {
     var bodyTheme: PhysicalBodyTheme?
     var captureEnabled: Bool?
     var captureIntervalSeconds: Int?
@@ -134,6 +134,11 @@ enum InitializationStateWire: String, Codable, Sendable, Equatable {
     case providerRequired = "provider_required"
     case personalizationRequired = "personalization_required"
     case ready
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = InitializationStateWire(rawValue: raw) ?? .providerRequired
+    }
 }
 
 struct ReadinessResponse: Codable, Sendable {
@@ -170,11 +175,10 @@ struct HealthServices: Codable, Sendable {
 
 struct StatusResponse: Codable, Sendable {
     let indicator: String
-    let capturing: Bool
     let acceptingUserMessages: Bool
 
     enum CodingKeys: String, CodingKey {
-        case indicator, capturing
+        case indicator
         case acceptingUserMessages = "accepting_user_messages"
     }
 

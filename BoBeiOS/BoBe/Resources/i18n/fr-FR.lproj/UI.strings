@@ -42,6 +42,8 @@
 "phone.status.connecting" = "Connexion…";
 "phone.status.offline" = "Hors ligne";
 "phone.status.removed" = "Non associé";
+"phone.status.setting_up" = "Configuration en cours";
+"phone.status.update" = "Mise à jour requise";
 "phone.status.replying" = "Répond…";
 "phone.status.working" = "Au travail…";
 "phone.status.thinking" = "Réfléchit…";
@@ -59,10 +61,16 @@
 "phone.thread.trouble" = "Cela n’a pas fonctionné. Réessayez.";
 "phone.thread.reached_out" = "BoBe vous a écrit";
 "phone.thread.retry" = "Non envoyé. Touchez pour réessayer";
+"phone.thread.unconfirmed" = "Ce message n’a peut-être pas été envoyé. Vérifiez la conversation avant de le renvoyer.";
+"phone.thread.send_again" = "Renvoyer";
 "phone.connection.offline.title" = "Impossible de joindre BoBe";
 "phone.connection.removed.title" = "Cet iPhone n’est pas associé";
 "phone.connection.retry" = "Réessayer";
 "phone.connection.pair_again" = "Associer de nouveau";
+"phone.connection.setting_up.title" = "BoBe est encore en cours de configuration";
+"phone.connection.setting_up.body" = "Vous pourrez discuter une fois la configuration terminée.";
+"phone.connection.incompatible.title" = "Une mise à jour est nécessaire";
+"phone.connection.incompatible.body" = "Mettez à jour cette app et BoBe sur votre ordinateur, puis réessayez.";
 "phone.question.label" = "BoBe demande";
 "phone.question.placeholder" = "Votre réponse";
 "phone.question.send" = "Envoyer la réponse";
@@ -81,6 +89,7 @@
 "phone.talk.permission" = "Activez Micro et Reconnaissance vocale dans Réglages.";
 "phone.settings.title" = "Réglages";
 "phone.settings.address" = "Adresse";
+"phone.settings.forget_pending" = "Votre ancienne BoBe n’a pas encore oublié cet iPhone. Ce sera fait dès que cet iPhone pourra la joindre.";
 "phone.settings.voice" = "Voix";
 "phone.settings.unpair" = "Dissocier cet iPhone";
 "phone.settings.unpair.title" = "Dissocier cet iPhone ?";
@@ -94,7 +103,9 @@
 "phone.work.needs_you" = "A besoin de vous";
 "phone.work.goals" = "Objectifs";
 "phone.work.goals.empty" = "Aucun objectif pour l’instant.";
+"phone.work.goals.failed" = "Impossible de charger les objectifs.";
 "phone.work.loading" = "Chargement…";
+"phone.load.stale" = "Certaines données n’ont pas pu être actualisées. Tirez vers le bas pour réessayer.";
 "phone.work.goals.new" = "Nouvel objectif";
 "phone.work.coming_up" = "À venir";
 "phone.work.recently" = "Récemment";
@@ -134,6 +145,7 @@
 "phone.schedule.repeats" = "Se répète";
 "phone.memory.title" = "Mémoire";
 "phone.memory.empty" = "Rien pour l’instant.";
+"phone.memory.failed" = "Impossible de charger la mémoire. Tirez vers le bas pour réessayer.";
 "phone.memory.no_match" = "Aucun résultat.";
 "phone.memory.forget" = "Demander d’oublier";
 "phone.memory.forget.prefill" = "S’il te plaît, oublie ";

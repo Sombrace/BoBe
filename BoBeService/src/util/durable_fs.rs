@@ -159,6 +159,32 @@ pub(crate) fn sync_tree(path: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
+pub(crate) fn sync_tree_with_links(path: &Path) -> Result<(), AppError> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    if metadata.is_file() {
+        std::fs::File::open(path)?.sync_all()?;
+        return Ok(());
+    }
+    if !metadata.is_dir() {
+        return Err(AppError::Config(format!(
+            "durable tree contains unsupported entry: {}",
+            path.display()
+        )));
+    }
+    for entry in std::fs::read_dir(path)? {
+        sync_tree_with_links(&entry?.path())?;
+    }
+    std::fs::File::open(path)?.sync_all()?;
+    Ok(())
+}
+
+pub(crate) fn sync_parent_sync(path: &Path) -> Result<(), AppError> {
+    sync_directory_sync(parent(path)?)
+}
+
 pub(crate) async fn sync_directory(path: &Path) -> Result<(), AppError> {
     let directory = tokio::fs::File::open(path).await?;
     directory.sync_all().await?;

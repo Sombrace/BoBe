@@ -28,14 +28,12 @@ pub(crate) type Soul = Document<Souls>;
 pub(crate) struct SoulSummary {
     pub(crate) souls: Vec<Soul>,
     pub(crate) count: usize,
-    pub(crate) enabled_count: usize,
 }
 
 impl From<Vec<Soul>> for SoulSummary {
     fn from(souls: Vec<Soul>) -> Self {
         Self {
             count: souls.len(),
-            enabled_count: souls.iter().filter(|soul| soul.enabled).count(),
             souls,
         }
     }

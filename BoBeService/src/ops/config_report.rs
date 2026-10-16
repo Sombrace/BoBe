@@ -100,6 +100,13 @@ pub(crate) fn validate(loaded: &LoadedConfig) -> ValidationReport {
             "Set BOBE_DATA_DIR to an absolute path.",
         ));
     }
+    for message in config.body.validation_errors() {
+        findings.push(error(
+            "body.invalid",
+            message,
+            "Correct the [body] settings, or set body.enabled = false, then restart the daemon.",
+        ));
+    }
     if !loaded.paths.database_url().starts_with("sqlite:") {
         findings.push(ValidationFinding {
             id: "database.unsupported_url",
@@ -125,6 +132,25 @@ fn error(id: &'static str, message: String, remediation: &str) -> ValidationFind
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_invalid_enabled_body_gateway_makes_the_configuration_invalid() {
+        let root = std::env::temp_dir().join(format!("bobe-config-body-{}", uuid::Uuid::new_v4()));
+        let mut loaded = crate::config::Config::load_from(&root.join("config.toml"), &root)
+            .expect("default configuration");
+        assert!(super::validate(&loaded).valid);
+
+        loaded.config.body.enabled = true;
+        let report = super::validate(&loaded);
+
+        assert!(!report.valid);
+        assert!(report.findings.iter().any(
+            |finding| finding.id == "body.invalid" && finding.message.contains("trust_key_id")
+        ));
+        assert!(report.findings.iter().any(
+            |finding| finding.id == "body.invalid" && finding.message.contains("tls_cert_path")
+        ));
+    }
+
     #[test]
     fn serialized_config_does_not_expose_tokens() {
         let mut config = crate::config::Config::default();

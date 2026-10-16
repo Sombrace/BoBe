@@ -7,7 +7,7 @@ struct GoalDetailView: View {
     @Environment(\.theme) private var theme
 
     private var goal: Goal? {
-        self.model.goals.first { $0.id == self.goalId }
+        self.model.work.goals.first { $0.id == self.goalId }
     }
 
     var body: some View {
@@ -57,7 +57,7 @@ struct GoalDetailView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button {
-                            Task { await self.model.setGoal(goal, paused: goal.status == .active) }
+                            Task { await self.model.work.setGoal(goal, paused: goal.status == .active) }
                         } label: {
                             Label(
                                 L10n.tr(goal.status == .active ? "phone.goal.pause" : "phone.goal.resume"),
@@ -84,7 +84,11 @@ struct GoalDetailView: View {
         ) {
             Button(L10n.tr("phone.goal.complete")) {
                 if let goal {
-                    Task { await self.model.completeGoal(goal) }
+                    Task {
+                        if await self.model.work.completeGoal(goal) {
+                            await self.model.loadWork()
+                        }
+                    }
                 }
             }
         }
@@ -146,7 +150,7 @@ struct NewGoalSheet: View {
             Button(L10n.tr("phone.goal.new.save")) {
                 self.saving = true
                 Task {
-                    let saved = await self.model.createGoal(title: self.title, why: self.why)
+                    let saved = await self.model.work.createGoal(title: self.title, why: self.why)
                     self.saving = false
                     if saved {
                         self.dismiss()

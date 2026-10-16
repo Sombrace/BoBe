@@ -7,21 +7,33 @@ struct WorkView: View {
     @Environment(\.theme) private var theme
 
     private var currentGoals: [Goal] {
-        self.model.goals
+        self.model.work.goals
             .filter { $0.status == .active || $0.status == .paused }
             .sorted { ($0.status == .active ? 0 : 1, -$0.priority) < ($1.status == .active ? 0 : 1, -$1.priority) }
     }
 
     private var finishedGoals: [Goal] {
-        self.model.goals.filter { $0.status == .completed }
+        self.model.work.goals.filter { $0.status == .completed }
+    }
+
+    private var goalsNote: String {
+        if self.model.work.goalsLoad.loaded {
+            return L10n.tr("phone.work.goals.empty")
+        }
+        if self.model.work.goalsLoad.failed {
+            return L10n.tr("phone.work.goals.failed")
+        }
+        return L10n.tr("phone.work.loading")
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    if self.model.link == .offline || self.model.link == .removed {
+                    if self.model.needsAttention {
                         ConnectionCard(model: self.model)
+                    } else if self.model.workFailed {
+                        PhoneTroubleNote(text: L10n.tr("phone.load.stale"))
                     }
                     if !self.model.questions.isEmpty {
                         WorkSection(title: L10n.tr("phone.work.needs_you")) {
@@ -32,7 +44,7 @@ struct WorkView: View {
                     }
                     WorkSection(title: L10n.tr("phone.work.goals")) {
                         if self.currentGoals.isEmpty {
-                            WorkEmptyNote(text: L10n.tr(self.model.workLoaded ? "phone.work.goals.empty" : "phone.work.loading"))
+                            WorkEmptyNote(text: self.goalsNote)
                         }
                         ForEach(self.currentGoals) { goal in
                             NavigationLink(value: goal.id) {
@@ -48,16 +60,16 @@ struct WorkView: View {
                         .buttonStyle(.phoneQuiet)
                         .disabled(self.model.link != .online)
                     }
-                    if !self.model.schedules.isEmpty {
+                    if !self.model.work.schedules.isEmpty {
                         WorkSection(title: L10n.tr("phone.work.coming_up")) {
-                            ForEach(self.model.schedules.filter(\.enabled)) { schedule in
+                            ForEach(self.model.work.schedules.filter(\.enabled)) { schedule in
                                 ScheduleRow(schedule: schedule)
                             }
                         }
                     }
-                    if !self.model.jobs.isEmpty {
+                    if !self.model.work.jobs.isEmpty {
                         WorkSection(title: L10n.tr("phone.work.recently")) {
-                            ForEach(self.model.jobs.prefix(8)) { job in
+                            ForEach(self.model.work.jobs.prefix(8)) { job in
                                 Button {
                                     self.openJob = job
                                 } label: {
@@ -81,7 +93,7 @@ struct WorkView: View {
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
                 .padding(.bottom, 24)
-                .animation(BobeMotion.standard, value: self.model.goals.map(\.id))
+                .animation(BobeMotion.standard, value: self.model.work.goals.map(\.id))
             }
             .background(PhoneBackdrop())
             .navigationTitle(L10n.tr("phone.work.title"))
@@ -94,8 +106,8 @@ struct WorkView: View {
                 GoalDetailView(model: self.model, goalId: id)
             }
             .refreshable { await self.model.loadWork() }
-            .task(id: self.model.link) {
-                if self.model.link == .online {
+            .task(id: self.model.isConnected) {
+                if self.model.isConnected {
                     await self.model.loadWork()
                 }
             }

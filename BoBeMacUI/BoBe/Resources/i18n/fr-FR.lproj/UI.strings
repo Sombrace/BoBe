@@ -175,7 +175,6 @@
 "settings.shared.restart_banner.message" = "Certaines modifications ne prendront effet qu’après le redémarrage de BoBe.";
 "settings.shared.restart_banner.restart_now" = "Redémarrer maintenant";
 "settings.shared.section.enabled_format" = "%@ activé";
-"settings.shared.validation.content_min_length_format" = "Le contenu doit comporter au moins %d caractères";
 "settings.souls.delete.accessibility" = "Supprimer l'âme";
 "settings.souls.empty.description" = "Créez-en une pour définir la personnalité de BoBe";
 "settings.souls.empty.select" = "Sélectionnez une âme à modifier";
@@ -435,6 +434,10 @@
 "setup.voice.skip" = "Passer pour l’instant";
 "setup.voice.install_button" = "Configurer la voix";
 "setup.voice.cancel" = "Annuler";
+"setup.voice.canceling" = "Annulation…";
+"setup.voice.cancel_failed_format" = "BoBe n’a pas pu arrêter le téléchargement. %@";
+"setup.voice.cancel_still_running" = "Le téléchargement est encore en cours d’arrêt. Réessayez dans un instant.";
+"settings.voice.session_restart_failed_format" = "La voix n’a pas pu redémarrer avec vos nouveaux réglages. %@";
 "setup.voice.continue" = "Continuer";
 "setup.voice.try_again" = "Réessayer";
 "setup.voice.continue_without" = "Continuer sans la voix";
@@ -479,7 +482,6 @@
 "setup.runtime.phase.starting" = "Démarrage de BoBe…";
 "setup.runtime.phase.checking" = "Recherche de BoBe…";
 "setup.runtime.phase.pairing" = "Appairage sécurisé…";
-"setup.runtime.phase.saving" = "Enregistrement de la connexion…";
 "setup.runtime.phase.verifying" = "Vérification de la connexion…";
 "setup.runtime.retry_connection" = "Réessayer";
 "setup.runtime.pair_again" = "Relancer l’appairage";
@@ -823,3 +825,10 @@
 "setup.permissions.card.status.allowed" = "Autorisé";
 "setup.value.title" = "Bonjour, je suis BoBe";
 "setup.value.continue" = "Commencer";
+"app.common.expanded" = "Développé";
+"app.common.collapsed" = "Réduit";
+"setup.proactivity.error.not_saved" = "BoBe n’a pas pu enregistrer ce choix. Réessayez.";
+"setup.local.cancel_failed" = "BoBe n’a pas pu arrêter le téléchargement. Réessayez.";
+"settings.shared.restart_banner.failed" = "BoBe n’a pas pu redémarrer. Réessayez.";
+"settings.context_editor.raw.accessibility_format" = "Markdown de %@";
+"settings.mcp.editor.accessibility" = "Configuration des serveurs d’outils (JSON)";

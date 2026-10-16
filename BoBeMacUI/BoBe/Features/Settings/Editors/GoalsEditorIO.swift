@@ -38,10 +38,9 @@ extension GoalsEditor {
                 req.priority = self.newPriority
                 let goal = try await DaemonClient.shared.createGoal(req)
                 self.goals.insert(goal, at: 0)
-                self.editorState.select(goal.id)
                 self.newTitle = ""
                 self.newPriority = 2
-                self.editorState.setCreating(false)
+                self.editCoordinator.selectCreated(goal.id, in: self.$editorState)
             } catch {
                 self.editorState.setError(error)
             }

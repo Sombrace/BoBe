@@ -42,6 +42,8 @@
 "phone.status.connecting" = "연결하는 중…";
 "phone.status.offline" = "오프라인";
 "phone.status.removed" = "iPhone이 제거됐어요";
+"phone.status.setting_up" = "설정을 마무리하는 중";
+"phone.status.update" = "업데이트 필요";
 "phone.status.replying" = "답하는 중…";
 "phone.status.working" = "작업하는 중…";
 "phone.status.thinking" = "생각하는 중…";
@@ -59,10 +61,16 @@
 "phone.thread.trouble" = "잘 안 됐어요. 다시 시도하세요.";
 "phone.thread.reached_out" = "BoBe가 먼저 말을 걸었어요";
 "phone.thread.retry" = "보내지 못했어요. 탭해서 다시 보내세요";
+"phone.thread.unconfirmed" = "이 메시지가 전송되지 않았을 수 있어요. 다시 보내기 전에 대화를 확인하세요.";
+"phone.thread.send_again" = "다시 보내기";
 "phone.connection.offline.title" = "BoBe와 연락이 닿지 않아요";
 "phone.connection.removed.title" = "이 iPhone은 제거됐어요";
 "phone.connection.retry" = "다시 시도";
 "phone.connection.pair_again" = "다시 연결";
+"phone.connection.setting_up.title" = "BoBe가 아직 설정 중이에요";
+"phone.connection.setting_up.body" = "설정이 끝나면 대화할 수 있어요.";
+"phone.connection.incompatible.title" = "업데이트가 필요해요";
+"phone.connection.incompatible.body" = "이 앱과 컴퓨터의 BoBe를 업데이트한 다음 다시 시도하세요.";
 "phone.question.label" = "BoBe의 질문";
 "phone.question.placeholder" = "답변을 입력하세요";
 "phone.question.send" = "답변 보내기";
@@ -81,6 +89,7 @@
 "phone.talk.permission" = "설정에서 마이크와 음성 인식을 켜세요.";
 "phone.settings.title" = "설정";
 "phone.settings.address" = "주소";
+"phone.settings.forget_pending" = "이전 BoBe가 아직 이 iPhone을 잊지 않았어요. 이 iPhone이 그 BoBe에 연결되면 잊게 돼요.";
 "phone.settings.voice" = "음성";
 "phone.settings.unpair" = "이 iPhone 연결 해제";
 "phone.settings.unpair.title" = "이 iPhone의 연결을 해제할까요?";
@@ -94,7 +103,9 @@
 "phone.work.needs_you" = "답변이 필요해요";
 "phone.work.goals" = "목표";
 "phone.work.goals.empty" = "아직 목표가 없어요.";
+"phone.work.goals.failed" = "목표를 불러오지 못했어요.";
 "phone.work.loading" = "불러오는 중…";
+"phone.load.stale" = "일부를 새로 고치지 못했어요. 아래로 당겨서 다시 시도하세요.";
 "phone.work.goals.new" = "새 목표";
 "phone.work.coming_up" = "예정된 일";
 "phone.work.recently" = "최근";
@@ -134,6 +145,7 @@
 "phone.schedule.repeats" = "반복";
 "phone.memory.title" = "기억";
 "phone.memory.empty" = "아직 없어요.";
+"phone.memory.failed" = "기억을 불러오지 못했어요. 아래로 당겨서 다시 시도하세요.";
 "phone.memory.no_match" = "일치하는 항목이 없어요.";
 "phone.memory.forget" = "잊어 달라고 하기";
 "phone.memory.forget.prefill" = "잊어 줬으면 하는 건 ";

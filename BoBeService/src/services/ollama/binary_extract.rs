@@ -22,7 +22,8 @@ pub(crate) fn install_ollama_runtime(
     std::fs::create_dir_all(&staging)?;
 
     let unpacked = unpack_archive(archive_path, &staging, artifact.format)
-        .and_then(|()| verify_runtime(&staging, artifact));
+        .and_then(|()| verify_runtime(&staging, artifact))
+        .and_then(|()| crate::util::durable_fs::sync_tree_with_links(&staging));
     if let Err(error) = unpacked {
         let _ignored = std::fs::remove_dir_all(&staging);
         return Err(error);
@@ -30,6 +31,7 @@ pub(crate) fn install_ollama_runtime(
 
     remove_dir_if_present(install_dir)?;
     std::fs::rename(&staging, install_dir)?;
+    crate::util::durable_fs::sync_parent_sync(install_dir)?;
     info!(
         path = %install_dir.display(),
         version = artifact.version,
@@ -109,11 +111,11 @@ fn rejected(path: &Path, reason: &str) -> AppError {
     AppError::Config(format!("Ollama archive entry {} {reason}", path.display()))
 }
 
-fn verify_runtime(root: &Path, artifact: &OllamaArtifact) -> Result<(), AppError> {
+pub(super) fn verify_runtime(root: &Path, artifact: &OllamaArtifact) -> Result<(), AppError> {
     for relative in [artifact.binary, artifact.llama_server] {
         let metadata = std::fs::symlink_metadata(root.join(relative))
             .map_err(|_| AppError::Config(format!("Ollama archive is missing {relative}")))?;
-        if !metadata.is_file() {
+        if !metadata.is_file() || metadata.len() == 0 {
             return Err(AppError::Config(format!(
                 "Ollama archive entry {relative} is not a file"
             )));

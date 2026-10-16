@@ -23,11 +23,14 @@ pub(crate) async fn handle_capture_frame(
         return false;
     }
     let (events, replenish, stream_id, turn_id) = {
-        let Some(active_session) = session.as_mut() else {
-            return false;
-        };
-        let muted = active_session.muted;
-        let Some(capture) = active_session.capture.as_mut() else {
+        let muted = session.as_ref().is_some_and(|active| active.muted);
+        let Some(capture) = session.as_mut().and_then(|active| active.capture.as_mut()) else {
+            send_error(
+                &ctx.output,
+                "capture_protocol_error",
+                "Microphone audio was sent without a daemon recognition plan",
+            )
+            .await;
             return false;
         };
         if frame.stream_id != capture.stream_id

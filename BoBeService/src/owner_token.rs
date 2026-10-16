@@ -40,6 +40,12 @@ fn validate(token: &str) -> Result<(), AppError> {
                 .into(),
         ));
     }
+    if token.starts_with(crate::api::middleware::ENDPOINT_CREDENTIAL_PREFIX) {
+        return Err(AppError::Config(format!(
+            "owner API token must not start with {}, which is reserved for paired device credentials",
+            crate::api::middleware::ENDPOINT_CREDENTIAL_PREFIX
+        )));
+    }
     Ok(())
 }
 
@@ -93,6 +99,28 @@ mod tests {
             read(&paths).unwrap().as_deref(),
             Some("operator-owner-token")
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_owner_token_cannot_look_like_a_paired_device_credential() {
+        let root = std::env::temp_dir().join(format!("bobe-v2-token-{}", uuid::Uuid::new_v4()));
+        let paths = crate::util::paths::DataPaths::resolve(
+            &root,
+            &format!("sqlite:{}", root.join("data.sqlite3").display()),
+        )
+        .unwrap()
+        .prepare_root()
+        .unwrap();
+        std::fs::write(paths.owner_api_token_file(), "bobe_v2_operator-owner-token").unwrap();
+
+        let error = read(&paths).unwrap_err().to_string();
+
+        assert!(
+            error.contains("reserved for paired device credentials"),
+            "{error}"
+        );
+        assert!(validate("bobe_operator-owner-token").is_ok());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

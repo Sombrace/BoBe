@@ -7,7 +7,7 @@ use crate::voice::cancel_phrases::is_cancel_phrase;
 use crate::voice::capture_in::reset_capture_stream;
 use crate::voice::context::VoiceContext;
 use crate::voice::protocol_helpers::{send_error, send_json, send_state};
-use crate::voice::session::{SessionVoiceConfig, VoiceSession};
+use crate::voice::session::{PlaybackReport, SessionVoiceConfig, VoiceSession};
 use crate::voice::transcript_in;
 use crate::voice::turn_flow::{abort_active_turn, handle_barge_in, pending_interruption};
 
@@ -33,14 +33,13 @@ pub(crate) async fn handle_control_text(
                 language = %speech_offer.language,
                 "voice.hello"
             );
-            let mut offer = *speech_offer;
-            offer.daemon_is_non_loopback = ctx.networked_runtime;
             let speech_plan = match crate::speech::SpeechPlan::resolve_voice_v2(
-                &offer,
+                &speech_offer,
                 voice_defaults,
                 voice_id,
                 ctx.engines.daemon_stt().map(|engine| engine.descriptor()),
                 ctx.engines.supports_server_tts(),
+                ctx.networked_runtime,
             ) {
                 Ok(plan) => plan,
                 Err(SpeechPlanError::InvalidOffer(message)) => {
@@ -122,18 +121,26 @@ pub(crate) async fn handle_control_text(
             turn_id,
             synthesis_ms,
         }) => {
-            debug!(turn_id = %turn_id, synthesis_ms, "voice.client_tts_playback_started");
+            let current = session
+                .as_mut()
+                .is_some_and(|session| session.note_playback_started(&turn_id));
+            debug!(turn_id = %turn_id, synthesis_ms, current, "voice.client_tts_playback_started");
             true
         }
         Ok(ClientMessage::TtsPlaybackComplete { turn_id }) => {
-            if let Some(sender) = session
+            match session
                 .as_mut()
-                .and_then(|session| session.current_turn.as_mut())
-                .filter(|turn| turn.turn_id == turn_id)
-                .and_then(|turn| turn.playback_complete.take())
-                && sender.send(()).is_err()
+                .and_then(|session| session.report_playback_complete(&turn_id))
             {
-                debug!("voice.client_tts_completion_receiver_dropped");
+                Some(PlaybackReport::Heard) => {
+                    debug!(turn_id = %turn_id, "voice.playback_complete");
+                }
+                Some(PlaybackReport::Unheard) => {
+                    warn!(turn_id = %turn_id, "voice.playback_complete_without_start");
+                }
+                None => {
+                    debug!(turn_id = %turn_id, "voice.stale_playback_complete_ignored");
+                }
             }
             true
         }
@@ -142,9 +149,17 @@ pub(crate) async fn handle_control_text(
             playback_ms_played,
             partial_text,
             playhead_chunk,
+            turn_id,
         }) => {
             info!(ts_ms, playback_ms_played, "voice.barge_in_received");
-            if let (Some(s), Some(evidence)) = (session.as_mut(), partial_text) {
+            let Some(s) = session.as_mut() else {
+                return true;
+            };
+            if !s.accepts_overlap(turn_id.as_deref()) {
+                debug!(turn_id = ?turn_id, "voice.stale_barge_in_ignored");
+                return true;
+            }
+            if let Some(evidence) = partial_text {
                 s.last_partial_text = evidence;
             }
             handle_barge_in(ctx, session, playback_ms_played, playhead_chunk).await;
@@ -153,13 +168,12 @@ pub(crate) async fn handle_control_text(
         Ok(ClientMessage::PlaybackAck {
             chunk_id,
             played_ms,
+            turn_id,
         }) => {
-            if let Some(s) = session.as_mut()
-                && played_ms > s.last_acked_played_ms
-            {
-                s.last_acked_played_ms = played_ms;
-            }
-            debug!(chunk_id, played_ms, "voice.playback_ack");
+            let current = session
+                .as_mut()
+                .is_some_and(|session| session.note_playback_ack(turn_id.as_deref(), played_ms));
+            debug!(chunk_id, played_ms, current, "voice.playback_ack");
             true
         }
         Ok(ClientMessage::Control { action }) => {
@@ -194,6 +208,10 @@ async fn handle_transcript_partial(
         debug!(turn_id = %turn_id, "voice.transcript_partial_dropped_muted");
         return;
     }
+    if !s.accepts_partial(&turn_id) {
+        debug!(turn_id = %turn_id, "voice.stale_transcript_partial_ignored");
+        return;
+    }
     s.last_partial_text = text;
     if s.current_turn.is_some() && is_cancel_phrase(&s.last_partial_text) {
         info!(
@@ -211,6 +229,13 @@ async fn handle_transcript_partial(
     }
 }
 
+fn abort_acknowledgement(session_id: &str) -> ServerMessage {
+    ServerMessage::State {
+        phase: VoicePhase::Listening,
+        turn_id: session_id.to_owned(),
+    }
+}
+
 pub(crate) async fn handle_control_action(
     action: ControlAction,
     ctx: &VoiceContext,
@@ -223,7 +248,7 @@ pub(crate) async fn handle_control_action(
             if let Some(s) = session.as_mut() {
                 abort_active_turn(s, ctx, 0, "control_abort").await;
                 s.last_partial_text.clear();
-                send_state(output, VoicePhase::Idle, &s.session_id).await;
+                send_json(output, &abort_acknowledgement(&s.session_id)).await;
             }
         }
         ControlAction::Mute => {
@@ -249,5 +274,18 @@ pub(crate) async fn handle_control_action(
                 info!(session = %s.session_id, "voice.control.unmute");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::abort_acknowledgement;
+
+    #[test]
+    fn every_abort_is_acknowledged_by_the_session_listening_again() {
+        assert_eq!(
+            serde_json::to_value(abort_acknowledgement("voice-1700000000")).unwrap(),
+            serde_json::json!({"type": "state", "phase": "listening", "turn_id": "voice-1700000000"})
+        );
     }
 }

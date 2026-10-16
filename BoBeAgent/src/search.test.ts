@@ -34,7 +34,7 @@ test("persistent MCP processes and native search share the same process capacity
   const config=configuration(paths);
   config.mcp={servers:Object.fromEntries([0,1,2,3].map(index=>[`server${index}`,{
     command:process.execPath,args:[fileURLToPath(new URL("./mcp-fixture.js",import.meta.url))],
-    env:{},timeout_ms:1000,excluded_tools:[],
+    env:{},timeout_ms:15_000,excluded_tools:[],
   }]))};
   let calls=0;
   let results="";

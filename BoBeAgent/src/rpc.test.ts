@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { PassThrough, Writable } from "node:stream";
 import { JsonlRpc } from "./rpc.js";
+import { WorkerFault } from "./errors.js";
 import { MAX_LINE_BYTES, object, type JsonObject } from "./protocol.js";
 import { deferred } from "./test-support.js";
 
@@ -163,6 +164,23 @@ test("shutdown failures close the input and reject the transport instead of hang
   });
   input.write('{"id":1,"method":"shutdown","params":{}}\n');
   await assert.rejects(running, /cleanup failed/);
+  assert.equal(input.destroyed, true);
+});
+
+test("a worker fault answers its request and then stops the worker with that error", async () => {
+  const { input, next, rpc } = wire();
+  let closedWith: Error | undefined;
+  const running = rpc.start({
+    request: async request => {
+      if (request.method === "reload") throw new WorkerFault("previous servers could not be restored");
+      return {};
+    },
+    close: async error => { closedWith = error; },
+  });
+  input.write('{"id":1,"method":"reload","params":{}}\n');
+  assert.deepEqual((await next(message => message.id === 1)).error, { message: "previous servers could not be restored" });
+  await assert.rejects(running, /previous servers could not be restored/);
+  assert.ok(closedWith instanceof WorkerFault);
   assert.equal(input.destroyed, true);
 });
 

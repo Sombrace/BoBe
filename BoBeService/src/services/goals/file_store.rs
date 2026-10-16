@@ -105,6 +105,20 @@ impl GoalFileStore {
         Ok(())
     }
 
+    pub(crate) async fn save_if_absent(&self, doc: &GoalDoc) -> Result<bool, AppError> {
+        let _guard = self.write_lock.lock().await;
+        tokio::fs::create_dir_all(&self.dir).await?;
+        let path = self.path_for(doc.id);
+        match tokio::fs::symlink_metadata(&path).await {
+            Ok(_) => return Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(AppError::Io(error)),
+        }
+        write_doc(&self.dir, &path, doc).await?;
+        debug!(goal_id = %doc.id, "goal_file_store.saved");
+        Ok(true)
+    }
+
     pub(crate) async fn delete_all(&self) -> Result<usize, AppError> {
         let _guard = self.write_lock.lock().await;
         let mut removed = 0;

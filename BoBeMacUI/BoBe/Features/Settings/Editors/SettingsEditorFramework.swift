@@ -51,6 +51,11 @@ final class SettingsEditCoordinator {
         self.showsConfirmation = false
     }
 
+    func selectCreated<ID: Hashable>(_ id: ID, in state: Binding<SettingsEditorState<ID>>) {
+        state.wrappedValue.setCreating(false)
+        self.requestTransition { state.wrappedValue.select(id) }
+    }
+
     private func finishTransition() {
         let transition = self.pendingTransition
         self.pendingTransition = nil

@@ -33,6 +33,8 @@ VALID_OTA_STATES = {
 APP_PROJECT = "bobe_wb12"
 APP_TARGET = "esp32s3"
 APP_PARTITION_SIZE = 0x500000
+BUILD_CONFIGURATION = Path("config") / "sdkconfig.json"
+MAX_BUILD_NUMBER = 2_147_483_647
 MANIFEST_SCHEMA = 1
 PROFILES = {"fallback", "ptt", "edge"}
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
@@ -115,27 +117,62 @@ def inspect_application(path: Path) -> dict[str, object]:
     }
 
 
+def valid_build_number(value: object) -> bool:
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 1 <= value <= MAX_BUILD_NUMBER
+    )
+
+
+def firmware_build_number(build_directory: Path) -> int:
+    path = checked_file(
+        build_directory / BUILD_CONFIGURATION,
+        "build configuration",
+    )
+    try:
+        configuration = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("build configuration is not valid JSON") from error
+    value = (
+        configuration.get("BOBE_BUILD_NUMBER")
+        if isinstance(configuration, dict)
+        else None
+    )
+    if not valid_build_number(value):
+        raise ValueError("build configuration has no valid BOBE_BUILD_NUMBER")
+    return cast(int, value)
+
+
+def artifact_manifest(
+    image_path: Path,
+    elf_path: Path,
+    profile: str,
+    source_commit: str,
+    source_dirty: bool,
+) -> dict[str, object]:
+    if profile not in PROFILES:
+        raise ValueError(f"unsupported firmware profile {profile!r}")
+    checked_file(elf_path, "ELF file")
+    return {
+        **inspect_application(image_path),
+        "build_number": firmware_build_number(image_path.parent),
+        "profile": profile,
+        "elf_file_sha256": sha256_file(elf_path),
+        "source_commit": source_commit,
+        "source_dirty": source_dirty,
+        "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+
+
 def create_manifest(
     root: Path,
     image_path: Path,
     elf_path: Path,
     profile: str,
 ) -> dict[str, object]:
-    if profile not in PROFILES:
-        raise ValueError(f"unsupported firmware profile {profile!r}")
-    checked_file(elf_path, "ELF file")
-    manifest = inspect_application(image_path)
     commit, dirty = git_metadata(root)
-    manifest.update(
-        {
-            "profile": profile,
-            "elf_file_sha256": sha256_file(elf_path),
-            "source_commit": commit,
-            "source_dirty": dirty,
-            "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        }
-    )
-    return manifest
+    return artifact_manifest(image_path, elf_path, profile, commit, dirty)
 
 
 def manifest_payload(manifest: dict[str, object]) -> bytes:
@@ -255,6 +292,10 @@ def load_manifest(
         raise ValueError("application manifest source commit is malformed")
     if not isinstance(manifest["source_dirty"], bool):
         raise ValueError("application manifest dirty state is malformed")
+    if "build_number" in manifest and not valid_build_number(
+        manifest["build_number"]
+    ):
+        raise ValueError("application manifest build number is malformed")
     if require_signature:
         verify_manifest_signature(manifest)
     return manifest

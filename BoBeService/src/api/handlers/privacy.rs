@@ -21,22 +21,14 @@ pub(crate) struct PrivacyPurgeResponse {
     message: &'static str,
     deleted: Deleted,
     retained: Vec<&'static str>,
-    skill_runtime_reloaded: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     reload_warning: Option<String>,
 }
 
 #[derive(Serialize)]
 struct Deleted {
-    conversations: u64,
-    turns: u64,
-    message_requests: u64,
-    custom_souls: u64,
-    custom_profiles: u64,
-    goals: usize,
     learned_skills: usize,
     workspace_files: usize,
-    mcp_secrets: usize,
 }
 
 pub(crate) async fn purge(
@@ -83,7 +75,7 @@ async fn purge_inner(state: Arc<AppState>) -> Result<Json<PrivacyPurgeResponse>,
         .replace_all(crate::provider::memory_file::DEFAULT_BODY.into())
         .await?;
     state.body.gateway.clear_sensor_samples();
-    let goals = state.services.goals_service.delete_all().await?;
+    state.services.goals_service.delete_all().await?;
     let skills = state.runtime.skill_store.purge_personal_state().await?;
     let workspace_files = state.runtime.agent_workspace.purge_files().await?;
     let skill_reload = state.runtime.workers.reload_skills().await;
@@ -107,30 +99,26 @@ async fn purge_inner(state: Arc<AppState>) -> Result<Json<PrivacyPurgeResponse>,
     sqlx::query("DELETE FROM agent_jobs")
         .execute(&mut *transaction)
         .await?;
-    let turns = sqlx::query("DELETE FROM conversation_turns")
+    sqlx::query("DELETE FROM conversation_turns")
         .execute(&mut *transaction)
-        .await?
-        .rows_affected();
+        .await?;
     sqlx::query(
         "INSERT OR IGNORE INTO message_request_tombstones (request_id) \
          SELECT request_id FROM message_requests",
     )
     .execute(&mut *transaction)
     .await?;
-    let message_requests = sqlx::query("DELETE FROM message_requests")
+    sqlx::query("DELETE FROM message_requests")
         .execute(&mut *transaction)
-        .await?
-        .rows_affected();
-    let conversations = sqlx::query("DELETE FROM conversations")
+        .await?;
+    sqlx::query("DELETE FROM conversations")
         .execute(&mut *transaction)
-        .await?
-        .rows_affected();
+        .await?;
     sqlx::query("DELETE FROM cooldown_state")
         .execute(&mut *transaction)
         .await?;
-    let custom_souls = crate::db::SqliteSoulRepo::reset_to_shipped(&mut transaction).await?;
-    let custom_profiles =
-        crate::db::SqliteUserProfileRepo::reset_to_shipped(&mut transaction).await?;
+    crate::db::SqliteSoulRepo::reset_to_shipped(&mut transaction).await?;
+    crate::db::SqliteUserProfileRepo::reset_to_shipped(&mut transaction).await?;
     let _registry_guard = state.body.registry_lock.lock().await;
     let endpoints = state.body.endpoints.list().await?;
     sqlx::query("DELETE FROM endpoints")
@@ -145,7 +133,7 @@ async fn purge_inner(state: Arc<AppState>) -> Result<Json<PrivacyPurgeResponse>,
     let data_root = std::path::PathBuf::from(&state.config().data_dir);
     crate::util::durable_fs::durable_remove_dir_all(&data_root.join("tool-output")).await?;
     state.runtime.workers.purge_sessions().await?;
-    let mcp_secrets = purge_mcp(&state).await?;
+    purge_mcp(&state).await?;
 
     let direct_cloud_providers = state
         .config()
@@ -175,18 +163,10 @@ async fn purge_inner(state: Arc<AppState>) -> Result<Json<PrivacyPurgeResponse>,
     Ok(Json(PrivacyPurgeResponse {
         message: "Personal data deleted; operational data retained",
         deleted: Deleted {
-            conversations,
-            turns,
-            message_requests,
-            custom_souls,
-            custom_profiles,
-            goals,
             learned_skills: skills,
             workspace_files,
-            mcp_secrets,
         },
         retained,
-        skill_runtime_reloaded: skill_reload.is_ok(),
         reload_warning: skill_reload.err().map(|error| {
             format!(
                 "personal skills were reset, but the active runtime did not reload them before its sessions were purged: {error}"
@@ -195,7 +175,7 @@ async fn purge_inner(state: Arc<AppState>) -> Result<Json<PrivacyPurgeResponse>,
     }))
 }
 
-async fn purge_mcp(state: &AppState) -> Result<usize, AppError> {
+async fn purge_mcp(state: &AppState) -> Result<(), AppError> {
     let _guard = state.infra.mcp_config_lock.lock().await;
     let config = state.config();
     let path = mcp_config::resolve_mcp_config_path(
@@ -230,12 +210,33 @@ async fn purge_mcp(state: &AppState) -> Result<usize, AppError> {
         .runtime
         .workers
         .apply_mcp_config(crate::provider::McpRuntimeConfig::default())
-        .await?;
-    Ok(accounts.len())
+        .await
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_purge_reply_reports_only_what_the_mac_shows() {
+        let reply = serde_json::to_value(super::PrivacyPurgeResponse {
+            message: "deleted",
+            deleted: super::Deleted {
+                learned_skills: 2,
+                workspace_files: 3,
+            },
+            retained: vec!["backups"],
+            reload_warning: None,
+        })
+        .unwrap();
+        assert_eq!(
+            reply,
+            serde_json::json!({
+                "message": "deleted",
+                "deleted": {"learned_skills": 2, "workspace_files": 3},
+                "retained": ["backups"],
+            })
+        );
+    }
+
     #[test]
     fn agent_maintenance_is_single_flight_and_releases_on_drop() {
         use std::sync::atomic::Ordering;

@@ -42,6 +42,8 @@
 "phone.status.connecting" = "接続中…";
 "phone.status.offline" = "オフライン";
 "phone.status.removed" = "ペアリングされていません";
+"phone.status.setting_up" = "セットアップを完了しています";
+"phone.status.update" = "アップデートが必要です";
 "phone.status.replying" = "返信中…";
 "phone.status.working" = "作業中…";
 "phone.status.thinking" = "考え中…";
@@ -59,10 +61,16 @@
 "phone.thread.trouble" = "うまくいきませんでした。もう一度お試しください。";
 "phone.thread.reached_out" = "BoBeからのメッセージ";
 "phone.thread.retry" = "未送信。タップして再送信";
+"phone.thread.unconfirmed" = "このメッセージは届いていない可能性があります。もう一度送る前に会話を確認してください。";
+"phone.thread.send_again" = "もう一度送信";
 "phone.connection.offline.title" = "BoBeに接続できません";
 "phone.connection.removed.title" = "このiPhoneはペアリングされていません";
 "phone.connection.retry" = "もう一度試す";
 "phone.connection.pair_again" = "もう一度ペアリング";
+"phone.connection.setting_up.title" = "BoBeはまだセットアップ中です";
+"phone.connection.setting_up.body" = "セットアップが終わるとチャットできます。";
+"phone.connection.incompatible.title" = "アップデートが必要です";
+"phone.connection.incompatible.body" = "このアプリとコンピュータのBoBeをアップデートしてから、もう一度お試しください。";
 "phone.question.label" = "BoBeからの質問";
 "phone.question.placeholder" = "あなたの回答";
 "phone.question.send" = "回答を送信";
@@ -81,6 +89,7 @@
 "phone.talk.permission" = "設定で「マイク」と「音声認識」をオンにしてください。";
 "phone.settings.title" = "設定";
 "phone.settings.address" = "アドレス";
+"phone.settings.forget_pending" = "以前のBoBeはまだこのiPhoneを忘れていません。このiPhoneがそのBoBeに接続できたときに忘れます。";
 "phone.settings.voice" = "音声";
 "phone.settings.unpair" = "このiPhoneのペアリングを解除";
 "phone.settings.unpair.title" = "このiPhoneのペアリングを解除しますか？";
@@ -94,7 +103,9 @@
 "phone.work.needs_you" = "あなたの返事待ち";
 "phone.work.goals" = "目標";
 "phone.work.goals.empty" = "まだ目標はありません。";
+"phone.work.goals.failed" = "目標を読み込めませんでした。";
 "phone.work.loading" = "読み込み中…";
+"phone.load.stale" = "一部を更新できませんでした。下に引っ張ってもう一度お試しください。";
 "phone.work.goals.new" = "新しい目標";
 "phone.work.coming_up" = "これからの予定";
 "phone.work.recently" = "最近";
@@ -134,6 +145,7 @@
 "phone.schedule.repeats" = "繰り返し";
 "phone.memory.title" = "記憶";
 "phone.memory.empty" = "まだ何もありません。";
+"phone.memory.failed" = "記憶を読み込めませんでした。下に引っ張ってもう一度お試しください。";
 "phone.memory.no_match" = "一致するものはありません。";
 "phone.memory.forget" = "忘れてもらう";
 "phone.memory.forget.prefill" = "忘れてほしいのは ";

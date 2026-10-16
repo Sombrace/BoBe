@@ -39,6 +39,31 @@ enum ProactivityLevel: String, CaseIterable, Sendable {
     }
 }
 
+enum ProactivitySetupError: LocalizedError {
+    case notSaved
+
+    var errorDescription: String? {
+        L10n.tr("setup.proactivity.error.not_saved")
+    }
+}
+
+extension ProactivityLevel {
+    @MainActor
+    func apply(
+        using update: (SettingsUpdateRequest) async throws -> SettingsUpdateResponse
+    ) async throws {
+        let behavior = self.settings
+        let response = try await update(
+            SettingsUpdateRequest(
+                captureEnabled: behavior.captureEnabled,
+                captureIntervalSeconds: behavior.captureIntervalSeconds,
+                checkinEnabled: behavior.checkinEnabled
+            )
+        )
+        guard response.persistFailed != true else { throw ProactivitySetupError.notSaved }
+    }
+}
+
 struct ProactivityStepView: View {
     @Binding var selection: ProactivityLevel
     let onContinue: () -> Void

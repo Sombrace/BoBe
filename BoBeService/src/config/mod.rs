@@ -78,6 +78,12 @@ pub(crate) struct LoadedConfig {
     pub(crate) config_file: std::path::PathBuf,
 }
 
+pub(crate) struct ServeConfig {
+    pub(crate) loaded: LoadedConfig,
+    pub(crate) purged_release_0_2: bool,
+    pub(crate) interrupted_restore: crate::ops::backup::Reconciled,
+}
+
 fn normalize_optional_path(value: &mut Option<String>, config_root: &std::path::Path) {
     let Some(path) = value.as_deref() else {
         return;
@@ -137,10 +143,43 @@ impl Config {
         Ok(loaded)
     }
 
-    pub(crate) async fn load_for_serve() -> Result<(LoadedConfig, bool), crate::error::AppError> {
-        let purged_release_0_2 =
-            crate::bootstrap::release_0_2::purge(&crate::util::paths::bobe_data_dir()?).await?;
-        Ok((Self::load_operational()?, purged_release_0_2))
+    pub(crate) async fn load_reconciled() -> Result<LoadedConfig, crate::error::AppError> {
+        crate::ops::backup::reconcile_interrupted_restore(&crate::util::paths::bobe_data_dir()?)
+            .await?;
+        Self::load_operational()
+    }
+
+    pub(crate) async fn reconcile_locked(
+        loaded: LoadedConfig,
+        paths: &crate::util::paths::DataPaths,
+    ) -> Result<(LoadedConfig, crate::ops::backup::Reconciled), crate::error::AppError> {
+        let reconciled =
+            crate::ops::backup::reconcile_restore_journals(paths, &loaded.config_file).await?;
+        if !reconciled.changed_live_data() {
+            return Ok((loaded, reconciled));
+        }
+        let reloaded = Self::load_operational()?;
+        let reloaded_paths = reloaded.paths.clone().prepare_root()?;
+        if reloaded_paths.root() != paths.root()
+            || reloaded_paths.database_url() != paths.database_url()
+        {
+            return Err(crate::error::AppError::Conflict(
+                "the reconciled configuration resolves a different BoBe data root".into(),
+            ));
+        }
+        Ok((reloaded, reconciled))
+    }
+
+    pub(crate) async fn load_for_serve() -> Result<ServeConfig, crate::error::AppError> {
+        let bootstrap_data_dir = crate::util::paths::bobe_data_dir()?;
+        let interrupted_restore =
+            crate::ops::backup::reconcile_interrupted_restore(&bootstrap_data_dir).await?;
+        let purged_release_0_2 = crate::bootstrap::release_0_2::purge(&bootstrap_data_dir).await?;
+        Ok(ServeConfig {
+            loaded: Self::load_operational()?,
+            purged_release_0_2,
+            interrupted_restore,
+        })
     }
 
     pub(crate) fn load_from(

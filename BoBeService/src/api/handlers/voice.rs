@@ -14,11 +14,12 @@ use crate::api::middleware::AllowedOrigins;
 use crate::api::principal::Principal;
 use crate::app_state::AppState;
 use crate::runtime::response_streamer::StreamDelivery;
+use crate::speech::protocol::VoicePhase;
 use crate::voice::context::VoiceContext;
 use crate::voice::control::handle_control_text;
 use crate::voice::engines::VoiceEngines;
 use crate::voice::output::{VoiceOutput, VoiceOutputFrame};
-use crate::voice::protocol_helpers::close_with_error;
+use crate::voice::protocol_helpers::{close_with_error, send_error, send_state};
 use crate::voice::session::{VoiceDefaults, VoiceSession};
 
 const OUTBOUND_CHANNEL_CAPACITY: usize = 64;
@@ -89,6 +90,15 @@ async fn teardown_session(td: SessionTeardown) {
             info!(turn_id = %turn.turn_id, "voice.disconnect_aborting_turn");
             turn.join.abort();
             drop(turn.join.await);
+        }
+        if tokio::time::timeout(
+            WRITER_DRAIN_TIMEOUT,
+            send_state(&output, VoicePhase::Idle, &s.session_id),
+        )
+        .await
+        .is_err()
+        {
+            debug!(session = %s.session_id, "voice.closed_notice_timed_out");
         }
         info!(session = %s.session_id, "voice.disconnect");
     }
@@ -295,6 +305,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, principal: Princ
                     Message::Binary(bytes) => {
                         let Some(frame) = crate::speech::protocol::decode_voice_capture_frame(&bytes) else {
                             warn!("voice.invalid_capture_frame");
+                            send_error(&ctx.output, "capture_protocol_error", "Invalid capture frame").await;
                             break;
                         };
                         if !crate::voice::capture_in::handle_capture_frame(

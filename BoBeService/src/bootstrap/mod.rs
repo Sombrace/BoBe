@@ -27,6 +27,12 @@ pub(crate) async fn initialize_storage(
     ),
     AppError,
 > {
+    if crate::ops::backup::restore_journal_pending(paths) {
+        return Err(AppError::Conflict(
+            "an interrupted restore has not been reconciled; start BoBe again to finish or roll it back"
+                .into(),
+        ));
+    }
     let (pool, schema_version) = database::open(paths).await?;
     let identity = crate::db::runtime_authority_repo::claim(&pool, paths, schema_version).await?;
     Ok((pool, identity))

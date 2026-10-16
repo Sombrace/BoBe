@@ -185,7 +185,6 @@
 "settings.shared.restart_banner.message" = "Einige Änderungen werden erst nach einem Neustart von BoBe wirksam.";
 "settings.shared.restart_banner.restart_now" = "Jetzt neu starten";
 "settings.shared.section.enabled_format" = "%@ aktiviert";
-"settings.shared.validation.content_min_length_format" = "Der Inhalt muss mindestens %d Zeichen lang sein";
 "settings.souls.delete.accessibility" = "Soul löschen";
 "settings.souls.empty.description" = "Erstelle eine, um BoBes Persönlichkeit festzulegen";
 "settings.souls.empty.select" = "Wähle eine Soul zum Bearbeiten";
@@ -445,6 +444,10 @@
 "setup.voice.skip" = "Vorerst überspringen";
 "setup.voice.install_button" = "Sprache einrichten";
 "setup.voice.cancel" = "Abbrechen";
+"setup.voice.canceling" = "Wird abgebrochen…";
+"setup.voice.cancel_failed_format" = "BoBe konnte den Download nicht stoppen. %@";
+"setup.voice.cancel_still_running" = "Der Download wird noch beendet. Versuch es gleich noch mal.";
+"settings.voice.session_restart_failed_format" = "Die Stimme konnte mit deinen neuen Einstellungen nicht neu starten. %@";
 "setup.voice.continue" = "Weiter";
 "setup.voice.try_again" = "Erneut versuchen";
 "setup.voice.continue_without" = "Ohne Sprache fortfahren";
@@ -488,7 +491,6 @@
 "setup.runtime.phase.starting" = "BoBe wird gestartet…";
 "setup.runtime.phase.checking" = "BoBe wird gesucht…";
 "setup.runtime.phase.pairing" = "Sichere Kopplung läuft…";
-"setup.runtime.phase.saving" = "Verbindung wird gespeichert…";
 "setup.runtime.phase.verifying" = "Verbindung wird geprüft…";
 "setup.runtime.retry_connection" = "Erneut versuchen";
 "setup.runtime.pair_again" = "Erneut koppeln";
@@ -824,3 +826,10 @@
 "setup.permissions.card.status.allowed" = "Erlaubt";
 "setup.value.title" = "Hallo, ich bin BoBe";
 "setup.value.continue" = "Loslegen";
+"app.common.expanded" = "Ausgeklappt";
+"app.common.collapsed" = "Eingeklappt";
+"setup.proactivity.error.not_saved" = "BoBe konnte diese Auswahl nicht speichern. Versuch es noch mal.";
+"setup.local.cancel_failed" = "BoBe konnte den Download nicht stoppen. Versuch es noch mal.";
+"settings.shared.restart_banner.failed" = "BoBe konnte nicht neu starten. Versuch es noch mal.";
+"settings.context_editor.raw.accessibility_format" = "Markdown für %@";
+"settings.mcp.editor.accessibility" = "Konfiguration der Werkzeugserver (JSON)";

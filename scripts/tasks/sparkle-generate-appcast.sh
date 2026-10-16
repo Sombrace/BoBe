@@ -17,17 +17,26 @@ if [[ -n "$sparkle_key_file" && "$sparkle_key_file" != "-" && ! -f "$sparkle_key
     echo "Sparkle private key file not found: $sparkle_key_file"
     exit 1
 fi
-shopt -s nullglob
-archives=(
-    "$archives_dir"/*.zip
-    "$archives_dir"/*.tar
-    "$archives_dir"/*.tar.gz
-    "$archives_dir"/*.tgz
+shopt -s nullglob nocaseglob
+archives=("$archives_dir"/*.zip)
+other_archives=(
     "$archives_dir"/*.dmg
+    "$archives_dir"/*.tar
+    "$archives_dir"/*.tar.*
+    "$archives_dir"/*.tgz
+    "$archives_dir"/*.tbz
+    "$archives_dir"/*.txz
+    "$archives_dir"/*.aar
+    "$archives_dir"/*.yaa
 )
+shopt -u nullglob nocaseglob
+if (( ${#other_archives[@]} > 0 )); then
+    echo "Only the app ZIP from sparkle-zip.sh may be staged in $archives_dir; remove: ${other_archives[*]}"
+    exit 1
+fi
 if (( ${#archives[@]} == 0 )); then
-    echo "No staged Sparkle archives found in $archives_dir"
-    echo "Stage a ZIP, DMG, or tarball there before running generate_appcast"
+    echo "No staged Sparkle ZIP found in $archives_dir"
+    echo "Stage the app ZIP from sparkle-zip.sh there before running generate_appcast"
     exit 1
 fi
 ARGS=()

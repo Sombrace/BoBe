@@ -160,6 +160,7 @@ async fn download_from_url(
         }
 
         tokio::io::AsyncWriteExt::flush(&mut file).await?;
+        file.sync_all().await?;
         let verified_bytes = integrity.finish()?;
         debug_assert_eq!(downloaded, verified_bytes);
         on_progress(downloaded, total_size);
@@ -175,10 +176,14 @@ async fn download_from_url(
         }
     };
 
+    drop(file);
     if output_path.exists() {
         std::fs::remove_file(output_path)?;
     }
     tokio::fs::rename(&partial_path, output_path).await?;
+    if let Some(parent) = output_path.parent() {
+        crate::util::durable_fs::sync_directory(parent).await?;
+    }
 
     info!(
         bytes = downloaded,

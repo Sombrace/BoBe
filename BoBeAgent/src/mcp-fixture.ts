@@ -1,9 +1,24 @@
 import { createInterface } from "node:readline";
 import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { isRecord } from "./protocol.js";
 
 const pidFile = process.env.BOBE_TEST_PID_FILE;
 if (pidFile) writeFileSync(pidFile, String(process.pid), { mode: 0o600 });
+const startDirectory = process.env.BOBE_TEST_START_DIR;
+if (startDirectory) {
+  let ordinal = 1;
+  for (;;) {
+    try {
+      writeFileSync(join(startDirectory, String(ordinal)), "", { flag: "wx", mode: 0o600 });
+      break;
+    } catch (error) {
+      if (!isRecord(error) || error.code !== "EEXIST") throw error;
+      ordinal++;
+    }
+  }
+  if (ordinal > Number(process.env.BOBE_TEST_START_LIMIT)) process.exit(1);
+}
 const waits = new Map<string | number, ReturnType<typeof setTimeout>>();
 const input = createInterface({ input: process.stdin });
 input.on("line", line => {
@@ -37,9 +52,11 @@ input.on("line", line => {
       inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"] },
     })), ...(paginated && !secondPage ? { nextCursor: "next" } : {}) });
   } else if (value.method === "tools/call" && isRecord(value.params)) {
+    if (process.env.BOBE_TEST_EXIT_ON_CALL) process.exit(Number(process.env.BOBE_TEST_EXIT_ON_CALL));
     const args = value.params.arguments;
     const text = isRecord(args) && typeof args.text === "string" ? args.text : "";
     if (value.params.name === "wait") {
+      if (process.env.BOBE_TEST_CALL_FILE) writeFileSync(process.env.BOBE_TEST_CALL_FILE, "", { mode: 0o600 });
       waits.set(id, setTimeout(() => {
         waits.delete(id);
         reply({ content: [{ type: "text", text }] });

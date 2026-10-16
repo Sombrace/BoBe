@@ -44,7 +44,7 @@ impl SkillStore {
             Err(error) => return Err(error.into()),
         };
         while let Some(entry) = entries.next_entry().await? {
-            if skills.len() > MAX_SKILLS {
+            if skills.len() >= MAX_SKILLS {
                 break;
             }
             let metadata = entry.metadata().await?;
@@ -492,6 +492,36 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect::<Vec<_>>();
         assert_eq!(remaining, ["learned"]);
+        drop(tokio::fs::remove_dir_all(root).await);
+    }
+
+    #[tokio::test]
+    async fn list_never_returns_more_than_the_skill_limit() {
+        let (root, paths) = paths();
+        let store = SkillStore::prepare(&paths).await.unwrap();
+        for index in 0..=MAX_SKILLS {
+            let directory = store.learned_root().join(format!("skill-{index:02}"));
+            tokio::fs::create_dir_all(&directory).await.unwrap();
+            tokio::fs::write(
+                directory.join("SKILL.md"),
+                render_skill(
+                    &format!("skill-{index:02}"),
+                    "A learned procedure",
+                    "# Procedure\n\nFollow it.",
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        }
+
+        assert_eq!(
+            count_skill_directories(&store.learned_root())
+                .await
+                .unwrap(),
+            MAX_SKILLS + 1
+        );
+        assert_eq!(store.list().await.unwrap().len(), MAX_SKILLS);
         drop(tokio::fs::remove_dir_all(root).await);
     }
 

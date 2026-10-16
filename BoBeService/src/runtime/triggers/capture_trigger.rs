@@ -98,16 +98,27 @@ impl CaptureTrigger {
 
         let cfg = self.config.load();
 
-        if let Some(cooldown) = self.cooldown_repo.check_cooldown(
-            cfg.decision.cooldown_minutes,
-            cfg.decision.extended_cooldown_minutes,
-        ) {
-            debug!(
-                remaining_s = cooldown.remaining.num_seconds(),
-                cooldown_type = %cooldown.cooldown_type,
-                "capture_trigger.cooldown_active"
-            );
-            return Decision::Idle;
+        match self
+            .cooldown_repo
+            .check_cooldown(
+                cfg.decision.cooldown_minutes,
+                cfg.decision.extended_cooldown_minutes,
+            )
+            .await
+        {
+            Ok(None) => {}
+            Ok(Some(cooldown)) => {
+                debug!(
+                    remaining_s = cooldown.remaining.num_seconds(),
+                    cooldown_type = %cooldown.cooldown_type,
+                    "capture_trigger.cooldown_active"
+                );
+                return Decision::Idle;
+            }
+            Err(error) => {
+                warn!(%error, "capture_trigger.cooldown_check_failed");
+                return Decision::Idle;
+            }
         }
 
         self.generator

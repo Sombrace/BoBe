@@ -89,6 +89,54 @@ struct PendingProviderActivation: Equatable {
     }
 }
 
+@MainActor
+@Observable
+final class SetupNavigation {
+    private(set) var currentStep: WelcomeStep
+    private(set) var history: [WelcomeStep] = []
+    private(set) var isCommitting = false
+    private(set) var commitError: String?
+
+    init(initialStep: WelcomeStep) {
+        self.currentStep = initialStep
+    }
+
+    func commit(_ operation: (() async throws -> Void)?) async -> Bool {
+        guard !self.isCommitting else { return false }
+        self.commitError = nil
+        guard let operation else { return true }
+        self.isCommitting = true
+        defer { self.isCommitting = false }
+        do {
+            try await operation()
+            return true
+        } catch {
+            self.commitError = error.localizedDescription
+            return false
+        }
+    }
+
+    func advance(to step: WelcomeStep) {
+        self.history.append(self.currentStep)
+        withAnimation(BobeMotion.soft) {
+            self.currentStep = step
+        }
+    }
+
+    func goBack() {
+        guard !self.isCommitting, let previous = self.history.popLast() else { return }
+        self.commitError = nil
+        withAnimation(BobeMotion.soft) {
+            self.currentStep = previous
+        }
+    }
+
+    func goBack(after operation: @escaping () async throws -> Void) async {
+        guard !self.history.isEmpty, await self.commit(operation) else { return }
+        self.goBack()
+    }
+}
+
 enum WelcomeWizardMetrics {
     static let size = CGSize(width: 800, height: 620)
     static let titlebarHeight: CGFloat = 32
@@ -147,7 +195,7 @@ struct WelcomeWizard: View {
     var runtimeRepairIssue: RuntimeIssue?
     var completesAfterRuntimeRepair = false
 
-    @State private var currentStep: WelcomeStep
+    @State private var navigation: SetupNavigation
     @State private var engineChoice: EngineChoice? = .provider
     @State private var providerFields = ProviderConfigurationFields()
     @State private var providerAPIKey = ""
@@ -158,9 +206,6 @@ struct WelcomeWizard: View {
     @State private var firstGoal = ""
     @State private var proactivityLevel: ProactivityLevel = .balanced
     @State private var existingScreenAwareness: Bool?
-    @State private var history: [WelcomeStep] = []
-    @State private var isCommittingStep = false
-    @State private var commitError: String?
     @State private var isLeavingLocalSetup = false
     @State private var isRuntimeOperationCritical = false
     @State private var gaze: CGSize = .zero
@@ -177,7 +222,11 @@ struct WelcomeWizard: View {
         self.initialStep = initialStep
         self.runtimeRepairIssue = runtimeRepairIssue
         self.completesAfterRuntimeRepair = completesAfterRuntimeRepair
-        self._currentStep = State(initialValue: initialStep ?? .welcome)
+        self._navigation = State(initialValue: SetupNavigation(initialStep: initialStep ?? .welcome))
+    }
+
+    private var currentStep: WelcomeStep {
+        self.navigation.currentStep
     }
 
     var body: some View {
@@ -187,7 +236,7 @@ struct WelcomeWizard: View {
 
             self.stepStage
         }
-        .onChange(of: self.isCommittingStep) { _, committing in
+        .onChange(of: self.navigation.isCommitting) { _, committing in
             SetupWindowManager.shared.setCriticalOperation(committing || self.isRuntimeOperationCritical)
         }
         .onReceive(NotificationCenter.default.publisher(for: .bobeEndpointIdentityChanged)) { _ in
@@ -245,7 +294,7 @@ struct WelcomeWizard: View {
     }
 
     private var stepNumber: Int {
-        self.history.count + 1
+        self.navigation.history.count + 1
     }
 
     private var stepCount: Int {
@@ -258,7 +307,7 @@ struct WelcomeWizard: View {
     }
 
     private var screenAwarenessOn: Bool {
-        if self.history.contains(.proactivity) {
+        if self.navigation.history.contains(.proactivity) {
             return self.proactivityLevel.settings.captureEnabled
         }
         return self.existingScreenAwareness ?? true
@@ -266,7 +315,7 @@ struct WelcomeWizard: View {
 
     private var companionMood: BobeMood {
         guard self.isAwake else { return .asleep }
-        if self.isCommittingStep || self.isRuntimeOperationCritical { return .working }
+        if self.navigation.isCommitting || self.isRuntimeOperationCritical { return .working }
         switch self.currentStep {
         case .welcome: return .idle
         case .runtimeLocation, .engineChoice, .providerSetup, .localSetup: return .idle
@@ -352,7 +401,7 @@ struct WelcomeWizard: View {
                 .padding(.bottom, 22)
                 .transition(self.stepTransition)
                 .id(self.currentStep)
-            if let commitError {
+            if let commitError = self.navigation.commitError {
                 Label(commitError, systemImage: "exclamationmark.triangle.fill")
                     .bobeTextStyle(.helper)
                     .foregroundStyle(theme.colors.error)
@@ -362,7 +411,7 @@ struct WelcomeWizard: View {
             }
         }
         .overlay {
-            if self.isCommittingStep {
+            if self.navigation.isCommitting {
                 ZStack {
                     theme.colors.background.opacity(0.78)
                     BobeSpinner(size: 22, lineWidth: 2.5)
@@ -374,8 +423,8 @@ struct WelcomeWizard: View {
         .bobeRaised(in: shape, fill: theme.colors.background)
         .padding(.vertical, 8)
         .padding(.trailing, 8)
-        .animation(BobeMotion.fade, value: self.isCommittingStep)
-        .animation(BobeMotion.standard, value: self.commitError)
+        .animation(BobeMotion.fade, value: self.navigation.isCommitting)
+        .animation(BobeMotion.standard, value: self.navigation.commitError)
     }
 
     @ViewBuilder
@@ -405,11 +454,17 @@ struct WelcomeWizard: View {
                 onContinue: { self.advance() },
                 onCriticalOperationChange: { critical in
                     self.isRuntimeOperationCritical = critical
-                    SetupWindowManager.shared.setCriticalOperation(critical || self.isCommittingStep)
+                    SetupWindowManager.shared.setCriticalOperation(critical || self.navigation.isCommitting)
                 }
             )
         case .localSetup:
-            LocalSetupStepView(onContinue: { self.advance() })
+            LocalSetupStepView(
+                onContinue: { self.advance() },
+                onCriticalOperationChange: { critical in
+                    self.isRuntimeOperationCritical = critical
+                    SetupWindowManager.shared.setCriticalOperation(critical || self.navigation.isCommitting)
+                }
+            )
         case .personalize:
             PersonalizeStepView(
                 preferredName: self.$preferredName,
@@ -440,9 +495,9 @@ struct WelcomeWizard: View {
 
     private var canGoBack: Bool {
         self.currentStep != .done
-            && !self.history.isEmpty
+            && !self.navigation.history.isEmpty
             && !self.isRuntimeOperationCritical
-            && !self.isCommittingStep
+            && !self.navigation.isCommitting
     }
 
     private var stepTransition: AnyTransition {
@@ -463,19 +518,15 @@ struct WelcomeWizard: View {
 
     private func advance() {
         Task { @MainActor in
-            guard !self.isCommittingStep else { return }
-            self.commitError = nil
-            if self.requiresCommit {
-                self.isCommittingStep = true
-                defer { self.isCommittingStep = false }
-                do {
-                    try await self.commitCurrentStep()
-                } catch {
-                    self.commitError = error.localizedDescription
-                    return
-                }
+            let commit: (() async throws -> Void)? = self.requiresCommit
+                ? { try await self.commitCurrentStep() }
+                : nil
+            guard await self.navigation.commit(commit) else { return }
+            guard let next = self.route.step(after: self.currentStep) else {
+                self.onComplete()
+                return
             }
-            self.advanceAfterCommit()
+            self.navigation.advance(to: next)
         }
     }
 
@@ -498,25 +549,13 @@ struct WelcomeWizard: View {
             )
             self.providerAPIKey = ""
         case .localSetup:
-            try await self.activateProvider(
-                profileId: "local",
-                request: .ollama(
-                    chatModel: "qwen2.5:7b-instruct",
-                    batchModel: "qwen2.5:7b-instruct"
-                )
-            )
+            let models = LocalRuntimeModels.setup
+            try await self.activateProvider(profileId: models.profileID, request: models.activationRequest)
         case .personalize:
             try await self.persistPersonalization()
             _ = try await DaemonClient.shared.advanceInitialization(to: .ready)
         case .proactivity:
-            let behavior = self.proactivityLevel.settings
-            _ = try await DaemonClient.shared.updateSettings(
-                SettingsUpdateRequest(
-                    captureEnabled: behavior.captureEnabled,
-                    captureIntervalSeconds: behavior.captureIntervalSeconds,
-                    checkinEnabled: behavior.checkinEnabled
-                )
-            )
+            try await self.proactivityLevel.apply { try await DaemonClient.shared.updateSettings($0) }
         default:
             return
         }
@@ -601,32 +640,21 @@ struct WelcomeWizard: View {
         }
     }
 
-    private func advanceAfterCommit() {
-        guard let next = self.route.step(after: self.currentStep) else {
-            self.onComplete()
-            return
-        }
-        self.history.append(self.currentStep)
-        withAnimation(BobeMotion.soft) {
-            self.currentStep = next
-        }
-    }
-
     private func goBack() {
         if self.currentStep == .localSetup {
             self.isLeavingLocalSetup = true
             return
         }
-        self.finishGoingBack(cancelInstall: false)
+        self.navigation.goBack()
     }
 
     private func finishGoingBack(cancelInstall: Bool) {
-        guard let previous = self.history.popLast() else { return }
-        if cancelInstall {
-            Task { try? await DaemonClient.shared.cancelLocalRuntimeInstall() }
+        guard cancelInstall else {
+            self.navigation.goBack()
+            return
         }
-        withAnimation(BobeMotion.soft) {
-            self.currentStep = previous
+        Task { @MainActor in
+            await self.navigation.goBack(after: { try await LocalRuntimeInstall.cancel() })
         }
     }
 }

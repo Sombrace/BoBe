@@ -5,7 +5,7 @@ use tracing::{debug, info};
 use crate::speech::protocol::{ServerMessage, VoicePhase};
 use crate::voice::context::VoiceContext;
 use crate::voice::protocol_helpers::{send_json, send_state};
-use crate::voice::session::{PendingBargeIn, TurnInFlight, VoiceSession};
+use crate::voice::session::{AbortedTurn, PendingBargeIn, TurnInFlight, VoiceSession};
 
 pub(crate) const MIN_WORDS_FOR_BARGE_IN: usize = 2;
 const MIN_UNSPACED_CHARS_FOR_BARGE_IN: usize = 4;
@@ -121,7 +121,7 @@ pub(crate) async fn abort_active_turn(
     keep_ms: u64,
     reason: &'static str,
 ) {
-    let Some(turn) = s.current_turn.take() else {
+    let Some(AbortedTurn { turn, overlap }) = s.abort_turn() else {
         debug!(reason, "voice.abort_no_active_turn");
         return;
     };
@@ -131,10 +131,6 @@ pub(crate) async fn abort_active_turn(
         reason,
         "voice.abort_active_turn"
     );
-    let overlap = s
-        .pending_barge_in
-        .take()
-        .filter(|overlap| overlap.is_live(Instant::now()));
     let TurnInFlight {
         turn_id,
         join,
@@ -168,9 +164,6 @@ pub(crate) async fn abort_active_turn(
     )
     .await;
     send_state(&ctx.output, VoicePhase::Listening, &turn_id).await;
-    s.last_partial_text.clear();
-    s.last_acked_played_ms = 0;
-    s.pending_barge_in = None;
 }
 
 pub(crate) fn pending_interruption(s: &VoiceSession, text: &str) -> Option<u64> {

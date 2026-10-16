@@ -42,6 +42,8 @@
 "phone.status.connecting" = "Connecting…";
 "phone.status.offline" = "Offline";
 "phone.status.removed" = "Not paired";
+"phone.status.setting_up" = "Finishing setup";
+"phone.status.update" = "Needs an update";
 "phone.status.replying" = "Replying…";
 "phone.status.working" = "Working on it…";
 "phone.status.thinking" = "Thinking…";
@@ -59,10 +61,16 @@
 "phone.thread.trouble" = "That didn’t work. Try again.";
 "phone.thread.reached_out" = "BoBe reached out";
 "phone.thread.retry" = "Not sent. Tap to retry";
+"phone.thread.unconfirmed" = "This message may not have gone through. Check the conversation before sending it again.";
+"phone.thread.send_again" = "Send again";
 "phone.connection.offline.title" = "Can’t reach BoBe";
 "phone.connection.removed.title" = "This iPhone isn’t paired";
 "phone.connection.retry" = "Try again";
 "phone.connection.pair_again" = "Pair again";
+"phone.connection.setting_up.title" = "BoBe is still getting set up";
+"phone.connection.setting_up.body" = "You can chat once setup is finished.";
+"phone.connection.incompatible.title" = "An update is needed";
+"phone.connection.incompatible.body" = "Update this app and BoBe on your computer, then try again.";
 "phone.question.label" = "BoBe asks";
 "phone.question.placeholder" = "Your answer";
 "phone.question.send" = "Send answer";
@@ -81,6 +89,7 @@
 "phone.talk.permission" = "Turn on Microphone and Speech Recognition in Settings.";
 "phone.settings.title" = "Settings";
 "phone.settings.address" = "Address";
+"phone.settings.forget_pending" = "Your previous BoBe hasn’t forgotten this iPhone yet. It will when this iPhone can reach it.";
 "phone.settings.voice" = "Voice";
 "phone.settings.unpair" = "Unpair this iPhone";
 "phone.settings.unpair.title" = "Unpair this iPhone?";
@@ -94,7 +103,9 @@
 "phone.work.needs_you" = "Needs you";
 "phone.work.goals" = "Goals";
 "phone.work.goals.empty" = "No goals yet.";
+"phone.work.goals.failed" = "Couldn’t load goals.";
 "phone.work.loading" = "Loading…";
+"phone.load.stale" = "Some of this couldn’t refresh. Pull down to try again.";
 "phone.work.goals.new" = "New goal";
 "phone.work.coming_up" = "Coming up";
 "phone.work.recently" = "Recently";
@@ -134,6 +145,7 @@
 "phone.schedule.repeats" = "Repeats";
 "phone.memory.title" = "Memory";
 "phone.memory.empty" = "Nothing yet.";
+"phone.memory.failed" = "Couldn’t load memory. Pull down to try again.";
 "phone.memory.no_match" = "No matches.";
 "phone.memory.forget" = "Forget something";
 "phone.memory.forget.prefill" = "Please forget ";

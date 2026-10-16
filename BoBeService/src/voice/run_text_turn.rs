@@ -14,7 +14,7 @@ use crate::voice::filler_library::FillerKind;
 use crate::voice::output::VoiceOutput;
 use crate::voice::protocol_helpers::{send_error, send_json, send_state};
 use crate::voice::sentence_pipeline::SentencePipeline;
-use crate::voice::session::SessionVoiceConfig;
+use crate::voice::session::{PlaybackReport, SessionVoiceConfig};
 use crate::voice::sinks::filler_frames;
 use crate::voice::spoken::SpokenScript;
 use crate::voice::synthesis::spawn_tts_task;
@@ -68,7 +68,7 @@ pub(crate) async fn run_text_turn(
     turn_id: &str,
     ctx: &VoiceContext,
     voice_cfg: SessionVoiceConfig,
-    playback_complete: Option<oneshot::Receiver<()>>,
+    playback_complete: Option<oneshot::Receiver<PlaybackReport>>,
     script: Arc<SpokenScript>,
     admission: VoiceTurnAdmission,
 ) {
@@ -352,16 +352,33 @@ pub(crate) async fn run_text_turn(
     if let Some(receiver) = playback_complete {
         tokio::select! {
             biased;
-            ()=cancellation.cancelled()=>send_json(output,&ServerMessage::Truncate {turn_id:turn_id.to_owned(),keep_ms:0}).await,
-            result=tokio::time::timeout(playback_report_limit(spoken.audio_duration()),receiver)=>match result {
-                Ok(Ok(()))=>{
-                    if let Err(error)=runtime_session.acknowledge_presentation(assistant_turn_id,ctx.conversation_channel).await {
-                        warn!(%error,turn_id,"voice.presentation_receipt_failed");
+            () = cancellation.cancelled() => {
+                send_json(
+                    output,
+                    &ServerMessage::Truncate {
+                        turn_id: turn_id.to_owned(),
+                        keep_ms: 0,
+                    },
+                )
+                .await;
+            }
+            result = tokio::time::timeout(playback_report_limit(spoken.audio_duration()), receiver) => {
+                match result {
+                    Ok(Ok(PlaybackReport::Heard)) => {
+                        if let Err(error) = runtime_session
+                            .acknowledge_presentation(assistant_turn_id, ctx.conversation_channel)
+                            .await
+                        {
+                            warn!(%error, turn_id, "voice.presentation_receipt_failed");
+                        }
                     }
+                    Ok(Ok(PlaybackReport::Unheard)) => {
+                        warn!(turn_id, "voice.reply_left_unpresented");
+                    }
+                    Ok(Err(_)) => debug!("voice.playback_report_sender_dropped"),
+                    Err(_) => warn!("voice.playback_report_timeout"),
                 }
-                Ok(Err(_))=>debug!("voice.client_tts_completion_sender_dropped"),
-                Err(_)=>warn!("voice.client_tts_completion_timeout"),
-            },
+            }
         }
     }
     send_state(output, VoicePhase::Listening, turn_id).await;

@@ -26,6 +26,10 @@ final class HoldToTalk {
     @ObservationIgnored private var finalized = ""
     @ObservationIgnored private var volatile = ""
 
+    init(state: State = .idle) {
+        self.state = state
+    }
+
     func prepare() {
         guard self.listener == nil, self.preparation == nil, PhonePermissions.voice() == .granted else { return }
         self.preparation = Task {

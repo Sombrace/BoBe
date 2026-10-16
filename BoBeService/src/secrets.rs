@@ -62,6 +62,72 @@ pub(crate) fn read_secret(account: &str) -> Option<String> {
     DEFAULT_STORE.get()?.read(account)
 }
 
+#[cfg(test)]
+pub(crate) mod memory {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use super::{SecretError, SecretStore};
+
+    pub(crate) struct MemorySecretStore {
+        values: Mutex<HashMap<String, String>>,
+        writes_before_failure: AtomicUsize,
+    }
+
+    impl MemorySecretStore {
+        pub(crate) fn holding<'a>(values: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
+            Self {
+                values: Mutex::new(
+                    values
+                        .into_iter()
+                        .map(|(account, value)| (account.to_owned(), value.to_owned()))
+                        .collect(),
+                ),
+                writes_before_failure: AtomicUsize::new(usize::MAX),
+            }
+        }
+
+        pub(crate) fn failing_after(self, writes: usize) -> Self {
+            self.writes_before_failure.store(writes, Ordering::SeqCst);
+            self
+        }
+
+        fn write(&self) -> Result<(), SecretError> {
+            self.writes_before_failure
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    left.checked_sub(1)
+                })
+                .map(drop)
+                .map_err(|_| SecretError::Backend("injected secret store failure".into()))
+        }
+    }
+
+    impl SecretStore for MemorySecretStore {
+        fn read(&self, account: &str) -> Option<String> {
+            self.values.lock().ok()?.get(account).cloned()
+        }
+
+        fn store(&self, account: &str, value: &str) -> Result<(), SecretError> {
+            self.write()?;
+            self.values
+                .lock()
+                .map_err(|error| SecretError::Lock(error.to_string()))?
+                .insert(account.to_owned(), value.to_owned());
+            Ok(())
+        }
+
+        fn delete(&self, account: &str) -> Result<(), SecretError> {
+            self.write()?;
+            self.values
+                .lock()
+                .map_err(|error| SecretError::Lock(error.to_string()))?
+                .remove(account);
+            Ok(())
+        }
+    }
+}
+
 #[cfg(unix)]
 pub(crate) mod file {
     use std::collections::HashMap;
@@ -88,6 +154,21 @@ pub(crate) mod file {
 
         fn flush(&self, map: &HashMap<String, String>) -> Result<(), super::SecretError> {
             write_atomic(&self.path, map)
+        }
+
+        fn replace(
+            &self,
+            cache: &mut HashMap<String, String>,
+            updated: HashMap<String, String>,
+        ) -> Result<(), super::SecretError> {
+            if let Err(error) = self.flush(&updated) {
+                if let Ok(current) = load(&self.path) {
+                    *cache = current;
+                }
+                return Err(error);
+            }
+            *cache = updated;
+            Ok(())
         }
     }
 
@@ -165,8 +246,7 @@ pub(crate) mod file {
             } else {
                 updated.insert(account.to_owned(), value.to_owned());
             }
-            self.flush(&updated)?;
-            *guard = updated;
+            self.replace(&mut guard, updated)?;
             info!(account, "secrets.stored");
             Ok(())
         }
@@ -178,8 +258,7 @@ pub(crate) mod file {
                 .map_err(|e| super::SecretError::Lock(e.to_string()))?;
             let mut updated = load(&self.path)?;
             let removed = updated.remove(account).is_some();
-            self.flush(&updated)?;
-            *guard = updated;
+            self.replace(&mut guard, updated)?;
             if !removed {
                 warn!(account, "secrets.delete_missing");
             }

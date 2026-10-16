@@ -1,5 +1,5 @@
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { readdir, open } from "node:fs/promises";
+import { readdir, open, unlink } from "node:fs/promises";
 import { SessionManager, CURRENT_SESSION_VERSION } from "@earendil-works/pi-coding-agent";
 import { atomicPrivateWrite, privateDirectory, privateRead, syncFile } from "./files.js";
 import { isJson, isRecord } from "./protocol.js";
@@ -19,13 +19,16 @@ function persistedJson(text: string): unknown {
   }
 }
 
-function parsePointer(text: string): Pointer {
-  const value = persistedJson(text);
+function pointerValue(value: unknown): Pointer {
   if (!isRecord(value) || value.version !== 1 || typeof value.session_id !== "string" ||
     typeof value.file !== "string" || !/^sessions\/[A-Za-z0-9_.-]+\.jsonl$/.test(value.file)) {
     throw new Error("Invalid canonical session pointer");
   }
   return { version: 1, session_id: value.session_id, file: value.file };
+}
+
+function parsePointer(text: string): Pointer {
+  return pointerValue(persistedJson(text));
 }
 
 function nonempty(value: unknown): value is string {
@@ -146,18 +149,14 @@ export async function openCanonicalSession(agentDir: string, workspace: string):
   await privateDirectory(sessionDir);
   const pointerPath = join(agentDir, AGENT_LAYOUT.session_pointer);
   const stored = await privateRead(pointerPath);
-  if (stored !== undefined) {
-    const pointer = parsePointer(stored);
-    const path = resolve(agentDir, pointer.file);
-    const transcript = await privateRead(path);
-    if (transcript === undefined) throw new Error("Canonical session pointer targets a missing transcript");
-    validateTranscript(transcript, pointer);
-    const manager = SessionManager.open(path, sessionDir, workspace);
-    if (manager.getSessionId() !== pointer.session_id) throw new Error("pi changed the canonical session identity");
-    return manager;
-  }
-  if ((await readdir(sessionDir)).length > 0) {
-    throw new Error("Canonical session pointer is missing while transcripts exist; owner recovery is required");
+  if (stored !== undefined) return openPointer(agentDir, sessionDir, workspace, parsePointer(stored));
+  const entries = await readdir(sessionDir);
+  if (entries.length > 0) {
+    const pointer = await unpublishedSession(sessionDir, entries);
+    if (pointer) {
+      await atomicPrivateWrite(pointerPath, `${JSON.stringify(pointer)}\n`);
+      return openPointer(agentDir, sessionDir, workspace, pointer);
+    }
   }
   const manager = await persistNewSession(SessionManager.create(workspace, sessionDir));
   const file = manager.getSessionFile();
@@ -169,6 +168,44 @@ export async function openCanonicalSession(agentDir: string, workspace: string):
   };
   await atomicPrivateWrite(pointerPath, `${JSON.stringify(pointer)}\n`);
   return manager;
+}
+
+async function openPointer(agentDir: string, sessionDir: string, workspace: string, pointer: Pointer): Promise<SessionManager> {
+  const path = resolve(agentDir, pointer.file);
+  const transcript = await privateRead(path);
+  if (transcript === undefined) throw new Error("Canonical session pointer targets a missing transcript");
+  validateTranscript(transcript, pointer);
+  const manager = SessionManager.open(path, sessionDir, workspace);
+  if (manager.getSessionId() !== pointer.session_id) throw new Error("pi changed the canonical session identity");
+  return manager;
+}
+
+async function unpublishedSession(sessionDir: string, entries: string[]): Promise<Pointer | undefined> {
+  const [name] = entries;
+  try {
+    if (entries.length !== 1 || !name || !/^[A-Za-z0-9_.-]+\.jsonl$/.test(name)) {
+      throw new Error("The transcripts are not one unpublished session");
+    }
+    const path = join(sessionDir, name);
+    const transcript = await privateRead(path);
+    if (transcript === undefined) throw new Error("The unpublished transcript disappeared");
+    if (!transcript.includes("\n")) {
+      await unlink(path);
+      await syncFile(sessionDir);
+      return undefined;
+    }
+    if (transcript.indexOf("\n") !== transcript.length - 1) throw new Error("The transcript is not an unused session header");
+    const header = persistedJson(transcript);
+    if (!isRecord(header) || typeof header.id !== "string" || header.parentSession !== undefined ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(header.id)) {
+      throw new Error("The transcript header is not a canonical session identity");
+    }
+    const pointer = pointerValue({ version: 1, session_id: header.id, file: `${AGENT_LAYOUT.transcripts}/${name}` });
+    validateTranscript(transcript, pointer);
+    return pointer;
+  } catch (error) {
+    throw new Error("Canonical session pointer is missing while transcripts exist; owner recovery is required", { cause: error });
+  }
 }
 
 async function persistNewSession(manager: SessionManager): Promise<SessionManager> {

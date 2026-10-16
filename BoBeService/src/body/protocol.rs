@@ -150,12 +150,18 @@ pub(crate) struct AdapterWelcome {
 pub(crate) struct BodyHealthReport {
     #[serde(default)]
     pub(crate) build_number: u32,
+    #[serde(default)]
+    pub(crate) lifecycle: Option<String>,
+    #[serde(default)]
+    pub(crate) turn: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct BodyBatteryState {
     #[serde(default)]
     pub(crate) percent: u8,
+    #[serde(default)]
+    pub(crate) charging: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -197,6 +203,8 @@ impl UpdateStateReport {
 pub(crate) enum OfferDecision {
     Send,
     AlreadyOffered,
+    RetryLater,
+    Suppressed,
     NotNewer,
     NotConfigured,
     NoHealthYet,

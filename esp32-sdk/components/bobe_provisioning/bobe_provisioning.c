@@ -1,4 +1,5 @@
 #include "bobe_provisioning.h"
+#include "bobe_claim_store.h"
 #include "bobe_identity.h"
 
 #include "bobe_provisioning_credentials.h"
@@ -239,226 +240,6 @@ static bool endpoint_is_valid(const char *uri)
         }
     }
     return true;
-}
-
-static esp_err_t load_claim_state(bobe_claim_state_t *state)
-{
-    if (state == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    memset(state, 0, sizeof(*state));
-    nvs_handle_t nvs;
-    const esp_err_t open_result =
-        nvs_open(BOBE_CLAIM_NAMESPACE, NVS_READONLY, &nvs);
-    if (open_result == ESP_ERR_NVS_NOT_FOUND) {
-        return ESP_OK;
-    }
-    if (open_result != ESP_OK) {
-        return open_result;
-    }
-    uint8_t ready = 0;
-    const esp_err_t ready_result =
-        nvs_get_u8(nvs, BOBE_CLAIM_READY_KEY, &ready);
-    nvs_close(nvs);
-    if (ready_result == ESP_ERR_NVS_NOT_FOUND || ready != 1) {
-        return ready_result == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : ESP_ERR_INVALID_STATE;
-    }
-    state->claim_ready = true;
-    uint8_t slot = 0;
-    const esp_err_t slot_result = bobe_storage_load_active_slot(&slot);
-    if (slot_result != ESP_OK || bobe_storage_slot_keys(slot) == NULL) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    state->active_slot_valid = true;
-    state->active_slot = slot;
-    const bobe_storage_slot_keys_t *const keys = bobe_storage_slot_keys(slot);
-    if (nvs_open(BOBE_CLAIM_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    const esp_err_t epoch_result = nvs_get_u64(
-        nvs,
-        keys->controller_epoch,
-        &state->active_epoch
-    );
-    nvs_close(nvs);
-    return epoch_result;
-}
-
-static esp_err_t erase_keys(
-    const char *namespace_name,
-    const char *const *keys,
-    size_t count
-)
-{
-    nvs_handle_t nvs;
-    const esp_err_t open_result =
-        nvs_open(namespace_name, NVS_READWRITE, &nvs);
-    if (open_result == ESP_ERR_NVS_NOT_FOUND) {
-        return ESP_OK;
-    }
-    if (open_result != ESP_OK) {
-        return open_result;
-    }
-    esp_err_t result = ESP_OK;
-    for (size_t index = 0; index < count && result == ESP_OK; ++index) {
-        result = nvs_erase_key(nvs, keys[index]);
-        if (result == ESP_ERR_NVS_NOT_FOUND) {
-            result = ESP_OK;
-        }
-    }
-    if (result == ESP_OK) {
-        result = nvs_commit(nvs);
-    }
-    nvs_close(nvs);
-    return result;
-}
-
-static esp_err_t retire_claim_material(const bobe_claim_plan_t *plan)
-{
-    if (plan == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    if (plan->retire_slot) {
-        const bobe_storage_slot_keys_t *const retired =
-            bobe_storage_slot_keys(plan->retired_slot);
-        if (retired == NULL) {
-            return ESP_ERR_INVALID_STATE;
-        }
-        const char *const claim_keys[] = {
-            retired->endpoint,
-            retired->trust_key_id,
-            retired->controller_epoch,
-        };
-        ESP_RETURN_ON_ERROR(
-            erase_keys(
-                BOBE_CLAIM_NAMESPACE,
-                claim_keys,
-                sizeof(claim_keys) / sizeof(claim_keys[0])
-            ),
-            TAG,
-            "retire previous claim slot"
-        );
-        const char *const tls_keys[] = {
-            retired->server_ca,
-            retired->client_cert,
-            retired->client_key,
-        };
-        ESP_RETURN_ON_ERROR(
-            erase_keys(
-                BOBE_TLS_NAMESPACE,
-                tls_keys,
-                sizeof(tls_keys) / sizeof(tls_keys[0])
-            ),
-            TAG,
-            "retire previous TLS slot"
-        );
-    }
-    return ESP_OK;
-}
-
-static esp_err_t retire_inactive_claim_slot(void)
-{
-    bobe_claim_state_t state;
-    ESP_RETURN_ON_ERROR(
-        load_claim_state(&state),
-        TAG,
-        "load claim state for retirement"
-    );
-    if (!state.claim_ready) {
-        return ESP_OK;
-    }
-    const bobe_claim_plan_t plan = {
-        .retire_slot = true,
-        .retired_slot = (uint8_t)(state.active_slot ^ 1U),
-    };
-    return retire_claim_material(&plan);
-}
-
-static esp_err_t save_claim_slot(
-    const bobe_storage_slot_keys_t *keys,
-    const char *endpoint,
-    const char *key_id,
-    uint64_t controller_epoch
-)
-{
-    if (keys == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    nvs_handle_t nvs;
-    ESP_RETURN_ON_ERROR(
-        nvs_open(BOBE_CLAIM_NAMESPACE, NVS_READWRITE, &nvs),
-        TAG,
-        "open claim storage"
-    );
-    esp_err_t result = nvs_set_str(nvs, keys->endpoint, endpoint);
-    if (result == ESP_OK) {
-        result = nvs_set_str(nvs, keys->trust_key_id, key_id);
-    }
-    if (result == ESP_OK) {
-        result = nvs_set_u64(
-            nvs,
-            keys->controller_epoch,
-            controller_epoch
-        );
-    }
-    if (result == ESP_OK) {
-        result = nvs_commit(nvs);
-    }
-    nvs_close(nvs);
-    return result;
-}
-
-static esp_err_t save_tls_credentials(
-    const bobe_storage_slot_keys_t *keys,
-    const char *server_ca,
-    const char *client_cert,
-    const char *client_key
-)
-{
-    if (keys == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    nvs_handle_t nvs;
-    ESP_RETURN_ON_ERROR(
-        nvs_open(BOBE_TLS_NAMESPACE, NVS_READWRITE, &nvs),
-        TAG,
-        "open TLS storage"
-    );
-    esp_err_t result = nvs_set_str(nvs, keys->server_ca, server_ca);
-    if (result == ESP_OK) {
-        result = nvs_set_str(nvs, keys->client_cert, client_cert);
-    }
-    if (result == ESP_OK) {
-        result = nvs_set_str(nvs, keys->client_key, client_key);
-    }
-    if (result == ESP_OK) {
-        result = nvs_commit(nvs);
-    }
-    nvs_close(nvs);
-    return result;
-}
-
-static esp_err_t activate_claim_slot(uint8_t slot)
-{
-    if (bobe_storage_slot_keys(slot) == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    nvs_handle_t nvs;
-    ESP_RETURN_ON_ERROR(
-        nvs_open(BOBE_CLAIM_NAMESPACE, NVS_READWRITE, &nvs),
-        TAG,
-        "open claim activation storage"
-    );
-    esp_err_t result =
-        nvs_set_u8(nvs, BOBE_CLAIM_ACTIVE_SLOT_KEY, slot);
-    if (result == ESP_OK) {
-        result = nvs_set_u8(nvs, BOBE_CLAIM_READY_KEY, 1);
-    }
-    if (result == ESP_OK) {
-        result = nvs_commit(nvs);
-    }
-    nvs_close(nvs);
-    return result;
 }
 
 static const char *required_pem(
@@ -722,27 +503,8 @@ static esp_err_t claim_handler(
         return ESP_ERR_INVALID_ARG;
     }
     const uint64_t controller_epoch = (uint64_t)epoch->valuedouble;
-    bobe_claim_state_t claim_state;
-    esp_err_t result = load_claim_state(&claim_state);
     bobe_claim_plan_t plan;
-    if (result == ESP_OK) {
-        const bobe_claim_plan_result_t plan_result =
-            bobe_claim_plan_rotation(
-                &claim_state,
-                controller_epoch,
-                &plan
-            );
-        if (plan_result != BOBE_CLAIM_PLAN_OK) {
-            ESP_LOGW(
-                TAG,
-                "claim rotation rejected: %s",
-                bobe_claim_plan_result_name(plan_result)
-            );
-            result = plan_result == BOBE_CLAIM_PLAN_STALE_EPOCH
-                         ? ESP_ERR_INVALID_VERSION
-                         : ESP_ERR_INVALID_STATE;
-        }
-    }
+    esp_err_t result = bobe_claim_store_plan(controller_epoch, &plan);
     if (result != ESP_OK) {
         cJSON_Delete(root);
         return result;
@@ -758,31 +520,15 @@ static esp_err_t claim_handler(
     }
     *output_length = (ssize_t)(response_size - 1);
 
-    const uint8_t target_slot = plan.target_slot;
-    const bobe_storage_slot_keys_t *target_keys =
-        bobe_storage_slot_keys(target_slot);
-    if (result == ESP_OK) {
-        result = save_tls_credentials(
-            target_keys,
-            server_ca,
-            client_cert,
-            client_key
-        );
-    }
-    if (result == ESP_OK) {
-        result = save_claim_slot(
-            target_keys,
-            endpoint,
-            key_id,
-            controller_epoch
-        );
-    }
-    if (result == ESP_OK) {
-        result = activate_claim_slot(target_slot);
-    }
-    if (result == ESP_OK) {
-        result = retire_claim_material(&plan);
-    }
+    const bobe_claim_material_t material = {
+        .endpoint = endpoint,
+        .trust_key_id = key_id,
+        .controller_epoch = controller_epoch,
+        .server_ca_pem = server_ca,
+        .client_cert_pem = client_cert,
+        .client_key_pem = client_key,
+    };
+    result = bobe_claim_store_commit(&plan, &material);
     cJSON_Delete(root);
     if (result != ESP_OK) {
         free(*output);
@@ -926,10 +672,14 @@ esp_err_t bobe_provisioning_start(
     finished_callback_context = context;
     const bool existing_claim = bobe_provisioning_has_complete_claim();
     if (existing_claim) {
-        const esp_err_t retirement_result = retire_inactive_claim_slot();
+        const esp_err_t retirement_result =
+            bobe_claim_store_retire_inactive();
         if (retirement_result != ESP_OK) {
-            atomic_store(&running, false);
-            return retirement_result;
+            ESP_LOGW(
+                TAG,
+                "inactive claim slot retirement deferred: %s",
+                esp_err_to_name(retirement_result)
+            );
         }
     }
     atomic_store(&claim_configured, existing_claim);

@@ -188,16 +188,14 @@ impl OllamaInstallService {
                 .ok();
             None
         };
-        runtime_pump.abort();
+        drop(runtime_tx);
+        drop(runtime_pump.await);
 
         if *cancel_rx.borrow() {
             return Err(AppError::Canceled("Install canceled".into()));
         }
 
         if let Some(binary_path) = binary_path.as_deref() {
-            self.binary_manager
-                .validate_ollama_binary(binary_path)
-                .await?;
             self.ollama_manager
                 .ensure_daemon_running(binary_path)
                 .await?;

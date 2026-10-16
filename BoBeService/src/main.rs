@@ -562,14 +562,21 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             log_level,
             managed_bootstrap_stdin,
         } => {
+            let config::ServeConfig {
+                loaded,
+                purged_release_0_2,
+                interrupted_restore,
+            } = config::Config::load_for_serve().await?;
+            let paths = loaded.paths.clone().prepare_root()?;
+            let runtime_locks = util::runtime_lock::RuntimeLocks::acquire(&paths)?;
             let (
                 config::LoadedConfig {
                     mut config,
-                    paths,
                     config_file,
+                    ..
                 },
-                purged_release_0_2,
-            ) = config::Config::load_for_serve().await?;
+                locked_restore,
+            ) = config::Config::reconcile_locked(loaded, &paths).await?;
             if let Some(host) = host {
                 config.server.host = host;
             }
@@ -579,11 +586,8 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             if let Some(log_level) = log_level {
                 config.logging.level = log_level;
             }
-
-            let paths = paths.prepare_root()?;
             config.data_dir = paths.root().to_string_lossy().into_owned();
             config.database.url = paths.database_url().to_owned();
-            let runtime_locks = util::runtime_lock::RuntimeLocks::acquire(&paths)?;
             if config.server.api_token.expose_secret().is_empty() {
                 config.server.api_token = secrecy::SecretString::from(owner_token::ensure(&paths)?);
             }
@@ -605,6 +609,11 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             util::logging::init_tracing(&config);
             if purged_release_0_2 {
                 tracing::info!("data_root.release_0_2_purged");
+            }
+            for reconciled in [interrupted_restore, locked_restore] {
+                if reconciled != ops::backup::Reconciled::Absent {
+                    tracing::warn!(?reconciled, "data_root.interrupted_restore_reconciled");
+                }
             }
 
             tracing::info!(
@@ -696,17 +705,18 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
         }
 
         Commands::Init { json } => {
-            let loaded = config::Config::load_operational()?;
+            let loaded = config::Config::load_reconciled().await?;
             let validation = ops::config_report::validate(&loaded);
             if !validation.valid {
                 emit_report(json, &validation, render_validation(&validation));
                 return Ok(ops::exit::ExitCode::Invalid);
             }
+            let paths = loaded.paths.clone().prepare_root()?;
+            let _locks = util::runtime_lock::RuntimeLocks::acquire(&paths)?;
+            let (loaded, _) = config::Config::reconcile_locked(loaded, &paths).await?;
             let mut config = loaded.config;
-            let paths = loaded.paths.prepare_root()?;
             config.data_dir = paths.root().to_string_lossy().into_owned();
             config.database.url = paths.database_url().to_owned();
-            let _locks = util::runtime_lock::RuntimeLocks::acquire(&paths)?;
             if config.server.api_token.expose_secret().is_empty() {
                 config.server.api_token = secrecy::SecretString::from(owner_token::ensure(&paths)?);
             }
@@ -787,20 +797,25 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 })
             };
             let probe_ok = !probe || provider["ok"] == true;
+            let failed_services = failed_services(&serde_json::to_value(&status.liveness)?);
             let report = serde_json::json!({
                 "schema": "bobe.cli.v1",
                 "command": "doctor",
                 "check_scope": if probe { "runtime_and_provider" } else { "runtime_only" },
-                "ok": validation.valid && status_exit == ops::exit::ExitCode::Success && probe_ok,
+                "ok": validation.valid
+                    && status_exit == ops::exit::ExitCode::Success
+                    && failed_services.is_empty()
+                    && probe_ok,
                 "config": validation,
                 "runtime": status,
+                "failed_services": failed_services,
                 "provider": provider,
             });
             let exit = if report["config"]["valid"].as_bool() == Some(false) {
                 ops::exit::ExitCode::Invalid
             } else if status_exit != ops::exit::ExitCode::Success {
                 status_exit
-            } else if !probe_ok {
+            } else if !failed_services.is_empty() || !probe_ok {
                 ops::exit::ExitCode::Failed
             } else {
                 ops::exit::ExitCode::Success
@@ -1761,7 +1776,14 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             reason = "backup commands report operator results"
         )]
         Commands::Backup { command } => {
-            let loaded = config::Config::load_operational()?;
+            let loaded = if matches!(
+                command,
+                BackupCommands::Create | BackupCommands::Restore { .. }
+            ) {
+                config::Config::load_reconciled().await?
+            } else {
+                config::Config::load_operational()?
+            };
             match command {
                 BackupCommands::Create => {
                     let live = ops::admin_socket::try_request(
@@ -1781,6 +1803,8 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     } else {
                         let paths = loaded.paths.prepare_root()?;
                         let _locks = util::runtime_lock::RuntimeLocks::acquire(&paths)?;
+                        ops::backup::reconcile_restore_journals(&paths, &loaded.config_file)
+                            .await?;
                         let (pool, identity) = bootstrap::initialize_storage(&paths).await?;
                         pool.close().await;
                         let backup = ops::backup::create(
@@ -1907,7 +1931,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                         outcome.manifest.runtime_authority_epoch,
                         outcome.restored_authority_epoch,
                         if outcome.cleanup_pending {
-                            "; cleanup will resume on the next restore"
+                            "; cleanup will finish the next time BoBe starts"
                         } else {
                             ""
                         }
@@ -1925,7 +1949,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 signature,
                 archive,
             } => {
-                let loaded = config::Config::load_operational()?;
+                let loaded = config::Config::load_reconciled().await?;
                 let home = std::env::var_os("HOME")
                     .filter(|value| !value.is_empty())
                     .map(std::path::PathBuf::from)
@@ -1961,58 +1985,29 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     drop(offline_check);
                 }
                 let journal_path = versions.join("update-journal.json");
-                if let Some(journal) =
-                    ops::update::recover_staging_journal(&journal_path, &versions).await?
-                {
-                    if journal.managed_service {
-                        ops::service::stop(&service_paths).await?;
+                let host = ops::update::SystemUpdateHost {
+                    service_paths: &service_paths,
+                    paths: &paths,
+                    config_file: &loaded.config_file,
+                    target: ops::status::OpsTarget::resolve(&loaded.config, None, None)
+                        .map_err(error::AppError::Config)?,
+                };
+                match ops::update::recover(&journal_path, &versions, &host).await? {
+                    ops::update::Recovered::Nothing => {}
+                    ops::update::Recovered::Finalized => {
+                        println!("Finished an interrupted update that had already started.");
                     }
-                    if let Some(backup) = journal.backup {
-                        let recovery_locks = if journal.managed_service {
-                            util::runtime_lock::RuntimeLocks::acquire_after_service_stop(
-                                &paths,
-                                std::time::Duration::from_secs(15),
-                            )
-                            .await?
-                        } else {
-                            util::runtime_lock::RuntimeLocks::acquire(&paths)?
-                        };
-                        ops::backup::restore(
-                            &backup,
-                            &paths,
-                            &loaded.config_file,
-                            &bootstrap::database::SUPPORTED_SCHEMA_VERSIONS,
-                        )
-                        .await?;
-                        drop(recovery_locks);
+                    ops::update::Recovered::Abandoned => {
+                        println!("Discarded an interrupted update that never started.");
                     }
-                    ops::update::rollback(&versions, &journal.previous)?;
-                    let root = versions.join(&journal.previous);
-                    let executable = root.join("bin/bobe");
-                    let agent = agent_runtime_for_executable(&executable);
-                    if journal.managed_service {
-                        ops::service::install(&executable, agent.as_ref(), &service_paths).await?;
-                        let target = ops::status::OpsTarget::resolve(&loaded.config, None, None)
-                            .map_err(error::AppError::Config)?;
-                        let (recovery_exit, _) = ops::status::wait_ready_for(
-                            &target,
-                            std::time::Duration::from_mins(1),
-                            std::time::Duration::from_millis(500),
-                            ops::status::ReadinessLevel::Process,
-                            journal.authority_id,
-                            None,
-                            Some(journal.previous_version.as_str()),
-                        )
-                        .await;
-                        if recovery_exit != ops::exit::ExitCode::Success {
-                            return Err(error::AppError::Internal(
-                                "recovered previous service did not become ready".into(),
-                            )
-                            .into());
-                        }
-                    }
-                    ops::update::discard_candidate(&versions, &journal.candidate).await?;
-                    ops::update::clear_journal(&journal_path).await?;
+                    ops::update::Recovered::RolledBack { preserved } => println!(
+                        "Rolled back an interrupted update that did not start; data from before the rollback is saved in {}",
+                        preserved
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(" and ")
+                    ),
                 }
                 let manifest_bytes = std::fs::read(&manifest)?;
                 let signature = std::fs::read_to_string(signature)?;
@@ -2048,13 +2043,14 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 ops::update::write_journal(
                     &journal_path,
                     &ops::update::UpdateJournal {
-                        phase: "staging".into(),
+                        phase: ops::update::UpdatePhase::Staging,
                         previous: active_previous.clone(),
                         previous_version: previous_version.clone(),
                         candidate: update.version.clone(),
                         backup: None,
                         authority_id: None,
                         managed_service,
+                        preserved: Vec::new(),
                     },
                 )
                 .await?;
@@ -2069,13 +2065,14 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 ops::update::write_journal(
                     &journal_path,
                     &ops::update::UpdateJournal {
-                        phase: "stopping".into(),
+                        phase: ops::update::UpdatePhase::Stopping,
                         previous: active_previous.clone(),
                         previous_version: previous_version.clone(),
                         candidate: update.version.clone(),
                         backup: None,
                         authority_id: None,
                         managed_service,
+                        preserved: Vec::new(),
                     },
                 )
                 .await?;
@@ -2092,6 +2089,15 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     } else {
                         util::runtime_lock::RuntimeLocks::acquire(&paths)?
                     };
+                    if ops::backup::reconcile_restore_journals(&paths, &loaded.config_file)
+                        .await?
+                        .changed_live_data()
+                    {
+                        return Err(error::AppError::Conflict(
+                            "an interrupted restore was just reconciled; run the update again"
+                                .into(),
+                        ));
+                    }
                     let (pool, identity) = bootstrap::initialize_storage(&paths).await?;
                     pool.close().await;
                     if !update.supports_database_schema(identity.schema_version) {
@@ -2112,147 +2118,100 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     ops::update::write_journal(
                         &journal_path,
                         &ops::update::UpdateJournal {
-                            phase: "backup_verified".into(),
+                            phase: ops::update::UpdatePhase::BackupVerified,
                             previous: active_previous.clone(),
                             previous_version: previous_version.clone(),
                             candidate: update.version.clone(),
                             backup: Some(backup.clone()),
                             authority_id: Some(identity.runtime_authority_id),
                             managed_service,
+                            preserved: Vec::new(),
                         },
                     )
                     .await?;
                     drop(locks);
                     let previous = ops::update::activate(&versions, &update.version)?
                         .unwrap_or(active_previous.clone());
-                    ops::update::write_journal(
-                        &journal_path,
-                        &ops::update::UpdateJournal {
-                            phase: "activated".into(),
-                            previous: previous.clone(),
-                            previous_version: previous_version.clone(),
-                            candidate: update.version.clone(),
-                            backup: Some(backup.clone()),
-                            authority_id: Some(identity.runtime_authority_id),
-                            managed_service,
-                        },
-                    )
-                    .await?;
-                    Ok::<_, error::AppError>((backup, previous, identity.runtime_authority_id))
+                    let activated = ops::update::UpdateJournal {
+                        phase: ops::update::UpdatePhase::Activated,
+                        previous,
+                        previous_version: previous_version.clone(),
+                        candidate: update.version.clone(),
+                        backup: Some(backup),
+                        authority_id: Some(identity.runtime_authority_id),
+                        managed_service,
+                        preserved: Vec::new(),
+                    };
+                    ops::update::write_journal(&journal_path, &activated).await?;
+                    Ok::<_, error::AppError>(activated)
                 }
                 .await;
-                let (backup, previous, authority_id) = match post_stop {
-                    Ok(value) => value,
+                let activated = match post_stop {
+                    Ok(activated) => activated,
                     Err(error) => {
-                        if !managed_service {
-                            return Err(error.into());
-                        }
-                        let previous_root = versions.join(&active_previous);
-                        let previous_executable = previous_root.join("bin/bobe");
-                        let previous_agent = agent_runtime_for_executable(&previous_executable);
-                        let restart = ops::service::install(
-                            &previous_executable,
-                            previous_agent.as_ref(),
-                            &service_paths,
-                        )
-                        .await;
-                        return Err(match restart {
-                            Ok(()) => error.into(),
-                            Err(restart_error) => error::AppError::Internal(format!(
-                                "update preparation failed: {error}; previous service restart failed: {restart_error}"
-                            ))
-                            .into(),
-                        });
+                        let prepared = ops::update::UpdateJournal {
+                            phase: ops::update::UpdatePhase::Stopping,
+                            previous: active_previous.clone(),
+                            previous_version: previous_version.clone(),
+                            candidate: update.version.clone(),
+                            backup: None,
+                            authority_id: None,
+                            managed_service,
+                            preserved: Vec::new(),
+                        };
+                        return Err(
+                            match ops::update::abandon(&journal_path, &versions, &prepared, &host)
+                                .await
+                            {
+                                Ok(()) => error.into(),
+                                Err(restart_error) => error::AppError::Internal(format!(
+                                    "update preparation failed: {error}; previous version recovery failed: {restart_error}"
+                                ))
+                                .into(),
+                            },
+                        );
                     }
                 };
-                let executable = staged.join("bin/bobe");
-                let agent = agent_runtime_for_executable(&executable);
                 let activation = async {
                     if !managed_service {
                         return Ok::<(), error::AppError>(());
                     }
-                    ops::service::install(&executable, agent.as_ref(), &service_paths).await?;
-                    let target = ops::status::OpsTarget::resolve(&loaded.config, None, None)
-                        .map_err(error::AppError::Config)?;
-                    let (exit, _) = ops::status::wait_ready_for(
-                        &target,
-                        std::time::Duration::from_mins(1),
-                        std::time::Duration::from_millis(500),
-                        ops::status::ReadinessLevel::Process,
-                        Some(authority_id),
-                        None,
-                        Some(&update.version),
+                    ops::update::UpdateHost::install_service(&host, &staged).await?;
+                    if !ops::update::UpdateHost::ready(
+                        &host,
+                        activated.authority_id,
+                        &update.version,
+                        ops::update::READY_TIMEOUT,
                     )
-                    .await;
-                    if exit != ops::exit::ExitCode::Success {
+                    .await
+                    {
                         return Err(error::AppError::Internal(
                             "updated service did not become ready".into(),
                         ));
                     }
-                    Ok::<(), error::AppError>(())
+                    Ok(())
                 }
                 .await;
                 if let Err(activation_error) = activation {
-                    let rollback_result = async {
-                        ops::service::stop(&service_paths).await?;
-                        let rollback_locks =
-                            util::runtime_lock::RuntimeLocks::acquire_after_service_stop(
-                                &paths,
-                                std::time::Duration::from_secs(15),
-                            )
-                            .await?;
-                        ops::backup::restore(
-                            &backup,
-                            &paths,
-                            &loaded.config_file,
-                            &bootstrap::database::SUPPORTED_SCHEMA_VERSIONS,
-                        )
-                        .await?;
-                        drop(rollback_locks);
-                        ops::update::rollback(&versions, &previous)?;
-                        let previous_root = versions.join(&previous);
-                        let previous_executable = previous_root.join("bin/bobe");
-                        let previous_agent = agent_runtime_for_executable(&previous_executable);
-                        ops::service::install(
-                            &previous_executable,
-                            previous_agent.as_ref(),
-                            &service_paths,
-                        )
-                        .await?;
-                        let target = ops::status::OpsTarget::resolve(&loaded.config, None, None)
-                            .map_err(error::AppError::Config)?;
-                        let (exit, _) = ops::status::wait_ready_for(
-                            &target,
-                            std::time::Duration::from_mins(1),
-                            std::time::Duration::from_millis(500),
-                            ops::status::ReadinessLevel::Process,
-                            Some(authority_id),
-                            None,
-                            Some(&previous_version),
-                        )
-                        .await;
-                        if exit != ops::exit::ExitCode::Success {
-                            return Err(error::AppError::Internal(
-                                "previous service did not become ready after rollback".into(),
-                            ));
-                        }
-                        Ok::<(), error::AppError>(())
-                    }
-                    .await;
-                    return Err(match rollback_result {
-                        Ok(()) => {
-                            ops::update::clear_journal(&journal_path).await?;
-                            activation_error.into()
-                        }
-                        Err(rollback_error) => error::AppError::Internal(format!(
-                            "update failed: {activation_error}; rollback failed: {rollback_error}; backup: {}",
-                            backup.display()
-                        ))
-                        .into(),
-                    });
+                    return Err(
+                        match ops::update::roll_back(&journal_path, &versions, &activated, &host)
+                            .await
+                        {
+                            Ok(()) => activation_error.into(),
+                            Err(rollback_error) => error::AppError::Internal(format!(
+                                "update failed: {activation_error}; rollback failed: {rollback_error}; backup: {}",
+                                activated
+                                    .backup
+                                    .as_ref()
+                                    .map(|path| path.display().to_string())
+                                    .unwrap_or_default()
+                            ))
+                            .into(),
+                        },
+                    );
                 }
+                ops::update::commit(&journal_path, &activated).await?;
                 println!("Activated BoBe standalone {}", update.version);
-                ops::update::clear_journal(&journal_path).await?;
             }
         },
         #[allow(clippy::print_stdout)]
@@ -2881,9 +2840,25 @@ fn render_validation(report: &ops::config_report::ValidationReport) -> String {
     lines.join("\n")
 }
 
+fn failed_services(liveness: &serde_json::Value) -> Vec<String> {
+    liveness["services"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, state)| matches!(state.as_str(), Some("error" | "stopped")))
+        .map(|(service, _)| service.clone())
+        .collect()
+}
+
 fn render_doctor(report: &serde_json::Value) -> String {
     let config_valid = report["config"]["valid"].as_bool().unwrap_or(false);
     let runtime_ready = report["runtime"]["readiness"]["status"] == "ready";
+    let failed_services = report["failed_services"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>();
     let provider = match report["provider"]["ok"].as_bool() {
         Some(true) => "model execution, streaming, and diagnostic tool passed".to_owned(),
         Some(false) => format!(
@@ -2894,12 +2869,25 @@ fn render_doctor(report: &serde_json::Value) -> String {
         ),
         None => "not tested — run bobe doctor --probe (may incur provider charges)".to_owned(),
     };
-    format!(
-        "BoBe doctor\n- Configuration: {}\n- Runtime: {}\n- Provider: {}",
-        if config_valid { "ok" } else { "error" },
-        if runtime_ready { "ready" } else { "not ready" },
-        provider,
-    )
+    let mut lines = vec![
+        "BoBe doctor".to_owned(),
+        format!(
+            "- Configuration: {}",
+            if config_valid { "ok" } else { "error" }
+        ),
+        format!(
+            "- Runtime: {}",
+            if runtime_ready { "ready" } else { "not ready" }
+        ),
+    ];
+    if !failed_services.is_empty() {
+        lines.push(format!(
+            "- Services: failed — {}",
+            failed_services.join(", ")
+        ));
+    }
+    lines.push(format!("- Provider: {provider}"));
+    lines.join("\n")
 }
 
 fn server_socket_addr(config: &config::Config) -> anyhow::Result<std::net::SocketAddr> {
@@ -3274,6 +3262,30 @@ mod tests {
         assert!(render_doctor(&report).contains("not tested"));
         let report = serde_json::json!({"config":{"valid":true}, "runtime":{"readiness":{"status":"ready"}}, "provider":{"ok":false,"error":"model unavailable"}});
         assert!(render_doctor(&report).contains("failed — model unavailable"));
+    }
+
+    #[test]
+    fn doctor_reports_an_enabled_service_that_failed() {
+        let liveness = serde_json::json!({
+            "status": "degraded",
+            "services": {"database": "ok", "body_link": "error"},
+        });
+        assert_eq!(failed_services(&liveness), ["body_link"]);
+        assert!(
+            failed_services(&serde_json::json!({
+                "status": "healthy",
+                "services": {"database": "ok", "body_link": "disabled"},
+            }))
+            .is_empty()
+        );
+        assert!(failed_services(&serde_json::Value::Null).is_empty());
+        let report = serde_json::json!({
+            "config": {"valid": true},
+            "runtime": {"readiness": {"status": "ready"}},
+            "failed_services": ["body_link"],
+            "provider": {"ok": null},
+        });
+        assert!(render_doctor(&report).contains("- Services: failed — body_link"));
     }
 
     use super::*;

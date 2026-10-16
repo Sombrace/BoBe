@@ -4,15 +4,24 @@ import UIKit
 enum PhonePairing {
     static let scopeProfile = "phone.v1"
 
-    static func pair(_ invite: PairingInvite) async throws -> BrainPairing {
-        let label = await MainActor.run { UIDevice.current.name }
-        let enrollment = PairingEnrollment(
-            endpointId: SurfaceIdentity.current().uuidString,
+    static func enrollment(endpointId: UUID, label: String) -> PairingEnrollment {
+        let capabilities = PhoneAttach.capabilities
+        return PairingEnrollment(
+            endpointId: endpointId.uuidString,
             label: label,
             protocolMin: Int(AttachWire.protocolMin),
             protocolMax: Int(AttachWire.protocolMax),
-            capabilities: ["microphone": true, "playback": true, "local_stt": true]
+            capabilities: [
+                "microphone": capabilities.microphone,
+                "playback": capabilities.playback,
+                "local_stt": capabilities.localStt,
+            ]
         )
+    }
+
+    static func pair(_ invite: PairingInvite) async throws -> BrainPairing {
+        let label = await MainActor.run { UIDevice.current.name }
+        let enrollment = self.enrollment(endpointId: SurfaceIdentity.current(), label: label)
         var lastError: any Error = DevicePairingError.unreachable
         for origin in invite.origins {
             do {
@@ -30,7 +39,10 @@ enum PhonePairing {
                 return BrainPairing(
                     record: BrainRecord(
                         origins: [origin] + invite.origins.filter { $0 != origin },
-                        pin: pin
+                        pin: pin,
+                        endpointId: outcome.endpointId,
+                        authorityId: outcome.runtimeAuthorityId,
+                        authorityEpoch: outcome.runtimeAuthorityEpoch
                     ),
                     credential: outcome.credential
                 )

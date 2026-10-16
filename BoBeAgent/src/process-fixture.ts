@@ -5,6 +5,7 @@ import { object, type Json, type JsonObject } from "./protocol.js";
 export class ProcessFixture {
   private readonly processes = new Map<string, { child: ChildProcessWithoutNullStreams; closed: Promise<void> }>();
   readonly programs:string[]=[];
+  failingStops = 0;
 
   constructor(private readonly notify: (params: JsonObject) => void,private readonly capacity=64) {}
 
@@ -40,6 +41,10 @@ export class ProcessFixture {
     }
     const active = this.processes.get(id);
     if (params.action === "stop") {
+      if (this.failingStops > 0) {
+        this.failingStops--;
+        throw new Error("Injected process stop failure");
+      }
       if (active) {
         this.kill(active.child);
         await active.closed;

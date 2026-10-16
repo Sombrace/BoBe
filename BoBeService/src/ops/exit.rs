@@ -31,7 +31,6 @@ pub(crate) fn app_error_exit(error: &AppError) -> ExitCode {
         | AppError::Capture(_)
         | AppError::ServiceUnavailable(_)
         | AppError::Canceled(_)
-        | AppError::Mcp(_)
         | AppError::Serialization(_)
         | AppError::Io(_)
         | AppError::Network(_)

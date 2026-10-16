@@ -75,19 +75,21 @@ impl MemoryFile {
     }
 
     pub(crate) async fn append_under(&self, section: &str, entry: &str) -> Result<(), AppError> {
+        let entry = entry.trim();
+        Self::validate_edit_line("appended", entry)?;
         let _guard = self.write_lock.lock().await;
         let body = self.read_unlocked().await?;
         if section_range(&body, section).is_some_and(|range| {
             body[range].lines().any(|line| {
                 line.split_once(" — ")
-                    .is_some_and(|(_, text)| text == entry.trim())
+                    .is_some_and(|(_, text)| text == entry)
             })
         }) {
             return Ok(());
         }
         let now: DateTime<Utc> = SystemTime::now().into();
         let date = now.format("%Y-%m-%d %H:%M");
-        let line = format!("- {date} — {}", entry.trim());
+        let line = format!("- {date} — {entry}");
         let new_body = upsert_bullet(&body, section, &line);
         self.commit(&bound_recent(&new_body)).await
     }
@@ -284,15 +286,32 @@ mod tests {
     use uuid::Uuid;
 
     fn tempdir() -> PathBuf {
-        let suffix: String = Uuid::new_v4()
-            .as_simple()
-            .to_string()
-            .chars()
-            .take(8)
-            .collect();
-        let d = PathBuf::from(format!("/tmp/bbm-{suffix}"));
+        let d = std::env::temp_dir().join(format!("bbm-{}", Uuid::new_v4().as_simple()));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[tokio::test]
+    async fn appended_entries_cannot_create_sections() {
+        let dir = tempdir();
+        let memory = MemoryFile::new(dir.join("memory.md"));
+        for entry in [
+            "Working\n## Long-term\n- false fact",
+            "Working\r## Profile",
+            "  \n ",
+        ] {
+            assert!(memory.append_under("Recent", entry).await.is_err());
+        }
+        assert_eq!(memory.revision(), 1);
+        assert_eq!(memory.read().await.unwrap(), DEFAULT_BODY);
+        memory
+            .append_under("Recent", "  Working on the release\n")
+            .await
+            .unwrap();
+        let body = memory.read().await.unwrap();
+        assert_eq!(body.matches("## ").count(), 4);
+        assert!(body.ends_with(" — Working on the release\n"));
+        tokio::fs::remove_dir_all(dir).await.unwrap();
     }
 
     #[tokio::test]

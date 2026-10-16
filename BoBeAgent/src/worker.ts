@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { VERSION, defineTool } from "@earendil-works/pi-coding-agent";
 import { ModelProfiles } from "./models.js";
 import { Sessions, type SessionBundle } from "./sessions.js";
-import { assertActive, type Redactor } from "./errors.js";
+import { WorkerFault, assertActive, type Redactor } from "./errors.js";
 import { authorityPath, privateDirectory } from "./files.js";
 import {
   HARNESS_VERSION, PROTOCOL_VERSION, abortSchema, authSubmitSchema, auxiliarySchema,
@@ -22,6 +22,7 @@ export interface HostConnection {
   redactor: Redactor;
   call(method: string, params: JsonObject, signal?: AbortSignal): Promise<Json>;
   notify(notification: Notification): void;
+  terminate?(error: Error): void;
 }
 
 interface Activity {
@@ -135,8 +136,7 @@ export class WorkerHost implements RpcHandler {
           const reload = validate(reloadSchema, params, "reload parameters");
           return await this.activity(id, async signal => {
             assertActive(signal);
-            await sessions.reload(reload.mcp, reload.skill_directories);
-            assertActive(signal);
+            await sessions.reload(reload.mcp, reload.skill_directories, signal);
             return {};
           });
         }
@@ -269,6 +269,7 @@ export class WorkerHost implements RpcHandler {
       this.idleTimer = setInterval(() => {
         void this.sessions?.retireIdle().catch(error => {
           process.stderr.write(`BoBe idle session cleanup failed: ${this.connection.redactor.message(error)}\n`);
+          if (error instanceof WorkerFault) this.connection.terminate?.(error);
         });
       }, 10_000);
       this.idleTimer.unref();
@@ -321,13 +322,18 @@ export class WorkerHost implements RpcHandler {
       const result = await sessions.run(bundle,
         `${params.job.instructions}\n\nJob kind: ${params.job.kind}\nJob input:\n${JSON.stringify(params.job.input)}`,
         signal, false, true, 8);
-      if (result.failedTools > 0) throw new Error("Structured-result submission failed");
       if (output === undefined) {
         const text = result.text().trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/i, "$1");
-        output = json(JSON.parse(text) as unknown);
+        try {
+          output = json(JSON.parse(text) as unknown);
+        } catch (error) {
+          if (result.failedTools > 0) throw new Error("Structured-result submission failed");
+          throw error;
+        }
       }
       return { job_id: params.job.job_id, output, error: null };
     } catch (error) {
+      if (error instanceof WorkerFault) throw error;
       assertActive(signal);
       return { job_id: params.job.job_id, output: null, error: this.connection.redactor.message(error) };
     } finally {
@@ -366,6 +372,7 @@ export class WorkerHost implements RpcHandler {
       }
       return { model_execution: modelExecution, streaming, tool_execution: toolExecution, error: null };
     } catch (error) {
+      if (error instanceof WorkerFault) throw error;
       assertActive(signal);
       return {
         model_execution: modelExecution, streaming, tool_execution: toolExecution,

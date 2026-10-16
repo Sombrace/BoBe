@@ -9,7 +9,11 @@ part of BoBe's source or releases.
 | Mac app | Parakeet Realtime EOU for English, Nemotron 3.5 for other languages, Silero VAD | The daemon's Pocket TTS, streamed as Opus; Supertonic-3 in the app is an experimental option for other languages |
 | Daemon (headless, physical body) | sherpa-onnx streaming Zipformer, English | Pocket TTS, English |
 
-English needs about 600 MB; each other language adds about 0.7 GB.
+English needs about 600 MB; each other language adds about 0.7 GB. The daemon
+runs Pocket TTS natively through `ptts` with no Python or model server, and
+`BoBeService/src/voice/install_artifacts.rs` pins every model file's SHA-256.
+Building the daemon needs a C++ compiler and libclang. Try a voice without a
+provider with `bobe voice preview` ([command line](cli.md#working-with-bobe)).
 
 ## Models and licenses
 
@@ -26,34 +30,9 @@ Each license applies to its model, not to BoBe's code.
 | Streaming Zipformer English 20M | Daemon recognition | Apache-2.0 | [sherpa-onnx ASR models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) |
 
 The Pocket TTS pack installs a `NOTICE.txt` with its attribution; keep it when
-redistributing the weights or voice embeddings. Cosette (Expresso) and Jean (EARS)
-are excluded because their recordings are licensed for noncommercial use only; do
-not restore them from a model mirror. Redistributing Parakeet requires NVIDIA's
-notice, "Licensed by NVIDIA Corporation under the NVIDIA Open Model License", and
-a copy of that license. Supertonic-3's license forbids the uses listed in its
-OpenRAIL-M restrictions.
-
-## Daemon engines
-
-- Pocket TTS runs natively through `ptts` 0.4.0-rc.2 with Q8 weights; no
-  Python or model server. `BoBeService/src/voice/install_artifacts.rs` pins the
-  pack revision and every file's SHA-256. Alba is the default voice.
-- Tempo from 0.5x to 2x uses Signalsmith Stretch, which needs a C++ compiler
-  and libclang to build.
-- Recognition uses sherpa-onnx 1.13.8 from its `static-no-tts-lib` archives;
-  `third_party/sherpa-onnx-sys/README.md` records the adaptation. Supported
-  targets are macOS and Linux x86_64.
-- Installs verify sizes and digests, swap the directory into place, and report
-  `installed` separately from `ready` (engine loaded).
-
-## Preview without a provider
-
-```sh
-bobe voice-models install --kind tts
-bobe voice preview "Hello. This is BoBe." --output /tmp/bobe-preview.wav --play --json
-```
-
-`--voice`, `--speed` and `--cancel-after` exercise voice selection, tempo and
-cancellation. The output path must be new. Preview uses the same sentence
-cleaning, engine and Opus stream as a conversation and writes no
-conversation, memory or goals.
+redistributing the weights or voice embeddings. Cosette (Expresso) and Jean
+(EARS) are excluded because their recordings are licensed for noncommercial use
+only; do not restore them from a model mirror. Redistributing Parakeet requires
+NVIDIA's notice, "Licensed by NVIDIA Corporation under the NVIDIA Open Model
+License", and a copy of that license. Supertonic-3's license forbids the uses
+listed in its OpenRAIL-M restrictions.

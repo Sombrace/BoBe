@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use chrono::{DateTime, Utc};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::config::Config;
 use crate::db::SqliteCooldownRepo;
@@ -71,17 +71,29 @@ impl CheckinTrigger {
             }
         }
 
-        if let Some(cooldown) = self.cooldown_repo.check_cooldown(
-            cfg.decision.cooldown_minutes,
-            cfg.decision.extended_cooldown_minutes,
-        ) {
-            debug!(
-                remaining_s = cooldown.remaining.num_seconds(),
-                cooldown_type = %cooldown.cooldown_type,
-                "checkin_trigger.cooldown_skipped"
-            );
-            self.scheduler.mark_checkin_done();
-            return Decision::Idle;
+        match self
+            .cooldown_repo
+            .check_cooldown(
+                cfg.decision.cooldown_minutes,
+                cfg.decision.extended_cooldown_minutes,
+            )
+            .await
+        {
+            Ok(None) => {}
+            Ok(Some(cooldown)) => {
+                debug!(
+                    remaining_s = cooldown.remaining.num_seconds(),
+                    cooldown_type = %cooldown.cooldown_type,
+                    "checkin_trigger.cooldown_skipped"
+                );
+                self.scheduler.mark_checkin_done();
+                return Decision::Idle;
+            }
+            Err(error) => {
+                warn!(%error, "checkin_trigger.cooldown_check_failed");
+                self.scheduler.mark_checkin_done();
+                return Decision::Idle;
+            }
         }
 
         info!("checkin_trigger.started");

@@ -42,6 +42,8 @@
 "phone.status.connecting" = "正在连接…";
 "phone.status.offline" = "离线";
 "phone.status.removed" = "未配对";
+"phone.status.setting_up" = "正在完成设置";
+"phone.status.update" = "需要更新";
 "phone.status.replying" = "正在回复…";
 "phone.status.working" = "正在处理…";
 "phone.status.thinking" = "正在思考…";
@@ -59,10 +61,16 @@
 "phone.thread.trouble" = "没有成功，请重试。";
 "phone.thread.reached_out" = "BoBe 主动找你";
 "phone.thread.retry" = "未发送，轻点重试";
+"phone.thread.unconfirmed" = "这条消息可能没有发送成功。再次发送前请先查看对话。";
+"phone.thread.send_again" = "重新发送";
 "phone.connection.offline.title" = "无法连接 BoBe";
 "phone.connection.removed.title" = "这台 iPhone 未配对";
 "phone.connection.retry" = "重试";
 "phone.connection.pair_again" = "重新配对";
+"phone.connection.setting_up.title" = "BoBe 仍在设置中";
+"phone.connection.setting_up.body" = "设置完成后即可聊天。";
+"phone.connection.incompatible.title" = "需要更新";
+"phone.connection.incompatible.body" = "请更新此应用和电脑上的 BoBe，然后重试。";
 "phone.question.label" = "BoBe 问你";
 "phone.question.placeholder" = "你的回答";
 "phone.question.send" = "发送回答";
@@ -81,6 +89,7 @@
 "phone.talk.permission" = "请在设置中打开“麦克风”和“语音识别”。";
 "phone.settings.title" = "设置";
 "phone.settings.address" = "地址";
+"phone.settings.forget_pending" = "之前的 BoBe 还没有忘记这台 iPhone。等这台 iPhone 能连上它时就会完成。";
 "phone.settings.voice" = "语音";
 "phone.settings.unpair" = "解除这台 iPhone 的配对";
 "phone.settings.unpair.title" = "要解除这台 iPhone 的配对吗？";
@@ -94,7 +103,9 @@
 "phone.work.needs_you" = "等你回复";
 "phone.work.goals" = "目标";
 "phone.work.goals.empty" = "还没有目标。";
+"phone.work.goals.failed" = "无法加载目标。";
 "phone.work.loading" = "正在加载…";
+"phone.load.stale" = "部分内容未能刷新。下拉即可重试。";
 "phone.work.goals.new" = "新目标";
 "phone.work.coming_up" = "即将进行";
 "phone.work.recently" = "最近";
@@ -134,6 +145,7 @@
 "phone.schedule.repeats" = "重复";
 "phone.memory.title" = "记忆";
 "phone.memory.empty" = "还没有内容。";
+"phone.memory.failed" = "无法加载记忆。下拉即可重试。";
 "phone.memory.no_match" = "没有匹配结果。";
 "phone.memory.forget" = "让 BoBe 忘记某事";
 "phone.memory.forget.prefill" = "请忘记 ";

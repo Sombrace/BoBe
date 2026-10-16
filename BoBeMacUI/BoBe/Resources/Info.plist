@@ -19,9 +19,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.9.0</string>
+	<string>0.9.1</string>
 	<key>CFBundleVersion</key>
-	<string>0.9.0</string>
+	<string>0.9.1</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>LSArchitecturePriority</key>
@@ -37,8 +37,6 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<key>NSAppleEventsUsageDescription</key>
-	<string>BoBe uses AppleScript to detect which app you're using, so it can provide context-aware assistance.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>BoBe uses your microphone to let you talk to it instead of typing.</string>
 	<key>NSHighResolutionCapable</key>

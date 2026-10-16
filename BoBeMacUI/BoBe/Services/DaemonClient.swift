@@ -29,7 +29,11 @@ struct EventStreamCommandOrder {
 }
 
 actor DaemonClient {
+    typealias Transport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+
     static let shared = DaemonClient()
+    static let stableEventStreamUptime: Duration = .seconds(30)
+    static let mcpStartupTimeout: TimeInterval = 285
 
     private let fixedEndpoint: DaemonEndpoint?
     var endpoint: DaemonEndpoint { self.fixedEndpoint ?? DaemonConfig.endpoint }
@@ -37,6 +41,7 @@ actor DaemonClient {
 
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
+    private let transport: Transport?
     let fetchTimeout: TimeInterval = 10
 
     private var sseTask: Task<Void, Never>?
@@ -44,8 +49,8 @@ actor DaemonClient {
     private var connectionHandler: (@Sendable (RuntimeConnectionState) async -> Void)?
     private var reconnectAttempts = 0
     private var isReconnecting = false
-    private var lastProcessedEventId: UInt64?
-    private var runtimeIncarnationId: UUID?
+    private(set) var lastProcessedEventId: UInt64?
+    private(set) var runtimeIncarnationId: UUID?
     private var sseSelection: EndpointSelection?
     private var sseCommands = EventStreamCommandOrder()
 
@@ -114,8 +119,9 @@ actor DaemonClient {
         DaemonTransportPolicy.session(for: self.endpoint, purpose: purpose)
     }
 
-    init(endpoint: DaemonEndpoint? = nil) {
+    init(endpoint: DaemonEndpoint? = nil, transport: Transport? = nil) {
         self.fixedEndpoint = endpoint
+        self.transport = transport
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
     }
@@ -174,13 +180,14 @@ actor DaemonClient {
         }
         request.timeoutInterval = TimeInterval(7 * 24 * 60 * 60)
 
+        var connectedAt: ContinuousClock.Instant?
         do {
             let session = DaemonTransportPolicy.session(for: endpoint, purpose: .persistentEventStream)
             let (bytes, response) = try await session.bytes(for: request)
             guard !Task.isCancelled else { return }
             guard let httpResponse = response as? HTTPURLResponse else {
                 logger.warning("SSE connection failed without an HTTP response")
-                await self.handleSSEDisconnect()
+                await self.handleSSEDisconnect(connectedFor: nil)
                 return
             }
             guard httpResponse.statusCode == 200 else {
@@ -189,47 +196,16 @@ actor DaemonClient {
                 if statusCode == 401 {
                     await self.handleTerminalSSEFailure(AttachError.unauthorized)
                 } else {
-                    await self.handleSSEDisconnect()
+                    await self.handleSSEDisconnect(connectedFor: nil)
                 }
                 return
             }
 
             logger.info("SSE connected")
+            connectedAt = ContinuousClock.now
             await self.connectionHandler?(.connected)
-
-            streamLoop: for try await line in bytes.lines {
-                if Task.isCancelled { break }
-                do {
-                    guard let bundle = try Self.decodeEvent(StreamBundle.self, from: line, decoder: self.decoder) else {
-                        continue
-                    }
-                    if !Self.shouldProcess(
-                        eventId: bundle.eventId,
-                        eventIncarnationId: bundle.runtimeIncarnationId,
-                        lastProcessedEventId: self.lastProcessedEventId,
-                        runtimeIncarnationId: self.runtimeIncarnationId
-                    ) {
-                        continue
-                    }
-                    let processed = await self.eventHandler?(bundle) ?? false
-                    guard !Task.isCancelled else { return }
-                    guard processed else {
-                        logger.error("SSE event recovery failed; reconnecting without advancing the cursor")
-                        break streamLoop
-                    }
-                    if bundle.type == .snapshotRequired,
-                       let gap = try? bundle.payload.decode(as: SnapshotRequiredPayload.self) {
-                        self.runtimeIncarnationId = bundle.runtimeIncarnationId
-                        self.lastProcessedEventId = gap.resumeAfter
-                    } else if let eventId = bundle.eventId,
-                              let incarnationId = bundle.runtimeIncarnationId {
-                        self.runtimeIncarnationId = incarnationId
-                        self.lastProcessedEventId = eventId
-                    }
-                    self.reconnectAttempts = 0
-                } catch {
-                    logger.error("Failed to decode SSE event: \(error.localizedDescription, privacy: .public)")
-                }
+            if let handler = self.eventHandler {
+                try await self.receiveEvents(bytes.lines, handler: handler)
             }
         } catch {
             if !Task.isCancelled {
@@ -242,8 +218,70 @@ actor DaemonClient {
         }
 
         if !Task.isCancelled {
-            await self.handleSSEDisconnect()
+            await self.handleSSEDisconnect(connectedFor: connectedAt.map { ContinuousClock.now - $0 })
         }
+    }
+
+    func receiveEvents<Lines: AsyncSequence>(
+        _ lines: Lines,
+        handler: @Sendable (StreamBundle) async -> Bool
+    ) async throws where Lines.Element == String {
+        for try await line in lines {
+            guard !Task.isCancelled else { return }
+            let bundle: StreamBundle
+            do {
+                guard let decoded = try Self.decodeEvent(StreamBundle.self, from: line, decoder: self.decoder) else {
+                    continue
+                }
+                bundle = decoded
+            } catch {
+                logger.error(
+                    "Undecodable SSE event; reconnecting without advancing the cursor: \(error.localizedDescription, privacy: .public)"
+                )
+                return
+            }
+            guard Self.shouldProcess(
+                eventId: bundle.eventId,
+                eventIncarnationId: bundle.runtimeIncarnationId,
+                lastProcessedEventId: self.lastProcessedEventId,
+                runtimeIncarnationId: self.runtimeIncarnationId
+            ) else {
+                continue
+            }
+            let processed = await handler(bundle)
+            guard !Task.isCancelled else { return }
+            guard processed else {
+                logger.error("SSE event recovery failed; reconnecting without advancing the cursor")
+                return
+            }
+            if self.acknowledge(bundle) {
+                self.reconnectAttempts = 0
+            }
+        }
+    }
+
+    private func acknowledge(_ bundle: StreamBundle) -> Bool {
+        let previous = (self.lastProcessedEventId, self.runtimeIncarnationId)
+        if bundle.type == .snapshotRequired,
+           let gap = try? bundle.payload.decode(as: SnapshotRequiredPayload.self) {
+            self.runtimeIncarnationId = bundle.runtimeIncarnationId
+            self.lastProcessedEventId = gap.resumeAfter
+        } else if let eventId = bundle.eventId,
+                  let incarnationId = bundle.runtimeIncarnationId {
+            self.runtimeIncarnationId = incarnationId
+            self.lastProcessedEventId = eventId
+        }
+        return self.lastProcessedEventId != nil
+            && (self.lastProcessedEventId, self.runtimeIncarnationId) != previous
+    }
+
+    func reconnectDelay(connectedFor uptime: Duration?) -> Duration {
+        if let uptime, uptime >= Self.stableEventStreamUptime {
+            self.reconnectAttempts = 0
+        }
+        self.reconnectAttempts += 1
+        guard self.reconnectAttempts > 1 else { return .zero }
+        return .seconds(min(pow(2.0, Double(self.reconnectAttempts - 2)) * 0.5, 15.0))
     }
 
     private func handleTerminalSSEFailure(_ error: any Error) async {
@@ -254,7 +292,7 @@ actor DaemonClient {
         await self.connectionHandler?(.repairRequired(RuntimeIssue(error)))
     }
 
-    private func handleSSEDisconnect() async {
+    private func handleSSEDisconnect(connectedFor uptime: Duration?) async {
         guard !Task.isCancelled, !self.isReconnecting else { return }
         let generation = self.sseCommands.latest
         self.isReconnecting = true
@@ -262,16 +300,10 @@ actor DaemonClient {
 
         await self.connectionHandler?(.disconnected)
         guard !Task.isCancelled, generation == self.sseCommands.latest else { return }
-        self.reconnectAttempts += 1
-
-        let delay: Double = if self.reconnectAttempts == 1 {
-            0
-        } else {
-            min(pow(2.0, Double(self.reconnectAttempts - 2)) * 0.5, 15.0)
-        }
-        if delay > 0 {
-            logger.info("SSE reconnecting in \(delay, privacy: .public)s (attempt \(self.reconnectAttempts))")
-            try? await Task.sleep(for: .seconds(delay))
+        let delay = self.reconnectDelay(connectedFor: uptime)
+        if delay > .zero {
+            logger.info("SSE reconnecting in \(delay, privacy: .public) (attempt \(self.reconnectAttempts))")
+            try? await Task.sleep(for: delay)
         }
         if !Task.isCancelled, generation == self.sseCommands.latest {
             self.startSSE()
@@ -300,7 +332,11 @@ actor DaemonClient {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await self.session(for: .interactiveHTTP).data(for: request)
+            if let transport = self.transport {
+                (data, response) = try await transport(request)
+            } else {
+                (data, response) = try await self.session(for: .interactiveHTTP).data(for: request)
+            }
         } catch {
             let description = error.localizedDescription
             logger.error(

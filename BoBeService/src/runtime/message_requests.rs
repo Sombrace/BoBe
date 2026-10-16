@@ -227,18 +227,20 @@ impl MessageRequests {
                             AppError::Conflict("personal data maintenance is active".into())
                         })?,
                 );
-                if service.shutdown.is_cancelled() {
-                    return Ok(RequestOutcome::Deferred);
+                if let Some(outcome) = prepare_execution(
+                    &service.pool,
+                    &service.shutdown,
+                    &cancellation,
+                    request_id,
+                    service
+                        .session
+                        .answer_bound_input(owner_input, request_id, &content, channel),
+                )
+                .await?
+                {
+                    return Ok(outcome);
                 }
-                claim_request(&service.pool, request_id).await?;
                 service.runs.started(request_id);
-                if cancellation.is_cancelled() || service.shutdown.is_cancelled() {
-                    return Ok(RequestOutcome::Failed);
-                }
-                service
-                    .session
-                    .answer_bound_input(owner_input, request_id, &content, channel)
-                    .await?;
                 let session = Arc::clone(&service.session);
                 let work_delivery = delivery.clone();
                 let mut work = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
@@ -405,6 +407,48 @@ async fn claim_request(pool: &sqlx::SqlitePool, request_id: Uuid) -> Result<(), 
     Ok(())
 }
 
+async fn prepare_execution(
+    pool: &sqlx::SqlitePool,
+    shutdown: &CancellationToken,
+    cancellation: &CancellationToken,
+    request_id: Uuid,
+    bind_answer: impl std::future::Future<Output = Result<(), AppError>>,
+) -> Result<Option<RequestOutcome>, AppError> {
+    if shutdown.is_cancelled() {
+        return Ok(Some(RequestOutcome::Deferred));
+    }
+    claim_request(pool, request_id).await?;
+    if let Some(outcome) = stop_before_execution(pool, shutdown, cancellation, request_id).await {
+        return Ok(Some(outcome));
+    }
+    bind_answer.await?;
+    Ok(stop_before_execution(pool, shutdown, cancellation, request_id).await)
+}
+
+async fn stop_before_execution(
+    pool: &sqlx::SqlitePool,
+    shutdown: &CancellationToken,
+    cancellation: &CancellationToken,
+    request_id: Uuid,
+) -> Option<RequestOutcome> {
+    if cancellation.is_cancelled() {
+        return Some(RequestOutcome::Failed);
+    }
+    if !shutdown.is_cancelled() {
+        return None;
+    }
+    if let Err(error) = sqlx::query(
+        "UPDATE message_requests SET status = 'queued', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE request_id = ?1 AND status = 'running'",
+    )
+    .bind(request_id)
+    .execute(pool)
+    .await
+    {
+        tracing::error!(%error, %request_id, "message_request.requeue_failed");
+    }
+    Some(RequestOutcome::Deferred)
+}
+
 pub(crate) async fn request_id_is_tombstoned(
     pool: &sqlx::SqlitePool,
     request_id: Uuid,
@@ -434,6 +478,227 @@ fn unsafe_replay_error() -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn log_status_changes(pool: &sqlx::SqlitePool) {
+        sqlx::raw_sql(
+            "CREATE TABLE status_log (status TEXT NOT NULL);
+             CREATE TRIGGER log_status AFTER UPDATE OF status ON message_requests
+             BEGIN INSERT INTO status_log (status) VALUES (NEW.status); END;",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn queued_request(pool: &sqlx::SqlitePool) -> Uuid {
+        log_status_changes(pool).await;
+        let request_id = Uuid::new_v4();
+        sqlx::query("INSERT INTO message_requests (request_id,content_sha256,content) VALUES (?1,?2,'hello')")
+            .bind(request_id).bind(Sha256::digest(b"hello").to_vec()).execute(pool).await.unwrap();
+        request_id
+    }
+
+    async fn status_history(pool: &sqlx::SqlitePool, request_id: Uuid) -> (String, Vec<String>) {
+        let status =
+            sqlx::query_scalar("SELECT status FROM message_requests WHERE request_id = ?1")
+                .bind(request_id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        let history = sqlx::query_scalar("SELECT status FROM status_log ORDER BY rowid")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+        (status, history)
+    }
+
+    async fn let_ready_tasks_run() {
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn an_accepted_message_stays_queued_when_shutdown_begins_before_it_runs() {
+        let root = std::env::temp_dir().join(format!("bobe-message-requests-{}", Uuid::new_v4()));
+        let pool = crate::db::test_helpers::in_memory_pool().await;
+        let session = RuntimeSession::for_tests(&root, pool.clone()).await;
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let requests = MessageRequests::new(
+            pool.clone(),
+            Arc::clone(&session),
+            Arc::clone(&in_flight),
+            Arc::clone(&session.runs),
+            Arc::new(tokio::sync::RwLock::new(())),
+        );
+        log_status_changes(&pool).await;
+        let previous_turn = session
+            .try_begin_user_message(ConversationChannelId::OWNER)
+            .unwrap();
+        let request_id = Uuid::new_v4();
+
+        let accepted = requests
+            .submit(
+                request_id,
+                "hello".into(),
+                None,
+                ConversationChannelId::OWNER,
+            )
+            .await
+            .unwrap();
+        assert_eq!(accepted.request_status, "queued");
+        let_ready_tasks_run().await;
+        let connection = pool.acquire().await.unwrap();
+        drop(previous_turn);
+        let_ready_tasks_run().await;
+        requests.begin_shutdown();
+        drop(connection);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while in_flight.load(Ordering::Acquire) != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            status_history(&pool, request_id).await,
+            (
+                "queued".to_owned(),
+                vec!["running".to_owned(), "queued".to_owned()]
+            )
+        );
+        drop(tokio::fs::remove_dir_all(root).await);
+    }
+
+    #[tokio::test]
+    async fn shutdown_during_the_claim_returns_the_request_to_the_queue() {
+        let pool = crate::db::test_helpers::in_memory_pool().await;
+        let request_id = queued_request(&pool).await;
+        let shutdown = CancellationToken::new();
+        let bound = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let connection = pool.acquire().await.unwrap();
+        let preparation = tokio::spawn({
+            let pool = pool.clone();
+            let shutdown = shutdown.clone();
+            let bound = Arc::clone(&bound);
+            async move {
+                prepare_execution(
+                    &pool,
+                    &shutdown,
+                    &CancellationToken::new(),
+                    request_id,
+                    async move {
+                        bound.store(true, Ordering::Release);
+                        Ok(())
+                    },
+                )
+                .await
+            }
+        });
+        let_ready_tasks_run().await;
+        assert!(!preparation.is_finished());
+
+        shutdown.cancel();
+        drop(connection);
+
+        let outcome = preparation.await.unwrap().unwrap();
+        assert!(matches!(outcome, Some(RequestOutcome::Deferred)));
+        assert!(!bound.load(Ordering::Acquire));
+        assert_eq!(
+            status_history(&pool, request_id).await,
+            (
+                "queued".to_owned(),
+                vec!["running".to_owned(), "queued".to_owned()]
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_while_an_owner_answer_is_bound_returns_the_request_to_the_queue() {
+        let pool = crate::db::test_helpers::in_memory_pool().await;
+        let request_id = queued_request(&pool).await;
+        let shutdown = CancellationToken::new();
+
+        let outcome = prepare_execution(
+            &pool,
+            &shutdown,
+            &CancellationToken::new(),
+            request_id,
+            async {
+                shutdown.cancel();
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, Some(RequestOutcome::Deferred)));
+        assert_eq!(
+            status_history(&pool, request_id).await,
+            (
+                "queued".to_owned(),
+                vec!["running".to_owned(), "queued".to_owned()]
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn an_owner_cancellation_before_execution_is_not_requeued() {
+        let pool = crate::db::test_helpers::in_memory_pool().await;
+        let request_id = queued_request(&pool).await;
+        let shutdown = CancellationToken::new();
+        let cancellation = CancellationToken::new();
+
+        let outcome = prepare_execution(&pool, &shutdown, &cancellation, request_id, async {
+            cancellation.cancel();
+            shutdown.cancel();
+            Ok(())
+        })
+        .await
+        .unwrap();
+
+        assert!(matches!(outcome, Some(RequestOutcome::Failed)));
+        assert_eq!(
+            status_history(&pool, request_id).await,
+            ("running".to_owned(), vec!["running".to_owned()])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_request_claimed_before_shutdown_starts_running() {
+        let pool = crate::db::test_helpers::in_memory_pool().await;
+        let request_id = queued_request(&pool).await;
+        let shutdown = CancellationToken::new();
+
+        let outcome = prepare_execution(
+            &pool,
+            &shutdown,
+            &CancellationToken::new(),
+            request_id,
+            async { Ok(()) },
+        )
+        .await
+        .unwrap();
+        shutdown.cancel();
+
+        assert!(outcome.is_none());
+        assert_eq!(
+            status_history(&pool, request_id).await,
+            ("running".to_owned(), vec!["running".to_owned()])
+        );
+        assert!(matches!(
+            prepare_execution(
+                &pool,
+                &shutdown,
+                &CancellationToken::new(),
+                request_id,
+                async { Ok(()) }
+            )
+            .await,
+            Ok(Some(RequestOutcome::Deferred))
+        ));
+    }
 
     #[tokio::test]
     async fn queued_requests_are_claimed_once_and_failed_claims_retain_the_accepted_intent() {

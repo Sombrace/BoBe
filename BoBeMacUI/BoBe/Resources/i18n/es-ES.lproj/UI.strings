@@ -175,7 +175,6 @@
 "settings.shared.restart_banner.message" = "Algunos cambios no se aplicarán hasta que BoBe se reinicie.";
 "settings.shared.restart_banner.restart_now" = "Reiniciar ahora";
 "settings.shared.section.enabled_format" = "%@ activado";
-"settings.shared.validation.content_min_length_format" = "El contenido debe tener al menos %d caracteres";
 "settings.souls.delete.accessibility" = "Eliminar alma";
 "settings.souls.empty.description" = "Crea una para definir la personalidad de BoBe";
 "settings.souls.empty.select" = "Selecciona un alma para editar";
@@ -435,6 +434,10 @@
 "setup.voice.skip" = "Omitir por ahora";
 "setup.voice.install_button" = "Configurar la voz";
 "setup.voice.cancel" = "Cancelar";
+"setup.voice.canceling" = "Cancelando…";
+"setup.voice.cancel_failed_format" = "BoBe no pudo detener la descarga. %@";
+"setup.voice.cancel_still_running" = "La descarga todavía se está deteniendo. Inténtalo de nuevo en un momento.";
+"settings.voice.session_restart_failed_format" = "La voz no pudo reiniciarse con tus nuevos ajustes. %@";
 "setup.voice.continue" = "Continuar";
 "setup.voice.try_again" = "Reintentar";
 "setup.voice.continue_without" = "Continuar sin voz";
@@ -478,7 +481,6 @@
 "setup.runtime.phase.starting" = "Iniciando BoBe…";
 "setup.runtime.phase.checking" = "Buscando a BoBe…";
 "setup.runtime.phase.pairing" = "Emparejando de forma segura…";
-"setup.runtime.phase.saving" = "Guardando la conexión…";
 "setup.runtime.phase.verifying" = "Comprobando la conexión…";
 "setup.runtime.retry_connection" = "Reintentar";
 "setup.runtime.pair_again" = "Volver a emparejar";
@@ -822,3 +824,10 @@
 "setup.permissions.card.status.allowed" = "Permitido";
 "setup.value.title" = "Hola, soy BoBe";
 "setup.value.continue" = "Empezar";
+"app.common.expanded" = "Expandido";
+"app.common.collapsed" = "Contraído";
+"setup.proactivity.error.not_saved" = "BoBe no ha podido guardar esta opción. Inténtalo de nuevo.";
+"setup.local.cancel_failed" = "BoBe no ha podido detener la descarga. Inténtalo de nuevo.";
+"settings.shared.restart_banner.failed" = "BoBe no ha podido reiniciarse. Inténtalo de nuevo.";
+"settings.context_editor.raw.accessibility_format" = "Markdown de %@";
+"settings.mcp.editor.accessibility" = "Configuración de los servidores de herramientas (JSON)";

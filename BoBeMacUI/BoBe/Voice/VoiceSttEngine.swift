@@ -12,8 +12,6 @@ protocol VoiceSttEngine: Sendable {
 
     func acceptSamples(_ samples: [Float]) async throws
 
-    func finish() async throws -> String
-
     func reset() async throws
 
     func cleanup() async

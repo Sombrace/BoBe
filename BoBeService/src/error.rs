@@ -38,9 +38,6 @@ pub(crate) enum AppError {
     #[error("Canceled: {0}")]
     Canceled(String),
 
-    #[error("MCP error: {0}")]
-    Mcp(String),
-
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
@@ -74,7 +71,6 @@ impl axum::response::IntoResponse for AppError {
             AppError::Canceled(_) => (StatusCode::CONFLICT, "CANCELED"),
             AppError::Config(_)
             | AppError::Capture(_)
-            | AppError::Mcp(_)
             | AppError::Serialization(_)
             | AppError::Io(_)
             | AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR"),

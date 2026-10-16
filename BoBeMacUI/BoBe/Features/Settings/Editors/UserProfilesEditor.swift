@@ -13,8 +13,7 @@ struct UserProfilesEditor: View {
                 emptyDescription: L10n.tr("settings.user_profiles.empty.description"),
                 emptySelectPrompt: L10n.tr("settings.user_profiles.empty.select"),
                 deleteAccessibility: L10n.tr("settings.user_profiles.delete.accessibility"),
-                toggleAccessibility: L10n.tr("settings.user_profiles.toggle.enable_accessibility"),
-                defaultContent: { name in "# \(name)\n\nDescribe this profile here.\n" }
+                toggleAccessibility: L10n.tr("settings.user_profiles.toggle.enable_accessibility")
             ),
             emptyIcon: "person.crop.circle",
             actions: EntityActions(
@@ -27,8 +26,7 @@ struct UserProfilesEditor: View {
                 buildCreateRequest: { name in
                     UserProfileCreateRequest(name: name, content: "# \(name)\n\nDescribe this profile here.\n")
                 },
-                buildUpdateRequest: { content in UserProfileUpdateRequest(content: content) },
-                validate: { Validations.validateUserProfileContent($0) }
+                buildUpdateRequest: { content in UserProfileUpdateRequest(content: content) }
             )
         )
     }

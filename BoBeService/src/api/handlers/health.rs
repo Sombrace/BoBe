@@ -114,7 +114,7 @@ pub(crate) async fn diagnose_provider(
 #[serde(deny_unknown_fields)]
 pub(crate) struct ProviderProbeRequest {
     model: String,
-    reasoning_effort: Option<String>,
+    reasoning_effort: Option<crate::provider::profile::ReasoningEffort>,
 }
 
 pub(crate) async fn diagnose_profile(
@@ -128,11 +128,8 @@ pub(crate) async fn diagnose_profile(
         return Err(AppError::NotFound("provider profile was not found".into()));
     }
     super::providers::require_live_profile(&state, &profile)?;
-    if request.model.trim().is_empty() || request.model.len() > 256 {
-        return Err(AppError::Validation(
-            "Select a provider model to test".into(),
-        ));
-    }
+    crate::provider::profile::validate_model_id(&request.model)
+        .map_err(|_| AppError::Validation("Select a provider model to test".into()))?;
     let _personal_data = Arc::clone(&state.runtime.personal_data_lifecycle)
         .try_read_owned()
         .map_err(|_| AppError::Conflict("agent maintenance is active".into()))?;

@@ -1769,7 +1769,7 @@ static void handle_battery(
     context->battery_valid = true;
     context->battery = event->data.battery.state;
     const bobe_battery_state_t *battery = &context->battery;
-    if (battery->percent == 0 && !battery->charging) {
+    if (battery->percent < 5 && !battery->charging) {
         if (context->low_battery_samples < UINT8_MAX) {
             ++context->low_battery_samples;
         }
@@ -1784,7 +1784,7 @@ static void handle_battery(
             shutdown_body(context, effects);
             return;
         }
-    } else if (battery->percent >= 5 || battery->charging) {
+    } else {
         context->low_battery_samples = 0;
     }
     if (event->data.battery.transport_connected) {

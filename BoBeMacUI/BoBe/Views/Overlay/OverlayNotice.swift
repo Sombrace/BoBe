@@ -32,43 +32,93 @@ struct OverlayNotice: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            BobeIconTile(systemName: self.systemName, tint: self.tint, size: 26)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(self.message)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundStyle(self.theme.colors.text)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let detail {
-                    Text(detail)
-                        .bobeTextStyle(.helper)
-                        .foregroundStyle(self.theme.colors.textMuted)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            ForEach(self.actions) { action in
-                Button(action.title, action: action.perform)
-                    .buttonStyle(NoticeButtonStyle(isProminent: action.isProminent, tint: self.tint))
-            }
-            if let onDismiss {
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(self.theme.colors.textMuted)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Circle())
-                }
-                .buttonStyle(BobePressStyle(scale: 0.88))
-                .accessibilityLabel(L10n.tr("overlay.floating_bubble.dismiss"))
-            }
+        ViewThatFits(in: .horizontal) {
+            self.inlineLayout
+            self.stackedLayout
         }
         .padding(.leading, 9)
         .padding(.trailing, 8)
         .padding(.vertical, 8)
         .bobeRaised(cornerRadius: 18)
+    }
+
+    private var inlineLayout: some View {
+        HStack(alignment: .center, spacing: 10) {
+            self.icon
+            self.text
+                .frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(self.actions) { action in
+                self.button(for: action)
+            }
+            self.dismissButton
+        }
+    }
+
+    private var stackedLayout: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                self.icon
+                self.text
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                self.dismissButton
+            }
+            if !self.actions.isEmpty {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        ForEach(self.actions) { action in
+                            self.button(for: action)
+                        }
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(self.actions) { action in
+                            self.button(for: action)
+                        }
+                    }
+                }
+                .padding(.leading, 36)
+            }
+        }
+    }
+
+    private var icon: some View {
+        BobeIconTile(systemName: self.systemName, tint: self.tint, size: 26)
+    }
+
+    private var text: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(self.message)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(self.theme.colors.text)
+                .lineLimit(4)
+                .fixedSize(horizontal: false, vertical: true)
+            if let detail {
+                Text(detail)
+                    .bobeTextStyle(.helper)
+                    .foregroundStyle(self.theme.colors.textMuted)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func button(for action: OverlayNoticeAction) -> some View {
+        Button(action.title, action: action.perform)
+            .buttonStyle(NoticeButtonStyle(isProminent: action.isProminent, tint: self.tint))
+    }
+
+    @ViewBuilder
+    private var dismissButton: some View {
+        if let onDismiss {
+            Button(action: onDismiss) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(self.theme.colors.textMuted)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(BobePressStyle(scale: 0.88))
+            .accessibilityLabel(L10n.tr("overlay.floating_bubble.dismiss"))
+        }
     }
 }
 
@@ -80,9 +130,12 @@ private struct NoticeButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12, weight: .semibold))
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
             .foregroundStyle(self.isProminent ? self.theme.onAccent : self.tint)
             .padding(.horizontal, 10)
-            .frame(height: 26)
+            .padding(.vertical, 5)
+            .frame(minHeight: 26)
             .background(
                 Capsule().fill(self.isProminent ? self.tint : self.tint.opacity(0.12))
             )

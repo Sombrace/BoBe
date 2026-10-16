@@ -173,12 +173,7 @@ struct AvatarStatusBubble: View {
                 if message.isStreaming {
                     StreamingText(content: message.content)
                 } else {
-                    Text(message.content)
-                        .bobeTextStyle(.chatBody)
-                        .lineSpacing(3)
-                        .foregroundStyle(self.theme.colors.text)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
+                    CompletedReplyText(markdown: message.content)
                 }
                 if !message.isComplete, !message.isStreaming {
                     Label(L10n.tr("overlay.chat.interrupted"), systemImage: "exclamationmark.circle")
@@ -214,7 +209,9 @@ struct AvatarStatusBubble: View {
             )
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(L10n.tr("overlay.chat.sender.bobe")): \(message.content)")
+        .accessibilityLabel(
+            "\(L10n.tr("overlay.chat.sender.bobe")): \(CompletedReplyText.plainText(fromMarkdown: message.content))"
+        )
         .accessibilityValue(self.messageAccessibilityValue(message))
         .accessibilityFocused(self.$accessibilityFocus, equals: .message)
         let offersReplies = message.isComplete && !message.isStreaming && self.reachout != .answer

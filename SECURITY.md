@@ -25,4 +25,5 @@ attacks that need physical access to the machine, and social engineering.
   certificates.
 - Tools run as the owner's account from BoBe's workspace. This is a
   single-owner boundary, not an operating-system sandbox.
-- MCP commands are checked against a blocklist.
+- MCP commands are checked against a blocklist, including commands wrapped
+  in `env`. The blocklist is a guard against mistakes, not a sandbox.

@@ -22,6 +22,11 @@ struct VoicePanel: View {
                 if let error = self.store.error ?? self.installError {
                     SettingsErrorBanner(message: error)
                 }
+                if let restartError = self.pipeline.sessionRestartError {
+                    SettingsErrorBanner(
+                        message: L10n.tr("settings.voice.session_restart_failed_format", restartError)
+                    )
+                }
                 if let savedMessage = self.store.savedMessage {
                     SettingsSavedToast(message: savedMessage)
                 }

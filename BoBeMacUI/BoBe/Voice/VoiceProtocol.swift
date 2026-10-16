@@ -1,5 +1,12 @@
 import Foundation
 
+extension VoiceWire {
+    static let captureHeaderBytes = 13
+    static let capturePayloadBytes = 640
+    static let captureSampleRate = 16_000
+    static let captureFrameSamples = 320
+}
+
 enum VoiceControlAction: String, Codable {
     case abort
     case mute
@@ -15,8 +22,8 @@ enum VoicePhaseWire: String, Codable {
 
 enum ClientVoiceMessage: Codable {
     case hello(sessionId: String, voiceId: String?, speed: Float?, speechOffer: SpeechOfferWire)
-    case bargeIn(tsMs: UInt64, playbackMsPlayed: UInt64, partialText: String?, playheadChunk: UInt64)
-    case playbackAck(chunkId: UInt64, playedMs: UInt64)
+    case bargeIn(tsMs: UInt64, playbackMsPlayed: UInt64, partialText: String?, playheadChunk: UInt64, turnId: String?)
+    case playbackAck(chunkId: UInt64, playedMs: UInt64, turnId: String?)
     case control(action: VoiceControlAction)
     case transcriptPartial(turnId: String, text: String)
     case transcriptFinal(turnId: String, text: String)
@@ -32,16 +39,18 @@ enum ClientVoiceMessage: Codable {
             try c.encodeIfPresent(voiceId, forKey: .voiceId)
             try c.encodeIfPresent(speed, forKey: .speed)
             try c.encode(speechOffer, forKey: .speechOffer)
-        case let .bargeIn(tsMs, playbackMsPlayed, partialText, playheadChunk):
+        case let .bargeIn(tsMs, playbackMsPlayed, partialText, playheadChunk, turnId):
             try c.encode("barge_in", forKey: .type)
             try c.encode(tsMs, forKey: .tsMs)
             try c.encode(playbackMsPlayed, forKey: .playbackMsPlayed)
             try c.encodeIfPresent(partialText, forKey: .partialText)
             try c.encode(playheadChunk, forKey: .playheadChunk)
-        case let .playbackAck(chunkId, playedMs):
+            try c.encodeIfPresent(turnId, forKey: .turnId)
+        case let .playbackAck(chunkId, playedMs, turnId):
             try c.encode("playback_ack", forKey: .type)
             try c.encode(chunkId, forKey: .chunkId)
             try c.encode(playedMs, forKey: .playedMs)
+            try c.encodeIfPresent(turnId, forKey: .turnId)
         case let .control(action):
             try c.encode("control", forKey: .type)
             try c.encode(action, forKey: .action)
@@ -171,12 +180,9 @@ enum ServerVoiceMessage: Decodable {
 }
 
 struct VoiceCaptureFrameEncoder {
-    static let headerLength = 13
-    static let pcmBytes = 640
-
     static func encode(streamId: UInt32, sequence: UInt32, samples: ArraySlice<Float>) -> Data? {
-        guard streamId != 0, samples.count == 320 else { return nil }
-        var data = Data(capacity: self.headerLength + self.pcmBytes)
+        guard streamId != 0, samples.count == VoiceWire.captureFrameSamples else { return nil }
+        var data = Data(capacity: VoiceWire.captureHeaderBytes + VoiceWire.capturePayloadBytes)
         appendBigEndian(streamId, to: &data)
         appendBigEndian(sequence, to: &data)
         data.append(0)

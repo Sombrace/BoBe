@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from bobe_hil import locks
+from bobe_hil import image, locks
 
 
 SNAPSHOT_LOCK = """SNAPSHOT_SOURCE_COMMIT={commit}
@@ -83,34 +83,45 @@ class LockParsingTests(unittest.TestCase):
             locks.load_lkg_lock(root / "last-known-good.lock")
 
 
+APPLICATION = {
+    "schema_version": 1,
+    "target": "esp32s3",
+    "project_name": "bobe_wb12",
+    "app_version": "1",
+    "compile_time": "00:00:00",
+    "compile_date": "Jan 01 2030",
+    "idf_version": "v6.0",
+    "app_elf_sha256": ELF,
+    "secure_version": 0,
+    "image_sha256": IMAGE,
+    "image_size": 4096,
+}
+
+
 class LockCreationTests(unittest.TestCase):
+    def snapshot_build(self, root: Path, configuration: object) -> Path:
+        build = root / "build-bobe-snapshot"
+        (build / "config").mkdir(parents=True)
+        (build / "bobe_wb12.bin").write_bytes(b"image")
+        (build / "bobe_wb12.elf").write_bytes(b"elf")
+        (build / "config" / "sdkconfig.json").write_text(
+            json.dumps(configuration),
+            encoding="utf-8",
+        )
+        return build
+
     def test_lock_records_the_snapshot_build_digests(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            build = root / "build-bobe-snapshot"
-            build.mkdir()
-            (build / "bobe_wb12.bin").write_bytes(b"image")
-            (build / "bobe_wb12.elf").write_bytes(b"elf")
+            build = self.snapshot_build(root, {"BOBE_BUILD_NUMBER": 7})
             output = root / "bobe-snapshot.lock"
             with (
                 mock.patch.object(
-                    locks,
+                    image,
                     "inspect_application",
-                    return_value={
-                        "schema_version": 1,
-                        "target": "esp32s3",
-                        "project_name": "bobe_wb12",
-                        "app_version": "1",
-                        "compile_time": "00:00:00",
-                        "compile_date": "Jan 01 2030",
-                        "idf_version": "v6.0",
-                        "app_elf_sha256": ELF,
-                        "secure_version": 0,
-                        "image_sha256": IMAGE,
-                        "image_size": 4096,
-                    },
+                    return_value=dict(APPLICATION),
                 ),
-                mock.patch.object(locks, "sha256_file", return_value=ELF),
+                mock.patch.object(image, "sha256_file", return_value=ELF),
             ):
                 values = locks.create_snapshot_lock(
                     COMMIT,
@@ -126,6 +137,29 @@ class LockCreationTests(unittest.TestCase):
             self.assertEqual(manifest["profile"], "edge")
             self.assertEqual(manifest["source_commit"], COMMIT)
             self.assertFalse(manifest["source_dirty"])
+            self.assertEqual(manifest["build_number"], 7)
+
+    def test_lock_requires_the_built_firmware_build_number(self) -> None:
+        for configuration in ({}, {"BOBE_BUILD_NUMBER": 0}, {"BOBE_BUILD_NUMBER": "7"}):
+            with self.subTest(configuration=configuration):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    build = self.snapshot_build(root, configuration)
+                    output = root / "bobe-snapshot.lock"
+                    with (
+                        mock.patch.object(
+                            image,
+                            "inspect_application",
+                            return_value=dict(APPLICATION),
+                        ),
+                        mock.patch.object(image, "sha256_file", return_value=ELF),
+                        self.assertRaisesRegex(ValueError, "BOBE_BUILD_NUMBER"),
+                    ):
+                        locks.create_snapshot_lock(COMMIT, build, output, "edge")
+                    self.assertFalse(output.exists())
+                    self.assertFalse(
+                        (build / "bobe_wb12.bin.manifest.json").exists()
+                    )
 
     def test_unexpected_build_directory_name_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -28,6 +28,10 @@ pub(crate) async fn create_live_backup(state: &AppState) -> Result<std::path::Pa
         &state.infra.db,
         &state.infra.paths,
         &state.infra.config_root.join("config.toml"),
+        &crate::ops::backup::SettingsLocks {
+            config: Arc::clone(&state.infra.config_write_lock),
+            mcp: Arc::clone(&state.infra.mcp_config_lock),
+        },
         identity.runtime_authority_id,
         identity.runtime_authority_epoch,
         identity.schema_version,

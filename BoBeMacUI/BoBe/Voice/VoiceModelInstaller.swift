@@ -196,13 +196,13 @@ final class VoiceModelInstaller {
     }
 
     func uninstall(_ model: VoiceModel) async {
-        let language: String
+        let engineId: String
         switch model {
-        case .englishStt: language = "en"
-        case .multilingualStt: language = "zh"
+        case .englishStt: engineId = VoiceSttEngineId.fluidAudioParakeet
+        case .multilingualStt: engineId = VoiceSttEngineId.fluidAudioNemotron
         case .pocketTts, .supertonicTts: return
         }
-        await self.pipeline.unloadSttModel(for: language)
+        await self.pipeline.unloadSttEngine(engineId)
         let path = NSString(string: model.installPath).expandingTildeInPath
         if FileManager.default.fileExists(atPath: path) {
             try? FileManager.default.removeItem(at: URL(fileURLWithPath: path, isDirectory: true))
@@ -210,19 +210,45 @@ final class VoiceModelInstaller {
         await self.refresh()
     }
 
-    func cancel() async {
+    func cancel() async throws {
         self.installGeneration &+= 1
         self.isInstalling = false
         self.staleSnapshotRevision = nil
-        let client = DaemonClient(endpoint: self.pipeline.daemonStateSelection.endpoint)
-        async let daemon: Void = { try? await client.cancelVoiceInstall() }()
-        async let stt: Void = self.pipeline.cancelSttLoading()
-        _ = await (daemon, stt)
+        let pipeline = self.pipeline
+        let selection = pipeline.daemonStateSelection
+        async let stt: Void = pipeline.cancelSttLoading()
+        let daemon: Result<Void, any Error>
+        do {
+            try await DaemonClient(endpoint: selection.endpoint).cancelVoiceInstall()
+            daemon = .success(())
+        } catch {
+            daemon = .failure(error)
+        }
+        await stt
+        try daemon.get()
+        try await self.awaitDaemonInstallStopped(selection: selection)
+    }
+
+    private func awaitDaemonInstallStopped(selection: EndpointSelection) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(15))
+        while EndpointStore.shared.selection == selection {
+            await self.pipeline.refreshDaemonState()
+            if self.pipeline.installSnapshot?.isRunning == false { return }
+            guard clock.now < deadline else { throw VoiceInstallCancelError.stillRunning }
+            try await Task.sleep(for: .milliseconds(500))
+        }
     }
 
     func settled() async -> VoiceInstallOutcome? {
         for await outcome in Observations({ self.outcome }) where outcome != .installing {
-            if case .failed = outcome, case .failed = self.pipeline.sttStatus { await self.cancel() }
+            if case .failed = outcome, case .failed = self.pipeline.sttStatus {
+                do {
+                    try await self.cancel()
+                } catch {
+                    return .failed(L10n.tr("setup.voice.cancel_failed_format", error.localizedDescription))
+                }
+            }
             return outcome
         }
         return nil
@@ -318,5 +344,13 @@ final class VoiceModelInstaller {
             }
         }
         return P.isInstalled() ? .installed : .missing
+    }
+}
+
+enum VoiceInstallCancelError: LocalizedError {
+    case stillRunning
+
+    var errorDescription: String? {
+        L10n.tr("setup.voice.cancel_still_running")
     }
 }

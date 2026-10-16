@@ -371,7 +371,7 @@ final class EndpointStore: @unchecked Sendable {
     private let lock = OSAllocatedUnfairLock(
         initialState: Resolved(profile: nil, endpoint: nil)
     )
-    private let credentials = EndpointCredentialStore()
+    private let credentials: EndpointCredentialStore
     private let mutationLock = NSLock()
     private let defaults: UserDefaults
 
@@ -381,8 +381,12 @@ final class EndpointStore: @unchecked Sendable {
         var generation: UInt64 = 0
     }
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        credentials: EndpointCredentialStore = EndpointCredentialStore()
+    ) {
         self.defaults = defaults
+        self.credentials = credentials
         self.reload()
     }
 

@@ -2,6 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/locales.sh"
 version="${1:-0.0.0}"
 APP="build/BoBe.app"
 XCODE_APP="BoBeMacUI/.build/xcode-derived/Build/Products/Release/BoBe.app"
@@ -41,10 +42,7 @@ for resource_bundle in textual_Textual.bundle swiftui-math_SwiftUIMath.bundle; d
         exit 1
     }
 done
-test -f "$APP/Contents/Resources/en.lproj/UI.strings" || {
-    echo "Missing BoBe localization resources" >&2
-    exit 1
-}
+bobe_check_bundle_locales "$APP/Contents/Resources" UI.strings
 test -f "$APP/Contents/Resources/PrivacyInfo.xcprivacy" || {
     echo "Missing BoBe privacy manifest" >&2
     exit 1

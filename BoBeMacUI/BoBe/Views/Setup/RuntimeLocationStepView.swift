@@ -10,7 +10,6 @@ private enum RuntimeSetupPhase: Equatable {
     case starting
     case checking
     case pairing
-    case saving
     case verifying
 
     var title: String {
@@ -18,16 +17,43 @@ private enum RuntimeSetupPhase: Equatable {
         case .starting: L10n.tr("setup.runtime.phase.starting")
         case .checking: L10n.tr("setup.runtime.phase.checking")
         case .pairing: L10n.tr("setup.runtime.phase.pairing")
-        case .saving: L10n.tr("setup.runtime.phase.saving")
         case .verifying: L10n.tr("setup.runtime.phase.verifying")
         }
     }
 }
 
+struct PairedRuntime: Equatable, Sendable {
+    let profile: EndpointProfile
+    let credential: String
+}
+
+enum RuntimePairing {
+    static func commit(
+        _ paired: PairedRuntime,
+        store: EndpointStore = .shared,
+        attach: @Sendable (EndpointProfile, String) async throws -> AttachResult = { profile, credential in
+            try await EndpointAttachService.shared.attach(profile: profile, credential: credential)
+        }
+    ) async throws -> InitializationStateWire {
+        let result = try await attach(paired.profile, paired.credential)
+        guard result.hello.runtimeAuthorityId == paired.profile.runtimeAuthorityId,
+              result.hello.runtimeAuthorityEpoch == paired.profile.runtimeAuthorityEpoch
+        else { throw RuntimeLocationError.identityMismatch }
+        try Task.checkCancellation()
+        try store.persist(paired.profile, credential: paired.credential, deletePreviousCredential: true)
+        return result.hello.initializationState
+    }
+}
+
+private enum RuntimeAttachTarget: Equatable {
+    case stored(profileID: UUID)
+    case paired(PairedRuntime)
+}
+
 private enum RuntimeSetupOperation: Equatable {
     case editing
     case working(RuntimeSetupPhase)
-    case awaitingAttach(profileID: UUID)
+    case awaitingAttach(RuntimeAttachTarget)
 
     var isWorking: Bool {
         if case .working = self { return true }
@@ -87,7 +113,7 @@ struct RuntimeLocationStepView: View {
         self._errorMessage = State(initialValue: initialIssue?.message)
         if let initialProfile,
            initialIssue?.primaryAction == .retryConnection {
-            self._operation = State(initialValue: .awaitingAttach(profileID: initialProfile.id))
+            self._operation = State(initialValue: .awaitingAttach(.stored(profileID: initialProfile.id)))
         }
     }
 
@@ -346,59 +372,71 @@ struct RuntimeLocationStepView: View {
         let previousCredential = previousProfile.flatMap(EndpointStore.shared.credential)
         self.operationTask = Task { @MainActor in
             do {
-                let initializationState = try await self.selectRuntime()
+                let initializationState = try await self.selectRuntime(replacing: previousProfile)
                 self.finishOperation()
                 self.onContinue(initializationState)
-            } catch is CancellationError {
-                self.finishOperation()
             } catch {
-                if case .awaitingAttach = self.operation {
-                    self.errorMessage = RuntimeIssue(error).message
-                    self.onCriticalOperationChange(false)
-                    return
-                }
                 await self.restorePreviousRuntime(
                     previousProfile: previousProfile,
                     previousCredential: previousCredential
                 )
+                if error is CancellationError {
+                    self.finishOperation()
+                    return
+                }
                 self.errorMessage = RuntimeIssue(error).message
-                self.finishOperation()
+                if case .awaitingAttach = self.operation {
+                    self.onCriticalOperationChange(false)
+                } else {
+                    self.finishOperation()
+                }
             }
         }
     }
 
     private func retryAttach() {
-        guard case let .awaitingAttach(profileID) = self.operation,
-              let profile = EndpointStore.shared.profile,
-              profile.id == profileID
-        else {
+        guard case let .awaitingAttach(target) = self.operation else { return }
+        if case let .stored(profileID) = target, EndpointStore.shared.profile?.id != profileID {
             self.returnToPairing()
             return
         }
         self.errorMessage = nil
         self.setOperation(.working(.verifying))
-        let selection = EndpointStore.shared.selection
         self.operationTask = Task { @MainActor in
             do {
-                let result = try await EndpointAttachService.shared.attach(
-                    profile: profile,
-                    credential: selection.endpoint.bearerToken
-                )
-                try EndpointStore.shared.updateNegotiatedIdentity(
-                    profileID: profile.id,
-                    authorityID: result.hello.runtimeAuthorityId,
-                    authorityEpoch: result.hello.runtimeAuthorityEpoch,
-                    expectedSelection: selection
-                )
+                let initializationState = try await self.attach(target)
                 self.finishOperation()
-                self.onContinue(result.hello.initializationState)
+                self.onContinue(initializationState)
             } catch is CancellationError {
                 self.finishOperation()
             } catch {
-                self.operation = .awaitingAttach(profileID: profileID)
+                self.operation = .awaitingAttach(target)
                 self.errorMessage = RuntimeIssue(error).message
                 self.onCriticalOperationChange(false)
             }
+        }
+    }
+
+    private func attach(_ target: RuntimeAttachTarget) async throws -> InitializationStateWire {
+        switch target {
+        case let .paired(paired):
+            return try await RuntimePairing.commit(paired)
+        case let .stored(profileID):
+            let selection = EndpointStore.shared.selection
+            guard let profile = EndpointStore.shared.profile(for: selection), profile.id == profileID else {
+                throw CancellationError()
+            }
+            let result = try await EndpointAttachService.shared.attach(
+                profile: profile,
+                credential: selection.endpoint.bearerToken
+            )
+            try EndpointStore.shared.updateNegotiatedIdentity(
+                profileID: profile.id,
+                authorityID: result.hello.runtimeAuthorityId,
+                authorityEpoch: result.hello.runtimeAuthorityEpoch,
+                expectedSelection: selection
+            )
+            return result.hello.initializationState
         }
     }
 
@@ -415,7 +453,7 @@ struct RuntimeLocationStepView: View {
         }
     }
 
-    private func selectRuntime() async throws -> InitializationStateWire {
+    private func selectRuntime(replacing previousProfile: EndpointProfile?) async throws -> InitializationStateWire {
         switch self.selection {
         case .managedLocal:
             let existing = EndpointStore.shared.profile
@@ -425,7 +463,7 @@ struct RuntimeLocationStepView: View {
                 try EndpointStore.shared.persist(
                     EndpointProfile.managedLocal,
                     credential: nil,
-                    deletePreviousCredential: true
+                    deletePreviousCredential: false
                 )
             }
             try await BackendService.shared.start()
@@ -438,17 +476,21 @@ struct RuntimeLocationStepView: View {
                 profile: enrolledProfile,
                 credential: credential
             )
+            if let previousReference = previousProfile?.credentialReference,
+               previousReference != enrolledProfile.credentialReference {
+                EndpointStore.shared.deleteCredential(reference: previousReference)
+            }
             return attach.hello.initializationState
 
         case .attachedLocal:
-            return try await self.pairAndPersist(
+            return try await self.pairAndVerify(
                 address: self.attachedURL,
                 code: self.attachedCode,
                 mode: .attachedLocal
             )
 
         case .remote:
-            return try await self.pairAndPersist(
+            return try await self.pairAndVerify(
                 address: self.remoteURL,
                 code: self.remoteCode,
                 mode: .remote
@@ -456,7 +498,7 @@ struct RuntimeLocationStepView: View {
         }
     }
 
-    private func pairAndPersist(
+    private func pairAndVerify(
         address: String,
         code: String,
         mode: EndpointProfile.Mode
@@ -467,31 +509,17 @@ struct RuntimeLocationStepView: View {
             code: Self.normalizedPairingCode(code),
             expectedMode: mode
         )
-        self.setOperation(.working(.saving))
-        try EndpointStore.shared.persist(
-            profile,
-            credential: credential,
-            deletePreviousCredential: false
-        )
         switch mode {
         case .attachedLocal: self.attachedCode = ""
         case .remote: self.remoteCode = ""
         case .managedLocal: break
         }
-        self.setOperation(.awaitingAttach(profileID: profile.id))
-        self.onCriticalOperationChange(false)
+        let paired = PairedRuntime(profile: profile, credential: credential)
         self.setOperation(.working(.verifying))
         do {
-            let attach = try await EndpointAttachService.shared.attach(
-                profile: profile,
-                credential: credential
-            )
-            guard attach.hello.runtimeAuthorityId == profile.runtimeAuthorityId,
-                  attach.hello.runtimeAuthorityEpoch == profile.runtimeAuthorityEpoch
-            else { throw RuntimeLocationError.identityMismatch }
-            return attach.hello.initializationState
+            return try await RuntimePairing.commit(paired)
         } catch {
-            self.operation = .awaitingAttach(profileID: profile.id)
+            self.operation = .awaitingAttach(.paired(paired))
             throw error
         }
     }
@@ -501,6 +529,7 @@ struct RuntimeLocationStepView: View {
         previousCredential: String?
     ) async {
         let failedProfile = EndpointStore.shared.profile
+        guard failedProfile != previousProfile else { return }
         if failedProfile?.mode == .managedLocal,
            previousProfile?.mode != .managedLocal {
             await BackendService.shared.stop()

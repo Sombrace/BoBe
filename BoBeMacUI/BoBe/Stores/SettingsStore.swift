@@ -31,12 +31,12 @@ enum BodyThemeSaveState: Equatable {
     }
 }
 
-protocol BodyThemeSettingsClient: Sendable {
+protocol SettingsClient: Sendable {
     func getSettings() async throws -> DaemonSettings
     func updateSettings(_ request: SettingsUpdateRequest) async throws -> SettingsUpdateResponse
 }
 
-extension DaemonClient: BodyThemeSettingsClient {}
+extension DaemonClient: SettingsClient {}
 
 @MainActor
 @Observable
@@ -60,18 +60,21 @@ final class SettingsStore {
     private var backendObserverTask: Task<Void, Never>?
 
     private let debouncer = SettingsDebouncer()
-    private let clientOverride: (any BodyThemeSettingsClient)?
+    private let clientOverride: (any SettingsClient)?
     private let currentSelection: @MainActor () -> EndpointSelection
     private var selection: EndpointSelection
     private var endpointObserver: NSObjectProtocol?
     private var bodyThemeGeneration: UInt64 = 0
-    private var mutationRevision: UInt64 = 0
+    private var daemonSettings: DaemonSettings?
+    private var pendingChanges = SettingsUpdateRequest()
+    private var inFlightChanges = SettingsUpdateRequest()
+    private var completedSaves: UInt64 = 0
 
     init(
-        bodyThemeClient: (any BodyThemeSettingsClient)? = nil,
+        client: (any SettingsClient)? = nil,
         currentSelection: @escaping @MainActor () -> EndpointSelection = { EndpointStore.shared.selection }
     ) {
-        self.clientOverride = bodyThemeClient
+        self.clientOverride = client
         self.currentSelection = currentSelection
         self.selection = currentSelection()
         self.endpointObserver = NotificationCenter.default.addObserver(
@@ -93,6 +96,9 @@ final class SettingsStore {
         self.debouncer.cancelPendingSave()
         self.loadTask?.cancel()
         self.loadTask = nil
+        self.daemonSettings = nil
+        self.pendingChanges = SettingsUpdateRequest()
+        self.inFlightChanges = SettingsUpdateRequest()
         self.settings = nil
         self.error = nil
         self.savedMessage = nil
@@ -100,15 +106,36 @@ final class SettingsStore {
         self.bodyThemeSaveState = .idle
         self.isLoading = false
         self.bodyThemeGeneration &+= 1
-        self.mutationRevision &+= 1
     }
 
     private func isCurrent(_ selection: EndpointSelection) -> Bool {
         self.selection == selection && self.currentSelection() == selection
     }
 
-    private func client(for selection: EndpointSelection) -> any BodyThemeSettingsClient {
+    private func client(for selection: EndpointSelection) -> any SettingsClient {
         self.clientOverride ?? DaemonClient(endpoint: selection.endpoint)
+    }
+
+    private func publish() {
+        guard var visible = self.daemonSettings else {
+            self.settings = nil
+            return
+        }
+        visible.apply(self.inFlightChanges)
+        visible.apply(self.pendingChanges)
+        if visible != self.settings {
+            self.settings = visible
+        }
+    }
+
+    private func adopt(_ latest: DaemonSettings, keepingBodyTheme: Bool) {
+        var adopted = latest
+        if keepingBodyTheme, let current = self.daemonSettings {
+            adopted.bodyTheme = current.bodyTheme
+            adopted.bodyConnected = current.bodyConnected
+        }
+        self.daemonSettings = adopted
+        self.publish()
     }
 
 
@@ -121,21 +148,24 @@ final class SettingsStore {
             return
         }
         let selection = self.selection
-        let revision = self.mutationRevision
-        let bodyThemeGeneration = self.bodyThemeGeneration
         let client = self.client(for: selection)
         let task = Task<Void, Never> { @MainActor in
             self.isLoading = true
             defer { if self.isCurrent(selection) { self.isLoading = false } }
+            await self.debouncer.flush()
+            guard self.isCurrent(selection) else { return }
+            let bodyThemeGeneration = self.bodyThemeGeneration
+            let completedSaves = self.completedSaves
             do {
-                let settings = try await client.getSettings()
-                guard self.isCurrent(selection), revision == self.mutationRevision,
-                      bodyThemeGeneration == self.bodyThemeGeneration,
-                      self.bodyThemeSaveState != .applying
-                else { return }
-                self.settings = settings
+                let latest = try await client.getSettings()
+                guard self.isCurrent(selection), completedSaves == self.completedSaves else { return }
+                let bodyThemeSettled = bodyThemeGeneration == self.bodyThemeGeneration
+                    && self.bodyThemeSaveState != .applying
+                self.adopt(latest, keepingBodyTheme: !bodyThemeSettled)
+                if bodyThemeSettled {
+                    self.bodyThemeSaveState = .idle
+                }
                 self.error = nil
-                self.bodyThemeSaveState = .idle
             } catch {
                 guard self.isCurrent(selection) else { return }
                 self.error = error.localizedDescription
@@ -144,7 +174,7 @@ final class SettingsStore {
         }
         self.loadTask = task
         await task.value
-        if self.isCurrent(selection) { self.loadTask = nil }
+        if self.loadTask == task { self.loadTask = nil }
     }
 
     func refresh() async {
@@ -157,19 +187,14 @@ final class SettingsStore {
             await existing.value
             return
         }
-        guard !self.debouncer.hasPendingSave else { return }
         let selection = self.selection
-        let revision = self.mutationRevision
+        let completedSaves = self.completedSaves
         guard let latest = try? await self.client(for: selection).getSettings(),
               self.isCurrent(selection),
-              revision == self.mutationRevision,
-              !self.debouncer.hasPendingSave,
-              let current = self.settings
+              completedSaves == self.completedSaves,
+              self.daemonSettings != nil
         else { return }
-        var refreshed = latest
-        refreshed.bodyTheme = current.bodyTheme
-        refreshed.bodyConnected = current.bodyConnected
-        self.settings = refreshed
+        self.adopt(latest, keepingBodyTheme: true)
     }
 
     private func startBackendObserverIfNeeded() {
@@ -195,24 +220,33 @@ final class SettingsStore {
 
     func update(_ mutate: (inout DaemonSettings) -> Void) {
         self.synchronizeEndpoint()
-        guard var current = self.settings else { return }
-        mutate(&current)
-        self.settings = current
-        self.mutationRevision &+= 1
+        guard let previous = self.settings else { return }
+        var edited = previous
+        mutate(&edited)
+        let changes = SettingsUpdateRequest(changing: previous, to: edited)
+        guard !changes.isEmpty else { return }
+        self.pendingChanges.merge(changes)
+        self.publish()
         let selection = self.selection
-        let revision = self.mutationRevision
         let client = self.client(for: selection)
         self.debouncer.debounce { [weak self] in
-            await self?.persist(
-                currentSettings: current, selection: selection, revision: revision, client: client
-            )
+            await self?.persistPendingChanges(selection: selection, client: client)
         }
+    }
+
+    @discardableResult
+    func setCaptureEnabled(_ enabled: Bool) async -> Bool {
+        await self.loadIfNeeded()
+        guard self.settings != nil else { return false }
+        self.update { $0.captureEnabled = enabled }
+        await self.flushPendingSave()
+        return self.settings?.captureEnabled == enabled
     }
 
     func setBodyTheme(_ theme: PhysicalBodyTheme) async {
         self.synchronizeEndpoint()
         guard self.bodyThemeSaveState != .applying,
-              var current = self.settings
+              var current = self.daemonSettings
         else {
             return
         }
@@ -220,7 +254,8 @@ final class SettingsStore {
             current.bodyTheme == theme && self.bodyThemeSaveState.allowsRetry
         guard current.bodyTheme != theme || retryingCurrentTheme else { return }
         current.bodyTheme = theme
-        self.settings = current
+        self.daemonSettings = current
+        self.publish()
         self.bodyThemeSaveState = .applying
         self.bodyThemeGeneration &+= 1
         let selection = self.selection
@@ -238,7 +273,8 @@ final class SettingsStore {
                 return
             }
             if let delivered = response.bodyThemeDelivered {
-                self.settings?.bodyConnected = delivered
+                self.daemonSettings?.bodyConnected = delivered
+                self.publish()
             }
             self.restartFields.formUnion(response.restartRequiredFields)
             self.bodyThemeSaveState = self.settings?.bodyConnected == true ? .applied : .savedOffline
@@ -264,21 +300,23 @@ final class SettingsStore {
             else {
                 return
             }
-            guard var current = self.settings else {
-                self.settings = latest
+            guard var current = self.daemonSettings else {
+                self.daemonSettings = latest
+                self.publish()
                 self.bodyThemeSaveState = self.bodyThemeSaveState.refreshed(
                     bodyConnected: latest.bodyConnected
                 )
                 return
             }
+            current.bodyConnected = latest.bodyConnected
             if case .failed = self.bodyThemeSaveState {
-                current.bodyConnected = latest.bodyConnected
-                self.settings = current
+                self.daemonSettings = current
+                self.publish()
                 return
             }
             current.bodyTheme = latest.bodyTheme
-            current.bodyConnected = latest.bodyConnected
-            self.settings = current
+            self.daemonSettings = current
+            self.publish()
             self.bodyThemeSaveState = self.bodyThemeSaveState.refreshed(
                 bodyConnected: latest.bodyConnected
             )
@@ -289,41 +327,29 @@ final class SettingsStore {
         }
     }
 
-    private func persist(
-        currentSettings: DaemonSettings,
+    private func persistPendingChanges(
         selection: EndpointSelection,
-        revision: UInt64,
-        client: any BodyThemeSettingsClient
+        client: any SettingsClient
     ) async {
+        guard self.isCurrent(selection), !self.pendingChanges.isEmpty else { return }
+        let changes = self.pendingChanges
+        self.pendingChanges = SettingsUpdateRequest()
+        self.inFlightChanges = changes
         await self.debouncer.runPersist(
             setError: { [weak self] in self?.error = $0 },
             setSaved: { [weak self] in self?.savedMessage = $0 },
             onSuccess: { [weak self] response in
+                self?.daemonSettings?.apply(changes)
                 self?.restartFields.formUnion(response.restartRequiredFields)
             },
             update: { try await client.updateSettings($0) },
-            isCurrent: { [weak self] in
-                guard let self else { return false }
-                return self.isCurrent(selection) && self.mutationRevision == revision
-            },
-            build: { req in
-                req.captureEnabled = currentSettings.captureEnabled
-                req.captureIntervalSeconds = currentSettings.captureIntervalSeconds
-                req.checkinEnabled = currentSettings.checkinEnabled
-                req.checkinTimes = currentSettings.checkinTimes
-                req.checkinJitterMinutes = currentSettings.checkinJitterMinutes
-                req.conversationInactivityTimeoutSeconds = currentSettings.conversationInactivityTimeoutSeconds
-                req.conversationAutoCloseMinutes = currentSettings.conversationAutoCloseMinutes
-                req.goalCheckIntervalSeconds = currentSettings.goalCheckIntervalSeconds
-                req.mcpEnabled = currentSettings.mcpEnabled
-                req.voiceEnabled = currentSettings.voiceEnabled
-                req.voicePersona = currentSettings.voicePersona
-                req.voiceSpeed = currentSettings.voiceSpeed
-                req.voiceSttLanguage = currentSettings.voiceSttLanguage
-                req.voicePauseSensitivity = currentSettings.voicePauseSensitivity
-                req.voiceShowPartialCaption = currentSettings.voiceShowPartialCaption
-            }
+            isCurrent: { [weak self] in self?.isCurrent(selection) ?? false },
+            build: { $0 = changes }
         )
+        guard self.isCurrent(selection) else { return }
+        self.inFlightChanges = SettingsUpdateRequest()
+        self.completedSaves &+= 1
+        self.publish()
     }
 
     func clearRestartFields() {
@@ -367,5 +393,79 @@ final class SettingsStore {
 
     func cancelToast() {
         self.debouncer.cancelToast()
+    }
+}
+
+extension SettingsUpdateRequest {
+    init(changing previous: DaemonSettings, to current: DaemonSettings) {
+        func changed<Value: Equatable>(_ field: KeyPath<DaemonSettings, Value>) -> Value? {
+            previous[keyPath: field] == current[keyPath: field] ? nil : current[keyPath: field]
+        }
+        self.init(
+            bodyTheme: changed(\.bodyTheme),
+            captureEnabled: changed(\.captureEnabled),
+            captureIntervalSeconds: changed(\.captureIntervalSeconds),
+            checkinEnabled: changed(\.checkinEnabled),
+            checkinTimes: changed(\.checkinTimes),
+            checkinJitterMinutes: changed(\.checkinJitterMinutes),
+            conversationInactivityTimeoutSeconds: changed(\.conversationInactivityTimeoutSeconds),
+            conversationAutoCloseMinutes: changed(\.conversationAutoCloseMinutes),
+            goalCheckIntervalSeconds: changed(\.goalCheckIntervalSeconds),
+            mcpEnabled: changed(\.mcpEnabled),
+            voiceEnabled: changed(\.voiceEnabled),
+            voicePersona: changed(\.voicePersona),
+            voiceSpeed: changed(\.voiceSpeed),
+            voiceSttLanguage: changed(\.voiceSttLanguage),
+            voicePauseSensitivity: changed(\.voicePauseSensitivity),
+            voiceShowPartialCaption: changed(\.voiceShowPartialCaption)
+        )
+    }
+
+    var isEmpty: Bool {
+        self == SettingsUpdateRequest()
+    }
+
+    mutating func merge(_ newer: SettingsUpdateRequest) {
+        self = SettingsUpdateRequest(
+            bodyTheme: newer.bodyTheme ?? self.bodyTheme,
+            captureEnabled: newer.captureEnabled ?? self.captureEnabled,
+            captureIntervalSeconds: newer.captureIntervalSeconds ?? self.captureIntervalSeconds,
+            checkinEnabled: newer.checkinEnabled ?? self.checkinEnabled,
+            checkinTimes: newer.checkinTimes ?? self.checkinTimes,
+            checkinJitterMinutes: newer.checkinJitterMinutes ?? self.checkinJitterMinutes,
+            conversationInactivityTimeoutSeconds: newer.conversationInactivityTimeoutSeconds
+                ?? self.conversationInactivityTimeoutSeconds,
+            conversationAutoCloseMinutes: newer.conversationAutoCloseMinutes ?? self.conversationAutoCloseMinutes,
+            goalCheckIntervalSeconds: newer.goalCheckIntervalSeconds ?? self.goalCheckIntervalSeconds,
+            mcpEnabled: newer.mcpEnabled ?? self.mcpEnabled,
+            voiceEnabled: newer.voiceEnabled ?? self.voiceEnabled,
+            voicePersona: newer.voicePersona ?? self.voicePersona,
+            voiceSpeed: newer.voiceSpeed ?? self.voiceSpeed,
+            voiceSttLanguage: newer.voiceSttLanguage ?? self.voiceSttLanguage,
+            voicePauseSensitivity: newer.voicePauseSensitivity ?? self.voicePauseSensitivity,
+            voiceShowPartialCaption: newer.voiceShowPartialCaption ?? self.voiceShowPartialCaption
+        )
+    }
+}
+
+extension DaemonSettings {
+    mutating func apply(_ changes: SettingsUpdateRequest) {
+        self.bodyTheme = changes.bodyTheme ?? self.bodyTheme
+        self.captureEnabled = changes.captureEnabled ?? self.captureEnabled
+        self.captureIntervalSeconds = changes.captureIntervalSeconds ?? self.captureIntervalSeconds
+        self.checkinEnabled = changes.checkinEnabled ?? self.checkinEnabled
+        self.checkinTimes = changes.checkinTimes ?? self.checkinTimes
+        self.checkinJitterMinutes = changes.checkinJitterMinutes ?? self.checkinJitterMinutes
+        self.conversationInactivityTimeoutSeconds = changes.conversationInactivityTimeoutSeconds
+            ?? self.conversationInactivityTimeoutSeconds
+        self.conversationAutoCloseMinutes = changes.conversationAutoCloseMinutes ?? self.conversationAutoCloseMinutes
+        self.goalCheckIntervalSeconds = changes.goalCheckIntervalSeconds ?? self.goalCheckIntervalSeconds
+        self.mcpEnabled = changes.mcpEnabled ?? self.mcpEnabled
+        self.voiceEnabled = changes.voiceEnabled ?? self.voiceEnabled
+        self.voicePersona = changes.voicePersona ?? self.voicePersona
+        self.voiceSpeed = changes.voiceSpeed ?? self.voiceSpeed
+        self.voiceSttLanguage = changes.voiceSttLanguage ?? self.voiceSttLanguage
+        self.voicePauseSensitivity = changes.voicePauseSensitivity ?? self.voicePauseSensitivity
+        self.voiceShowPartialCaption = changes.voiceShowPartialCaption ?? self.voiceShowPartialCaption
     }
 }

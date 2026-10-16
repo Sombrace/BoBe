@@ -175,7 +175,6 @@
 "settings.shared.restart_banner.message" = "Ορισμένες αλλαγές χρειάζονται επανεκκίνηση της BoBe για να ισχύσουν.";
 "settings.shared.restart_banner.restart_now" = "Επανεκκίνηση τώρα";
 "settings.shared.section.enabled_format" = "%@ ενεργό";
-"settings.shared.validation.content_min_length_format" = "Το περιεχόμενο πρέπει να έχει τουλάχιστον %d χαρακτήρες";
 "settings.souls.delete.accessibility" = "Διαγραφή ψυχής";
 "settings.souls.empty.description" = "Δημιούργησε μία για να ορίσεις την προσωπικότητα της BoBe";
 "settings.souls.empty.select" = "Επιλέξτε μια ψυχή για επεξεργασία";
@@ -364,6 +363,10 @@
 "setup.voice.skip" = "Παράλειψη προς το παρόν";
 "setup.voice.install_button" = "Ρύθμιση φωνής";
 "setup.voice.cancel" = "Ακύρωση";
+"setup.voice.canceling" = "Ακύρωση…";
+"setup.voice.cancel_failed_format" = "Η BoBe δεν μπόρεσε να σταματήσει τη λήψη. %@";
+"setup.voice.cancel_still_running" = "Η λήψη σταματά ακόμη. Δοκίμασε ξανά σε λίγο.";
+"settings.voice.session_restart_failed_format" = "Η φωνή δεν μπόρεσε να ξεκινήσει ξανά με τις νέες ρυθμίσεις σου. %@";
 "setup.voice.continue" = "Συνέχεια";
 "setup.voice.stt_label.ready" = "Η ακοή της: έτοιμη";
 "setup.voice.stt_label.failed_format" = "Η ακοή της: δεν φορτώθηκε. %@";
@@ -430,7 +433,6 @@
 "setup.runtime.phase.starting" = "Ξεκινά η BoBe…";
 "setup.runtime.phase.checking" = "Αναζήτηση της BoBe…";
 "setup.runtime.phase.pairing" = "Ασφαλής σύζευξη…";
-"setup.runtime.phase.saving" = "Αποθήκευση σύνδεσης…";
 "setup.runtime.phase.verifying" = "Έλεγχος σύνδεσης…";
 "setup.runtime.retry_connection" = "Δοκίμασε ξανά";
 "setup.runtime.pair_again" = "Σύζευξη ξανά";
@@ -823,3 +825,10 @@
 "setup.permissions.card.status.allowed" = "Επιτρέπεται";
 "setup.value.title" = "Γεια, είμαι η BoBe";
 "setup.value.continue" = "Ας ξεκινήσουμε";
+"app.common.expanded" = "Αναπτυγμένο";
+"app.common.collapsed" = "Συμπτυγμένο";
+"setup.proactivity.error.not_saved" = "Η BoBe δεν μπόρεσε να αποθηκεύσει αυτή την επιλογή. Δοκίμασε ξανά.";
+"setup.local.cancel_failed" = "Η BoBe δεν μπόρεσε να σταματήσει τη λήψη. Δοκίμασε ξανά.";
+"settings.shared.restart_banner.failed" = "Η BoBe δεν μπόρεσε να κάνει επανεκκίνηση. Δοκίμασε ξανά.";
+"settings.context_editor.raw.accessibility_format" = "Markdown για %@";
+"settings.mcp.editor.accessibility" = "Ρυθμίσεις διακομιστών εργαλείων (JSON)";

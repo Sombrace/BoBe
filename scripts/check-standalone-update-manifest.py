@@ -32,9 +32,33 @@ def add_bytes(bundle: tarfile.TarFile, name: str, data: bytes) -> None:
     bundle.addfile(info, io.BytesIO(data))
 
 
+def elf(machine: int) -> bytes:
+    return b"\x7fELF\x02\x01\x01" + bytes(9) + (2).to_bytes(2, "little") + machine.to_bytes(2, "little") + bytes(44)
+
+
+def mach_o(cpu: int) -> bytes:
+    return b"\xcf\xfa\xed\xfe" + cpu.to_bytes(4, "little") + bytes(24)
+
+
+def universal(*cpus: int) -> bytes:
+    header = b"\xca\xfe\xba\xbe" + len(cpus).to_bytes(4, "big")
+    for index, cpu in enumerate(cpus):
+        header += cpu.to_bytes(4, "big") + bytes(4) + (4096 * (index + 1)).to_bytes(4, "big") + bytes(8)
+    return header
+
+
+ELF_X86_64 = elf(62)
+ELF_AARCH64 = elf(183)
+MACH_O_ARM64 = mach_o(0x0100000C)
+MACH_O_X86_64 = mach_o(0x01000007)
+
+
 def create_archive(
     path: pathlib.Path,
     omitted: str | None = None,
+    root: str = "bobe-daemon-9.8.7-linux-x86_64",
+    executables: dict[str, bytes] | None = None,
+    checksum: str | None = "valid",
     **overrides: object,
 ) -> dict[str, object]:
     compatibility = {
@@ -48,16 +72,33 @@ def create_archive(
     }
     compatibility.update(overrides)
     compatibility = {key: value for key, value in compatibility.items() if value is not None}
+    contents = {"bin/bobe": ELF_X86_64, "bin/node": ELF_X86_64}
+    contents.update(executables or {})
     with tarfile.open(path, "w:gz") as bundle:
-        add_bytes(
-            bundle,
-            "bobe-daemon-9.8.7-linux-x86_64/compatibility.json",
-            json.dumps(compatibility).encode(),
-        )
+        add_bytes(bundle, f"{root}/compatibility.json", json.dumps(compatibility).encode())
         for name in load_module().REQUIRED_RUNTIME_FILES:
             if name != omitted:
-                add_bytes(bundle, f"bobe-daemon-9.8.7-linux-x86_64/{name}", b"runtime-fixture")
+                add_bytes(bundle, f"{root}/{name}", contents.get(name, b"runtime-fixture"))
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    lines = {
+        "valid": f"{digest}  {path.name}\n",
+        "wrong-digest": f"{hashlib.sha256(b'other').hexdigest()}  {path.name}\n",
+        "wrong-name": f"{digest}  other.tar.gz\n",
+    }
+    sidecar = path.with_name(f"{path.name}.sha256")
+    sidecar.unlink(missing_ok=True)
+    if checksum is not None:
+        sidecar.write_text(lines[checksum])
     return compatibility
+
+
+def expect_rejection(module, archive: pathlib.Path, reason: str) -> None:
+    try:
+        module.create_manifest(archive)
+    except SystemExit as error:
+        assert reason in str(error), error
+    else:
+        raise AssertionError(f"{archive.name} was accepted; expected: {reason}")
 
 
 def main() -> None:
@@ -89,6 +130,53 @@ def main() -> None:
         }
         assert manifest == expected
         assert encoded == json.dumps(expected, separators=(",", ":")).encode()
+
+        mac = directory / "bobe-daemon-9.8.7-darwin-arm64.tar.gz"
+        create_archive(
+            mac,
+            root="bobe-daemon-9.8.7-darwin-arm64",
+            executables={"bin/bobe": MACH_O_ARM64, "bin/node": universal(0x01000007, 0x0100000C)},
+            platform="darwin-arm64",
+        )
+        assert module.create_manifest(mac)["platform"] == "darwin-arm64"
+
+        for executables, platform, reason in (
+            ({"bin/bobe": ELF_AARCH64}, "linux-x86_64", "bin/bobe is not built for linux-x86_64"),
+            ({"bin/node": MACH_O_ARM64}, "linux-x86_64", "bin/node is not built for linux-x86_64"),
+            ({"bin/bobe": b"runtime-fixture"}, "linux-x86_64", "bin/bobe is not built for linux-x86_64"),
+            (
+                {"bin/bobe": MACH_O_X86_64, "bin/node": MACH_O_ARM64},
+                "darwin-arm64",
+                "bin/bobe is not built for darwin-arm64",
+            ),
+            (
+                {"bin/bobe": MACH_O_ARM64, "bin/node": universal(0x01000007)},
+                "darwin-arm64",
+                "bin/node is not built for darwin-arm64",
+            ),
+        ):
+            mismatched = directory / f"bobe-daemon-9.8.7-{platform}.tar.gz"
+            create_archive(mismatched, root=f"bobe-daemon-9.8.7-{platform}", executables=executables, platform=platform)
+            expect_rejection(module, mismatched, reason)
+
+        renamed = directory / "bobe-daemon-9.8.6-linux-x86_64.tar.gz"
+        create_archive(renamed)
+        expect_rejection(module, renamed, "archive name bobe-daemon-9.8.6-linux-x86_64.tar.gz does not match")
+        rooted = directory / "bobe-daemon-9.8.7-linux-x86_64.tar.gz"
+        create_archive(rooted, root="bobe-daemon-9.8.6-linux-x86_64")
+        expect_rejection(module, rooted, "archive root bobe-daemon-9.8.6-linux-x86_64 does not match")
+        create_archive(rooted, version="9.8.6")
+        expect_rejection(module, rooted, "does not match compatibility.json (bobe-daemon-9.8.6-linux-x86_64)")
+        create_archive(rooted, platform="linux-aarch64", executables={"bin/bobe": ELF_AARCH64, "bin/node": ELF_AARCH64})
+        expect_rejection(module, rooted, "does not match compatibility.json (bobe-daemon-9.8.7-linux-aarch64)")
+
+        for checksum, reason in (
+            (None, "checksum not found"),
+            ("wrong-digest", "does not match the SHA-256"),
+            ("wrong-name", "describes other.tar.gz"),
+        ):
+            create_archive(rooted, checksum=checksum)
+            expect_rejection(module, rooted, reason)
 
         for overrides, reason in (
             ({"database_schema_min": None}, "missing: database_schema_min"),

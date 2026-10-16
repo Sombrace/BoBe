@@ -46,7 +46,7 @@ dependencies = [
 
 [[package]]
 name = "bobe-pairing-core"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "opaque-ke",
  "rand",

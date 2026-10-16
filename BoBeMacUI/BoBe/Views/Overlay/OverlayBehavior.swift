@@ -19,16 +19,15 @@ extension OverlayView {
         return true
     }
 
-    func handleMessagesChange(oldCount _: Int, newCount: Int) {
-        if newCount == 0 {
+    func handleMessagesChange(_ ids: [String]) {
+        if ids.isEmpty {
             self.composerFeedback = nil
             self.dismissFloatingBubble()
-            self.reachoutKinds = [:]
             withAnimation(BobeMotion.soft) {
                 self.isRecentConversationVisible = false
             }
         }
-        self.reachoutInbox.prune(keeping: Set(self.store.messages.map(\.id)))
+        self.model.forgetMessages(keeping: Set(ids))
         self.lastMessageActivity = .now
     }
 

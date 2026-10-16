@@ -185,7 +185,6 @@
 "settings.shared.restart_banner.message" = "部分更改需要重启 BoBe 才能生效。";
 "settings.shared.restart_banner.restart_now" = "立即重启";
 "settings.shared.section.enabled_format" = "%@ 已开启";
-"settings.shared.validation.content_min_length_format" = "内容至少需要 %d 个字符";
 "settings.souls.delete.accessibility" = "删除 soul";
 "settings.souls.empty.description" = "创建一个来定义 BoBe 的人格";
 "settings.souls.empty.select" = "选择一个 soul 进行编辑";
@@ -374,6 +373,10 @@
 "setup.voice.skip" = "暂时跳过";
 "setup.voice.install_button" = "设置语音";
 "setup.voice.cancel" = "取消";
+"setup.voice.canceling" = "正在取消…";
+"setup.voice.cancel_failed_format" = "BoBe 无法停止下载。%@";
+"setup.voice.cancel_still_running" = "下载仍在停止中。请稍后重试。";
+"settings.voice.session_restart_failed_format" = "无法使用新设置重新启动语音。%@";
 "setup.voice.continue" = "继续";
 "setup.voice.try_again" = "重试";
 "setup.voice.continue_without" = "暂不使用语音，继续";
@@ -463,7 +466,6 @@
 "setup.runtime.phase.starting" = "正在启动 BoBe…";
 "setup.runtime.phase.checking" = "正在寻找 BoBe…";
 "setup.runtime.phase.pairing" = "正在安全配对…";
-"setup.runtime.phase.saving" = "正在保存连接…";
 "setup.runtime.phase.verifying" = "正在检查连接…";
 "setup.runtime.retry_connection" = "重试";
 "setup.runtime.pair_again" = "重新配对";
@@ -821,3 +823,10 @@
 "setup.permissions.card.status.allowed" = "已允许";
 "setup.value.title" = "你好，我是 BoBe";
 "setup.value.continue" = "开始";
+"app.common.expanded" = "已展开";
+"app.common.collapsed" = "已折叠";
+"setup.proactivity.error.not_saved" = "BoBe 无法保存此选择。请重试。";
+"setup.local.cancel_failed" = "BoBe 无法停止下载。请重试。";
+"settings.shared.restart_banner.failed" = "BoBe 无法重启。请重试。";
+"settings.context_editor.raw.accessibility_format" = "%@ 的 Markdown";
+"settings.mcp.editor.accessibility" = "工具服务器配置（JSON）";

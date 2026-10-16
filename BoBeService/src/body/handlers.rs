@@ -237,15 +237,22 @@ async fn handle_body(
                 let Some(header) = MediaHeader::validate_microphone_frame(&bytes) else {
                     break;
                 };
-                let Some(route) =
-                    gateway.active_route_for_body(&hello.device_id, registration.generation)
-                else {
-                    break;
+                let forwarded = match gateway
+                    .active_route_for_body(&hello.device_id, registration.generation)
+                {
+                    Some(route) if route.capture_stream_id == header.stream_id => {
+                        gateway
+                            .forward_microphone(&route, header.sequence, header.flags, &bytes)
+                            .await
+                    }
+                    _ => false,
                 };
-                if route.capture_stream_id != header.stream_id
-                    || !gateway
-                        .forward_microphone(&route, header.sequence, header.flags, &bytes)
-                        .await
+                if !forwarded
+                    && !gateway.is_preempted_capture_stream(
+                        &hello.device_id,
+                        registration.generation,
+                        header.stream_id,
+                    )
                 {
                     break;
                 }
@@ -371,59 +378,9 @@ async fn handle_body_control(
             } else {
                 gateway.preempt_pending_wake().await;
             }
-            match gateway.acquire_lease(
-                device_id,
-                generation,
-                &request.request_id,
-                &request.trigger,
-                request.stream_id,
-            ) {
-                Ok(grant) => {
-                    let decision = CaptureDecision {
-                        r#type: "capture.granted",
-                        protocol_major: PROTOCOL_MAJOR,
-                        request_id: &request.request_id,
-                        stream_id: request.stream_id,
-                        lease_id: Some(grant.route.lease_id),
-                        turn_id: Some(&grant.route.turn_id),
-                        lease_ttl_ms: Some(grant.ttl.as_millis() as u64),
-                        reason: None,
-                    };
-                    if !send_json(sender, &decision).await {
-                        return false;
-                    }
-                    let gateway_for_expiry = Arc::clone(gateway);
-                    let route = grant.route;
-                    let route_for_expiry = route.clone();
-                    let expiry = tokio::spawn(async move {
-                        gateway_for_expiry
-                            .watch_lease_expiry(&route_for_expiry)
-                            .await;
-                    });
-                    let abort = expiry.abort_handle();
-                    if !gateway.attach_expiry_abort(&route, abort) {
-                        expiry.abort();
-                    }
-                    drop(expiry);
-                    true
-                }
-                Err(reason) => {
-                    send_json(
-                        sender,
-                        &CaptureDecision {
-                            r#type: "capture.denied",
-                            protocol_major: PROTOCOL_MAJOR,
-                            request_id: &request.request_id,
-                            stream_id: request.stream_id,
-                            lease_id: None,
-                            turn_id: None,
-                            lease_ttl_ms: None,
-                            reason: Some(reason),
-                        },
-                    )
-                    .await
-                }
-            }
+            gateway
+                .request_capture(device_id, generation, sender, &request)
+                .await
         }
         "capture.cancel" => {
             let Ok(cancel) = serde_json::from_value::<CaptureCancel>(value) else {
@@ -434,19 +391,25 @@ async fn handle_body_control(
                 .await
         }
         "audio.capture.open" | "audio.capture.close" => {
-            let Some(route) = gateway.active_route_for_body(device_id, generation) else {
-                return false;
-            };
             let Ok(control) = serde_json::from_value::<RoutedStreamControl>(value) else {
                 return false;
+            };
+            let opening = kind == "audio.capture.open";
+            let Some(route) = gateway.active_route_for_body(device_id, generation) else {
+                return gateway
+                    .refuse_preempted_capture(device_id, generation, &control, opening)
+                    .await;
             };
             if !matches_route_control(&route, &control)
                 || control.stream_id != route.capture_stream_id
             {
                 return false;
             }
-            if kind == "audio.capture.open" {
+            if opening {
                 gateway.open_capture(&route).await.is_ok()
+                    || gateway
+                        .refuse_preempted_capture(device_id, generation, &control, true)
+                        .await
             } else if control
                 .reason
                 .as_deref()
@@ -508,17 +471,27 @@ async fn handle_body_control(
             let Ok(health) = serde_json::from_value::<BodyHealthReport>(value) else {
                 return false;
             };
-            match gateway.classify_offer(device_id, generation, health.build_number) {
+            match gateway.classify_offer(device_id, generation, &health) {
                 OfferDecision::Send => gateway.send_update_offer(device_id, generation).await,
                 OfferDecision::AlreadyOffered
+                | OfferDecision::RetryLater
+                | OfferDecision::Suppressed
                 | OfferDecision::NotNewer
                 | OfferDecision::NotConfigured
                 | OfferDecision::NoHealthYet
                 | OfferDecision::StaleConnection => true,
             }
         }
-        "battery.state" => serde_json::from_value::<BodyBatteryState>(value)
-            .is_ok_and(|battery| battery.percent <= 100),
+        "battery.state" => {
+            let Ok(battery) = serde_json::from_value::<BodyBatteryState>(value) else {
+                return false;
+            };
+            if battery.percent > 100 {
+                return false;
+            }
+            gateway.record_battery(device_id, generation, &battery);
+            true
+        }
         "update.state" => {
             let Ok(report) = serde_json::from_value::<UpdateStateReport>(value) else {
                 return false;
@@ -724,5 +697,191 @@ mod tests {
         assert!(!valid_adapter_contract(2, 1, &capture));
         assert!(!valid_adapter_contract(1, 1, &format("pcm_s16le", 24_000)));
         assert!(!valid_adapter_contract(1, 1, &format("opus", 16_000)));
+    }
+
+    fn deliver(mut outbound: OutboundReceiver) -> mpsc::UnboundedReceiver<serde_json::Value> {
+        let (forward, delivered) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            while let Some(message) = outbound.recv().await {
+                if let Message::Text(text) = &message.message {
+                    drop(forward.send(serde_json::from_str(text.as_str()).expect("daemon JSON")));
+                }
+                if let Some(completion) = message.completion {
+                    let _delivered = completion.send(true);
+                }
+            }
+        });
+        delivered
+    }
+
+    async fn next(messages: &mut mpsc::UnboundedReceiver<serde_json::Value>) -> serde_json::Value {
+        tokio::time::timeout(Duration::from_secs(5), messages.recv())
+            .await
+            .expect("the daemon answers within five seconds")
+            .expect("the connection stays open")
+    }
+
+    fn connect_body(
+        gateway: &BodyGateway,
+        device_id: &str,
+    ) -> (
+        u64,
+        OutboundSender,
+        mpsc::UnboundedReceiver<serde_json::Value>,
+    ) {
+        let (sender, outbound) = mpsc::channel(CHANNEL_CAPACITY);
+        let registration = gateway
+            .register_body(
+                device_id.to_owned(),
+                "0".repeat(32),
+                sender.clone(),
+                CancellationToken::new(),
+                super::super::capabilities::BodyCapabilities {
+                    microphone: true,
+                    speaker: true,
+                    wake_word: true,
+                    ..Default::default()
+                },
+                super::super::capabilities::BodyLimits {
+                    max_control_bytes: MAX_CONTROL_BYTES as u32,
+                    max_playback_credit_ms: super::super::protocol::MAX_PLAYBACK_CREDIT_MS,
+                },
+            )
+            .expect("body registration");
+        (registration.generation, sender, deliver(outbound))
+    }
+
+    fn capture_request(request_id: &str, stream_id: u32, trigger: &str) -> CaptureRequest {
+        CaptureRequest {
+            request_id: request_id.to_owned(),
+            stream_id,
+            trigger: trigger.to_owned(),
+            wake: None,
+            codec: CAPTURE_CODEC.to_owned(),
+            sample_rate_hz: CAPTURE_SAMPLE_RATE_HZ,
+            channels: CAPTURE_CHANNELS,
+            frame_duration_ms: AUDIO_FRAME_DURATION_MS,
+        }
+    }
+
+    fn capture_control(
+        kind: &str,
+        lease_id: &serde_json::Value,
+        turn_id: &serde_json::Value,
+        stream_id: u32,
+    ) -> String {
+        serde_json::json!({
+            "type": kind,
+            "protocol_major": PROTOCOL_MAJOR,
+            "lease_id": lease_id,
+            "turn_id": turn_id,
+            "stream_id": stream_id,
+            "codec": CAPTURE_CODEC,
+            "sample_rate_hz": CAPTURE_SAMPLE_RATE_HZ,
+            "channels": CAPTURE_CHANNELS,
+            "frame_duration_ms": AUDIO_FRAME_DURATION_MS,
+            "reason": if kind == "audio.capture.close" { Some("vad_end") } else { None },
+        })
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn an_action_button_preempts_a_granted_wake_word_lease_without_dropping_either_body() {
+        let root =
+            std::env::temp_dir().join(format!("bobe-body-preemption-{}", uuid::Uuid::new_v4()));
+        let gateway = BodyGateway::for_tests(&root).await;
+        let (adapter, adapter_outbound) = mpsc::channel(CHANNEL_CAPACITY);
+        gateway
+            .register_adapter(
+                adapter,
+                Arc::new(AsyncMutex::new(())),
+                CancellationToken::new(),
+            )
+            .expect("speech adapter");
+        let mut adapter_messages = deliver(adapter_outbound);
+        let (a, a_sender, mut a_messages) = connect_body(&gateway, "body-a");
+        let (b, b_sender, mut b_messages) = connect_body(&gateway, "body-b");
+
+        assert!(
+            gateway
+                .request_capture(
+                    "body-a",
+                    a,
+                    &a_sender,
+                    &capture_request("wake-a", 11, "wake_word")
+                )
+                .await
+        );
+        let granted_a = next(&mut a_messages).await;
+        assert_eq!(granted_a["type"], "capture.granted");
+        let (lease_a, turn_a) = (granted_a["lease_id"].clone(), granted_a["turn_id"].clone());
+
+        assert!(
+            gateway
+                .request_capture(
+                    "body-b",
+                    b,
+                    &b_sender,
+                    &capture_request("button-b", 22, "action_button"),
+                )
+                .await
+        );
+        let cancelled = next(&mut adapter_messages).await;
+        assert_eq!(cancelled["type"], "turn.cancel");
+        assert_eq!(cancelled["reason"], "explicit_capture_preempted");
+        assert_eq!(cancelled["route"]["lease_id"], lease_a);
+        let face = next(&mut a_messages).await;
+        assert_eq!(face["type"], "face.set");
+        assert_eq!(face["expression"], "idle");
+        let ended = next(&mut a_messages).await;
+        assert_eq!(ended["type"], "turn.state");
+        assert_eq!(ended["state"], "idle");
+        assert_eq!((&ended["lease_id"], &ended["turn_id"]), (&lease_a, &turn_a));
+        let granted_b = next(&mut b_messages).await;
+        assert_eq!(granted_b["type"], "capture.granted");
+        assert_eq!(
+            gateway
+                .active_route_for_body("body-b", b)
+                .map(|route| serde_json::json!(route.lease_id)),
+            Some(granted_b["lease_id"].clone())
+        );
+        assert!(gateway.active_route_for_body("body-a", a).is_none());
+
+        let open = capture_control("audio.capture.open", &lease_a, &turn_a, 11);
+        assert!(handle_body_control(&gateway, "body-a", a, &a_sender, &open).await);
+        let refused = next(&mut a_messages).await;
+        assert_eq!(refused["type"], "turn.state");
+        assert_eq!(refused["state"], "aborted");
+        assert_eq!(
+            (&refused["lease_id"], &refused["turn_id"]),
+            (&lease_a, &turn_a)
+        );
+        assert!(gateway.is_preempted_capture_stream("body-a", a, 11));
+        let close = capture_control("audio.capture.close", &lease_a, &turn_a, 11);
+        assert!(handle_body_control(&gateway, "body-a", a, &a_sender, &close).await);
+        let forged = capture_control(
+            "audio.capture.open",
+            &serde_json::json!(uuid::Uuid::new_v4()),
+            &turn_a,
+            11,
+        );
+        assert!(!handle_body_control(&gateway, "body-a", a, &a_sender, &forged).await);
+
+        assert!(
+            gateway
+                .request_capture(
+                    "body-a",
+                    a,
+                    &a_sender,
+                    &capture_request("wake-a-2", 12, "wake_word")
+                )
+                .await
+        );
+        let denied = next(&mut a_messages).await;
+        assert_eq!(denied["type"], "capture.denied");
+        assert_eq!(denied["reason"], "another_endpoint_owns_voice_lease");
+        assert!(!gateway.is_preempted_capture_stream("body-a", a, 11));
+        assert!(b_messages.try_recv().is_err());
+        drop(tokio::fs::remove_dir_all(root).await);
     }
 }

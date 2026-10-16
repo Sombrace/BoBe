@@ -16,20 +16,8 @@ final class ToolExecutionController {
         self.cleanupTasks.values.forEach { $0.cancel() }
     }
 
-    func process(_ payload: AnyCodablePayload) {
-        if let start = try? payload.decode(as: ToolCallStartPayload.self),
-           start.status == ToolCallStatusWire.start {
-            self.handleStart(start)
-            return
-        }
-
-        if let complete = try? payload.decode(as: ToolCallCompletePayload.self),
-           complete.status == ToolCallStatusWire.complete {
-            self.handleComplete(complete)
-        }
-    }
-
-    private func handleStart(_ start: ToolCallStartPayload) {
+    func start(_ start: ToolCallStartPayload) {
+        guard start.status == ToolCallStatusWire.start else { return }
         self.cleanupTasks[start.toolCallId]?.cancel()
         self.cleanupTasks[start.toolCallId] = nil
 
@@ -41,7 +29,8 @@ final class ToolExecutionController {
         self.applyStateMutation { $0.toolExecutions.append(execution) }
     }
 
-    private func handleComplete(_ complete: ToolCallCompletePayload) {
+    func complete(_ complete: ToolCallCompletePayload) {
+        guard complete.status == ToolCallStatusWire.complete else { return }
         self.applyStateMutation { ctx in
             ctx.toolExecutions = ctx.toolExecutions.map { t in
                 guard t.toolCallId == complete.toolCallId else { return t }

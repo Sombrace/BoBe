@@ -26,6 +26,7 @@ public final class VoicePipeline {
     public internal(set) var state: State = .idle
     public internal(set) var lastError: String?
     public internal(set) var terminalServerErrorCode: String?
+    public internal(set) var sessionRestartError: String?
 
     public enum SttStatus: Equatable {
         case notLoaded
@@ -50,6 +51,10 @@ public final class VoicePipeline {
     var refreshDaemonTask: Task<Void, Never>?
     var daemonStateSelection = EndpointStore.shared.selection
     @ObservationIgnored private var settingsObservation: Task<Void, Never>?
+    @ObservationIgnored private var sessionSettingsObservation: Task<Void, Never>?
+    @ObservationIgnored var negotiatedSettings: VoiceSessionSettings?
+    @ObservationIgnored var renegotiationTask: Task<Void, Never>?
+    @ObservationIgnored var renegotiating = false
 
     public internal(set) var inputLevel: Float = 0
     public internal(set) var ttsOutputLevel: Float = 0
@@ -112,8 +117,11 @@ public final class VoicePipeline {
     @ObservationIgnored var nextReplyChunkId: UInt64 = 0
     @ObservationIgnored var overlapPlayheadChunk: UInt64?
     @ObservationIgnored var serverDrainTask: Task<Void, Never>?
+    @ObservationIgnored var replyPlayback: ReplyPlayback?
+    @ObservationIgnored var phaseTracker = VoicePhaseTracker()
 
     let inputProcessor = VoiceInputProcessor()
+    let audioLifecycle = AudioLifecycle()
     var audioInputContinuation: AsyncStream<CapturedVoiceAudio>.Continuation?
     var audioInputTask: Task<Void, Never>?
     var droppedAudioInputChunks = 0
@@ -139,7 +147,7 @@ public final class VoicePipeline {
     var lastPlaybackAckChunkId: UInt64 = 0
     var playbackAckTask: Task<Void, Never>?
     var playbackAckGeneration: UInt64 = 0
-    private var sessionId: String = ""
+    var sessionId: String = ""
     var keepaliveTask: Task<Void, Never>?
     var ttsLevelDecayTask: Task<Void, Never>?
     var lastTtsRmsAt: ContinuousClock.Instant?
@@ -210,6 +218,11 @@ public final class VoicePipeline {
                 self?.reconcileVoiceSettings()
             }
         }
+        self.sessionSettingsObservation = Task { @MainActor [weak self] in
+            for await desired in Observations({ VoiceSessionSettings.current() }) {
+                self?.reconcileSessionSettings(desired)
+            }
+        }
     }
 
 
@@ -222,9 +235,11 @@ public final class VoicePipeline {
         }
         guard !self.isWarm else { return true }
         do {
-            try self.configureEngine()
+            try await self.configureEngine()
             self.isWarm = true
             return true
+        } catch is CancellationError {
+            return false
         } catch {
             self.lastError = "voice prewarm: \(error.localizedDescription)"
             logger.error("prewarm failed: \(error.localizedDescription, privacy: .public)")
@@ -357,18 +372,29 @@ public final class VoicePipeline {
         }
     }
 
-    public func unloadSttModel(for language: String) async {
-        let engineId = self.preferredSttEngineId(for: language)
-        await self.sttEngine(engineId: engineId, language: language).cleanup()
-        self.loadedSttKeys.remove(
-            Self.sttReadinessKey(engineId: engineId, language: language)
+    func unloadSttEngine(_ engineId: String) async {
+        await self.sttEngine(engineId: engineId, language: self.activeSttLanguage).cleanup()
+        let unloaded = Self.unloading(
+            engineId: engineId,
+            loadedKeys: self.loadedSttKeys,
+            activeEngineId: self.preferredSttEngineId(for: self.activeSttLanguage),
+            activeStatus: self.sttStatus
         )
-        if engineId == VoiceSttEngineId.appleSpeechAnalyzer {
-            self.appleSttByLanguage[language] = nil
-        }
-        if self.activeSttLanguage == language {
-            self.sttStatus = .notLoaded
-        }
+        self.loadedSttKeys = unloaded.loadedKeys
+        self.sttStatus = unloaded.activeStatus
+    }
+
+    static func unloading(
+        engineId: String,
+        loadedKeys: Set<String>,
+        activeEngineId: String,
+        activeStatus: SttStatus
+    ) -> (loadedKeys: Set<String>, activeStatus: SttStatus) {
+        let prefix = Self.sttReadinessKey(engineId: engineId, language: "")
+        return (
+            loadedKeys.filter { !$0.hasPrefix(prefix) },
+            activeEngineId == engineId ? .notLoaded : activeStatus
+        )
     }
 
     private static func mintTurnId() -> String {
@@ -389,7 +415,7 @@ public final class VoicePipeline {
         guard self.partialSendTask == nil else { return }
         self.partialSendTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(80))
-            guard let self, !Task.isCancelled else { return }
+            guard let self, !Task.isCancelled, self.pendingTurnId == turnId else { return }
             let latest = self.pendingPartialForServer
             self.pendingPartialForServer = nil
             self.partialSendTask = nil
@@ -473,237 +499,6 @@ public final class VoicePipeline {
         self.heldUtteranceCount = 0
     }
 
-    public func connect(daemonBaseURL: URL) {
-        self.lastError = nil
-        self.terminalServerErrorCode = nil
-
-        guard let wsURL = voiceWsEndpoint(from: daemonBaseURL) else {
-            self.lastError = "invalid daemon URL for WS"
-            logger.error("invalid daemon URL for WS")
-            return
-        }
-
-        self.sessionSttLanguage = self.activeSttLanguage
-        self.sessionSttEngineId = self.preferredSttEngineId(for: self.activeSttLanguage)
-        self.sessionTtsBackend = VoiceTtsPreference.shared.backend
-        let settings = SettingsStore.shared.settings
-        self.sessionVoicePersona = settings?.voicePersona
-        self.sessionVoiceSpeed = settings?.voiceSpeed
-        let language = self.activeSttLanguage
-        if language != "en" {
-            Task { [weak self] in await self?.nemotronStt.setLanguage(language) }
-        }
-
-        self.state = .connecting
-        var request = URLRequest(url: wsURL)
-        DaemonConfig.endpoint.authorize(&request)
-        request.setValue(VoiceWire.subprotocolV2, forHTTPHeaderField: "Sec-WebSocket-Protocol")
-        self.connectionGeneration &+= 1
-        let generation = self.connectionGeneration
-        self.handshakeTask?.cancel()
-        let webSocketSession = DaemonTransportPolicy.session(
-            for: DaemonConfig.endpoint,
-            purpose: .realtimeWebSocket
-        )
-        let newTask = webSocketSession.webSocketTask(with: request)
-        self.task = newTask
-        newTask.resume()
-        self.startReceiveLoop(socket: newTask, generation: generation)
-        self.startKeepalive()
-
-        self.sessionId = "voice-\(Int(Date.now.timeIntervalSince1970))"
-        let sid = self.sessionId
-        let voiceId = self.sessionVoicePersona
-        let speed = self.sessionVoiceSpeed
-        let ttsBackend = self.sessionTtsBackend ?? .serverPocket
-        self.handshakeTask = Task { @MainActor [weak self, weak newTask] in
-            guard let self,
-                  let newTask,
-                  self.task === newTask,
-                  self.connectionGeneration == generation,
-                  !Task.isCancelled
-            else { return }
-            if ttsBackend == .clientSupertonic {
-                do {
-                    try await self.clientTtsEngine.prepare()
-                } catch {
-                    let reason = "Supertonic prepare: \(error.localizedDescription)"
-                    self.lastError = reason
-                    self.tearDownConnection(finalState: .failed(reason), sendAbort: false)
-                    return
-                }
-            }
-            guard await self.prewarm() else {
-                let reason = self.lastError ?? "voice audio setup failed"
-                self.tearDownConnection(finalState: .failed(reason), sendAbort: false)
-                return
-            }
-            guard !Task.isCancelled,
-                  self.task === newTask,
-                  self.connectionGeneration == generation
-            else { return }
-            let speechOffer = self.makeSpeechOffer(
-                language: language,
-                ttsBackend: ttsBackend,
-                voiceId: voiceId
-            )
-            self.sessionSpeechOffer = speechOffer
-            await self.sendClient(.hello(
-                sessionId: sid,
-                voiceId: voiceId,
-                speed: speed,
-                speechOffer: speechOffer
-            ))
-            if self.muted {
-                await self.sendClient(.control(action: .mute))
-            }
-            guard !Task.isCancelled,
-                  self.task === newTask,
-                  self.connectionGeneration == generation
-            else { return }
-            let negotiationAttempts = DaemonConfig.endpoint.isLoopbackRuntime ? 20 : 80
-            for _ in 0 ..< negotiationAttempts {
-                if self.handshakeComplete || self.state != .connecting { return }
-                try? await Task.sleep(for: .milliseconds(100))
-                if Task.isCancelled { return }
-            }
-            guard self.task === newTask,
-                  self.connectionGeneration == generation,
-                  self.state == .connecting
-            else { return }
-            let reason = self.lastError ?? "voice negotiation timed out"
-            self.lastError = reason
-            self.tearDownConnection(finalState: .failed(reason), sendAbort: false)
-        }
-    }
-
-    private func makeSpeechOffer(
-        language: String,
-        ttsBackend: VoiceTtsBackend,
-        voiceId: String?
-    ) -> SpeechOfferWire {
-        let defaults = UserDefaults.standard
-        let endpointId = defaults.string(forKey: EndpointAttachService.surfaceIdKey)
-            .flatMap(UUID.init(uuidString:)) ?? UUID()
-        if defaults.string(forKey: EndpointAttachService.surfaceIdKey) == nil {
-            defaults.set(endpointId.uuidString, forKey: EndpointAttachService.surfaceIdKey)
-        }
-        let endpointStt: [SpeechEngineOfferWire]
-        if VoiceSttPreferenceStore.shared.preference == .daemon || !self.sttLoaded {
-            endpointStt = []
-        } else {
-            endpointStt = [SpeechEngineOfferWire(
-                id: self.effectiveSttEngineId,
-                languages: [language],
-                partials: true,
-                eou: true,
-                voices: [],
-                sampleRates: [],
-                ready: true
-            )]
-        }
-        let endpointTts = ttsBackend == .clientSupertonic ? [SpeechEngineOfferWire(
-            id: VoiceTtsBackend.clientSupertonic.rawValue,
-            languages: [language],
-            partials: false,
-            eou: false,
-            voices: [Self.supertonicVoiceId(for: voiceId)],
-            sampleRates: [UInt32(VoiceWire.ttsOutputSampleRate)],
-            ready: true
-        )] : []
-        return SpeechOfferWire(
-            endpointId: endpointId,
-            endpointKind: "mac_app",
-            language: language,
-            playbackRates: [UInt32(VoiceWire.ttsOutputSampleRate)],
-            endpointStt: endpointStt,
-            endpointTts: endpointTts,
-            audioUplink: true,
-            overrides: SpeechOverridesWire(
-                stt: VoiceSttPreferenceStore.shared.preference.placement,
-                tts: ttsBackend == .clientSupertonic ? .endpoint : .daemon
-            ),
-            daemonIsNonLoopback: !DaemonEndpoint.isLoopbackHost(
-                DaemonConfig.endpoint.baseURL.host ?? ""
-            ),
-            remoteAudioConsent: RemoteSpeechConsent.shared.currentAuthorityEnabled
-        )
-    }
-
-    static func supertonicVoiceId(for canonicalVoiceId: String?) -> String {
-        let normalized = canonicalVoiceId?.lowercased() ?? ""
-        return normalized.hasPrefix("am_") || normalized.hasPrefix("bm_")
-            ? "supertonic_m1"
-            : "supertonic_f1"
-    }
-
-    public func disconnect() {
-        self.tearDownConnection(finalState: .idle, sendAbort: true)
-    }
-
-    func tearDownConnection(finalState: State, sendAbort: Bool) {
-        self.stopKeepalive()
-        self.receiveTask?.cancel()
-        self.receiveTask = nil
-        self.handshakeTask?.cancel()
-        self.handshakeTask = nil
-        self.connectionGeneration &+= 1
-        let oldTask = self.task
-        self.task = nil
-        self.state = finalState
-        self.inputLevel = 0
-        self.partialTranscript = ""
-        self.clearHeldUtterance()
-        self.pendingPartialForServer = nil
-        self.partialSendTask?.cancel()
-        self.partialSendTask = nil
-        Task {
-            if let oldTask {
-                if sendAbort,
-                   let data = try? Self.jsonEncoder.encode(
-                       ClientVoiceMessage.control(action: .abort)
-                   ),
-                   let text = String(data: data, encoding: .utf8) {
-                    try? await oldTask.send(.string(text))
-                }
-                oldTask.cancel(with: .normalClosure, reason: nil)
-            }
-        }
-        self.tearDownAudio()
-        self.sessionSttLanguage = nil
-        self.sessionSttEngineId = nil
-        self.sessionTtsBackend = nil
-        self.sessionVoicePersona = nil
-        self.sessionVoiceSpeed = nil
-        self.sessionSpeechPlan = nil
-        self.sessionSpeechOffer = nil
-        self.handshakeComplete = false
-        self.captureStreamId = nil
-        self.captureSequence = 0
-        self.captureCreditFrames = 0
-        self.captureSamples.removeAll()
-        self.playbackAckTask?.cancel()
-        self.playbackAckTask = nil
-        self.playbackAckGeneration &+= 1
-        self.lastPlaybackAckMs = 0
-        self.lastPlaybackAckChunkId = 0
-        self.serverDrainTask?.cancel()
-        self.serverDrainTask = nil
-        self.resetReplyPosition()
-    }
-
-    public func toggle(daemonBaseURL: URL) async {
-        switch self.state {
-        case .idle, .failed:
-            self.connect(daemonBaseURL: daemonBaseURL)
-            while self.state == .connecting, self.task != nil {
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-        case .connecting, .listening, .capturing, .thinking, .speaking, .cancelling:
-            self.disconnect()
-        }
-    }
-
     @discardableResult
     public func setMuted(_ shouldMute: Bool) async -> Bool {
         guard self.muted != shouldMute else { return true }
@@ -758,28 +553,5 @@ public final class VoicePipeline {
             Task { try? await self.activeStt.reset() }
         }
         Task { await self.sendClient(.control(action: shouldMute ? .mute : .unmute)) }
-    }
-
-    @discardableResult
-    public func interrupt() -> Bool {
-        guard let task = self.task else { return false }
-        switch self.state {
-        case .thinking, .speaking, .capturing:
-            break
-        default:
-            return false
-        }
-        let abort = ClientVoiceMessage.control(action: .abort)
-        self.cancelClientTtsTurn()
-        guard let data = try? Self.jsonEncoder.encode(abort),
-              let text = String(data: data, encoding: .utf8)
-        else { return false }
-        Task { [weak self, weak task] in
-            try? await task?.send(.string(text))
-            await MainActor.run {
-                self?.state = .cancelling
-            }
-        }
-        return true
     }
 }

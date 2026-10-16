@@ -4,13 +4,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TASK_DIR="$ROOT/scripts/tasks"
 cd "$ROOT"
 version="${1:-$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("BoBeService/Cargo.toml").read_text())["package"]["version"])')}"
+./scripts/check-release-version.sh "$version"
 "$TASK_DIR/build-backend.sh" release
+./scripts/check-release-version.sh "$version" --daemon BoBeService/target/release/bobe
 compatibility="$(BoBeService/target/release/bobe version --json)"
-runtime_version="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])' <<<"$compatibility")"
-if [[ "$runtime_version" != "$version" ]]; then
-    echo "Standalone version $version does not match compiled daemon version $runtime_version" >&2
-    exit 1
-fi
 platform="$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)"
 root="build/bobe-daemon-$version-$platform"
 archive="$root.tar.gz"

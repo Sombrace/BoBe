@@ -54,6 +54,8 @@ struct SpeechOfferWire: Codable, Sendable {
     let daemonIsNonLoopback: Bool
     let remoteAudioConsent: Bool
 
+    static let macEndpointKind = "mac_app"
+
     enum CodingKeys: String, CodingKey {
         case language, overrides
         case endpointId = "endpoint_id"

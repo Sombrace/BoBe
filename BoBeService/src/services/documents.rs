@@ -8,7 +8,7 @@ use crate::models::document::{Document, DocumentKind};
 use crate::models::soul::Souls;
 use crate::models::user_profile::UserProfiles;
 
-const MIN_CONTENT_LEN: usize = 10;
+const MIN_CONTENT_CHARS: usize = 10;
 
 #[derive(Debug)]
 pub(crate) enum DeleteOutcome {
@@ -41,11 +41,7 @@ impl<K: DocumentKind> DocumentService<K> {
         if name.is_empty() {
             return Err(AppError::Validation("name must not be empty".into()));
         }
-        if content.len() < MIN_CONTENT_LEN {
-            return Err(AppError::Validation(format!(
-                "content must be at least {MIN_CONTENT_LEN} characters"
-            )));
-        }
+        validate_content(&content)?;
         if self.repo.get_by_name(&name).await?.is_some() {
             return Err(AppError::Validation(format!(
                 "{} with name '{name}' already exists",
@@ -66,6 +62,9 @@ impl<K: DocumentKind> DocumentService<K> {
         content: Option<String>,
         enabled: Option<bool>,
     ) -> Result<Option<Document<K>>, AppError> {
+        if let Some(content) = content.as_deref() {
+            validate_content(content)?;
+        }
         let updated = self.repo.edit(id, content.as_deref(), enabled).await?;
         if updated.is_some() {
             info!(kind = K::TABLE, %id, "documents.updated");
@@ -101,6 +100,15 @@ impl<K: DocumentKind> DocumentService<K> {
         info!(kind = K::TABLE, %id, name = %document.name, "documents.deleted");
         Ok(DeleteOutcome::Deleted)
     }
+}
+
+fn validate_content(content: &str) -> Result<(), AppError> {
+    if content.trim().chars().count() < MIN_CONTENT_CHARS {
+        return Err(AppError::Validation(format!(
+            "content must be at least {MIN_CONTENT_CHARS} characters"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -154,6 +162,49 @@ mod tests {
             validation_message(duplicate),
             "User profile with name 'john' already exists"
         );
+    }
+
+    #[tokio::test]
+    async fn content_length_counts_trimmed_characters_on_create_and_update() {
+        let souls = service::<Souls>().await;
+        for short in ["   # Short   \n", "日本語のテキストで", "\n\n\t         "] {
+            let refused = souls
+                .create(format!("short-{}", short.len()), short.into(), true)
+                .await
+                .expect_err("short content refused");
+            assert_eq!(
+                validation_message(refused),
+                "content must be at least 10 characters"
+            );
+        }
+        let created = souls
+            .create("japanese".into(), "  日本語のテキストです  ".into(), true)
+            .await
+            .expect("ten characters are enough");
+
+        for short in ["   # Short   ", "日本語のテキストで"] {
+            let refused = souls
+                .update(created.id, Some(short.into()), None)
+                .await
+                .expect_err("short update refused");
+            assert_eq!(
+                validation_message(refused),
+                "content must be at least 10 characters"
+            );
+        }
+        let disabled = souls
+            .update(created.id, None, Some(false))
+            .await
+            .expect("toggle without content")
+            .expect("stored soul");
+        assert!(!disabled.enabled);
+        assert_eq!(disabled.content, "  日本語のテキストです  ");
+        let updated = souls
+            .update(created.id, Some("ελληνικό κείμενο".into()), None)
+            .await
+            .expect("multibyte update")
+            .expect("stored soul");
+        assert_eq!(updated.content, "ελληνικό κείμενο");
     }
 
     #[tokio::test]

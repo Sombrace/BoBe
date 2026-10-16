@@ -384,7 +384,10 @@ pub(crate) async fn run(
     config: BodyConfig,
     shutdown: tokio_util::sync::CancellationToken,
 ) -> anyhow::Result<()> {
-    validate_config(&config)?;
+    anyhow::ensure!(config.enabled, "BodyLink gateway is disabled");
+    if let Some(error) = config.validation_errors().into_iter().next() {
+        anyhow::bail!(error);
+    }
     let host = config
         .host
         .parse::<IpAddr>()
@@ -444,36 +447,9 @@ pub(crate) async fn run(
     result.context("BodyLink gateway server")
 }
 
-fn validate_config(config: &BodyConfig) -> anyhow::Result<()> {
-    anyhow::ensure!(config.enabled, "BodyLink gateway is disabled");
-    anyhow::ensure!(
-        (1..=9_007_199_254_740_991).contains(&config.controller_epoch),
-        "BodyLink controller_epoch must be a positive JSON-safe integer"
-    );
-    anyhow::ensure!(
-        !config.trust_key_id.trim().is_empty(),
-        "BodyLink trust_key_id is required"
-    );
-    anyhow::ensure!(
-        config.adapter_token.expose_secret().is_empty() || config.port != config.adapter_port,
-        "BodyLink body and adapter ports must differ"
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn non_audio_gateway_does_not_require_a_speech_adapter() {
-        let config = BodyConfig {
-            enabled: true,
-            trust_key_id: "test-key".into(),
-            ..BodyConfig::default()
-        };
-        assert!(validate_config(&config).is_ok());
-    }
 
     #[test]
     fn body_mdns_service_tracks_host_addresses() {

@@ -119,6 +119,15 @@ class ObservedTransport implements McpTransport {
   onClose(listener: McpTransportCloseListener): () => void { return this.transport.onClose(listener); }
 }
 
+function checkServerNames(config: McpConfig): void {
+  const names = new Set<string>();
+  for (const name of Object.keys(config.servers)) {
+    const namespace = name.replaceAll("-", "_");
+    if (names.has(namespace)) throw new Error("MCP server names collide after pi namespace normalization");
+    names.add(namespace);
+  }
+}
+
 export class McpResources {
   private readonly states = new Map<string, ServerStatus>();
   private readonly transports = new Set<ObservedTransport>();
@@ -130,12 +139,7 @@ export class McpResources {
   }
 
   private reset(config: McpConfig): void {
-    const names = new Set<string>();
-    for (const name of Object.keys(config.servers)) {
-      const namespace = name.replaceAll("-", "_");
-      if (names.has(namespace)) throw new Error("MCP server names collide after pi namespace normalization");
-      names.add(namespace);
-    }
+    checkServerNames(config);
     this.config = config;
     this.states.clear();
     for (const [name, server] of Object.entries(config.servers)) {
@@ -190,9 +194,15 @@ export class McpResources {
   }
 
   async replace(config: McpConfig): Promise<void> {
-    await this.close();
-    this.reset(config);
-    this.restartRequired = false;
+    checkServerNames(config);
+    let stopped = false;
+    try {
+      await this.close();
+      stopped = true;
+    } finally {
+      this.reset(config);
+      this.restartRequired = !stopped;
+    }
   }
 
   async cancelActive(): Promise<void> {
@@ -206,7 +216,7 @@ export class McpResources {
 
   needsRestart(): boolean {
     return this.restartRequired || [...this.states.values()].some(state =>
-      state.status === "disconnected" || state.status === "closed");
+      state.status === "disconnected" || state.status === "closed" || state.status === "failed");
   }
 
   async prepareRestart(): Promise<void> {

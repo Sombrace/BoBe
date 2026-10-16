@@ -1,6 +1,7 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import type { TestContext } from "node:test";
 import {
   createAssistantMessageEventStream, createProvider, type Api, type AssistantMessage,
@@ -9,7 +10,9 @@ import {
 import { Redactor, assertActive } from "./errors.js";
 import { ModelProfiles } from "./models.js";
 import { WorkerHost, initializeParams, type HostConnection } from "./worker.js";
-import { initializeSchema, object, validate, toolNames, type Initialize, type Json, type Notification } from "./protocol.js";
+import {
+  initializeSchema, object, validate, toolNames, type Initialize, type Json, type JsonObject, type Notification,
+} from "./protocol.js";
 import { ProcessFixture } from "./process-fixture.js";
 
 const cleanups = new Map<string, (() => Promise<void>)[]>();
@@ -60,6 +63,20 @@ export function configuration(paths: { root: string; workspace: string; skills: 
     tools: [], capabilities: { memory: true, goals: true }, mcp: { servers: {} },
     enabled_tools: [...toolNames],
   };
+}
+
+export const mcpFixture = fileURLToPath(new URL("./mcp-fixture.js", import.meta.url));
+
+export const mcpChat: JsonObject = { text: "Use MCP", channel: "text", context: "" };
+
+export function configureMcp(config: Initialize): void {
+  config.mcp = { servers: { sample: {
+    command: process.execPath,
+    args: [mcpFixture],
+    env: { BOBE_TEST_PID_FILE: join(config.workspace, "mcp.pid") },
+    timeout_ms: 15_000,
+    excluded_tools: ["hidden"],
+  } } };
 }
 
 const fixtureModel: Model<Api> = {

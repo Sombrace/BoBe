@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TASK_DIR="$ROOT/scripts/tasks"
+source "$ROOT/scripts/lib/locales.sh"
 export CARGO_INCREMENTAL=0
 export CARGO_BUILD_WARNINGS=deny
 
@@ -35,6 +36,8 @@ done
 
 ./scripts/check-cross-language-constants.sh
 ./scripts/check-bodylink-contract.sh
+./scripts/check-swift-package-pins.sh
+./scripts/check-release-version.sh
 ./scripts/check-macos-deployment-target.sh
 bash -n scripts/check-macos-keychain-signing.sh
 ./scripts/check-privacy-manifest.sh
@@ -65,14 +68,26 @@ xcodebuild \
 
 "$TASK_DIR/build-pairing-ios.sh"
 (cd BoBeiOS && ../.tools/bin/xcodegen generate --quiet)
+read -r ios_runtime ios_device_type < <(
+    xcrun simctl list runtimes available -j | python3 -c '
+import json, sys
+runtime = [r for r in json.load(sys.stdin)["runtimes"] if r["platform"] == "iOS"][-1]
+phone = next(t for t in runtime["supportedDeviceTypes"] if t["productFamily"] == "iPhone")
+print(runtime["identifier"], phone["identifier"])'
+)
+ios_device="$(xcrun simctl create "BoBe check $$" "$ios_device_type" "$ios_runtime")"
+trap 'xcrun simctl delete "$ios_device" >/dev/null 2>&1 || true' EXIT
 xcodebuild \
     -project BoBeiOS/BoBe.xcodeproj \
     -scheme BoBe \
     -configuration Debug \
-    -destination 'generic/platform=iOS Simulator' \
+    -destination "id=$ios_device" \
     -derivedDataPath BoBeiOS/.build/xcode-derived \
     CODE_SIGNING_ALLOWED=NO \
-    build
+    test
+bobe_check_bundle_locales \
+    BoBeiOS/.build/xcode-derived/Build/Products/Debug-iphonesimulator/BoBe.app \
+    UI.strings InfoPlist.strings
 
 if [[ -d BoBeService/target ]]; then
     target_kib="$(du -sk BoBeService/target | awk '{print $1}')"

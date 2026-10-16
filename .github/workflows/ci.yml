@@ -9,10 +9,15 @@ on:
     paths:
       - "BoBeService/**"
       - "BoBeAgent/**"
+      - "BoBeMacUI/**"
+      - "BoBeiOS/**"
       - "PairingCore/**"
       - "PairingFFI/**"
       - "third_party/**"
       - "esp32-sdk/components/**"
+      - "esp32-sdk/examples/wb12/bobe_hil/bodylink.py"
+      - "esp32-sdk/examples/wb12/components/bobe_device_config/**"
+      - "esp32-sdk/examples/wb12/tools/create_update_offer.py"
       - "scripts/**"
       - "deny.toml"
       - "rust-toolchain.toml"
@@ -75,6 +80,8 @@ jobs:
         run: |
           scripts/check-cross-language-constants.sh
           scripts/check-bodylink-contract.sh
+          scripts/check-swift-package-pins.sh
+          scripts/check-release-version.sh
           scripts/check-data-paths.sh
           scripts/check-localization-catalogs.sh
           python3 scripts/check-standalone-update-manifest.py

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getCurrentSystemMessage, type TranscriptContext } from "@earendil-works/pi-ai";
 import { openCanonicalSession } from "./persistence.js";
@@ -351,6 +351,44 @@ test("corrupt or missing canonical state fails instead of choosing a recent sess
   await assert.rejects(openCanonicalSession(agentDir, paths.workspace), /header/);
   await writeFile(join(agentDir, "session.json"), "not-json");
   await assert.rejects(openCanonicalSession(agentDir, paths.workspace));
+});
+
+test("a first session interrupted before its pointer was published is recovered without guessing", async t => {
+  const paths = await fixture(t);
+  const agentDir = join(paths.root, "agent");
+  const created = await openCanonicalSession(agentDir, paths.workspace);
+  const file = created.getSessionFile();
+  assert.ok(file);
+  const pointerPath = join(agentDir, "session.json");
+  const pointer = await readFile(pointerPath, "utf8");
+  await rm(pointerPath);
+  const adopted = await openCanonicalSession(agentDir, paths.workspace);
+  assert.equal(adopted.getSessionId(), created.getSessionId());
+  assert.equal(adopted.getSessionFile(), file);
+  assert.equal(await readFile(pointerPath, "utf8"), pointer);
+  const header = await readFile(file, "utf8");
+  await rm(pointerPath);
+  const duplicate = join(agentDir, "sessions", "duplicate.jsonl");
+  await writeFile(duplicate, header, { mode: 0o600 });
+  await assert.rejects(openCanonicalSession(agentDir, paths.workspace), /owner recovery is required/);
+  await rm(duplicate);
+  const used = `${header}${JSON.stringify({
+    type: "session_info", id: "entry-1", parentId: null, timestamp: new Date().toISOString(), name: "used",
+  })}\n`;
+  await writeFile(file, used);
+  await assert.rejects(openCanonicalSession(agentDir, paths.workspace), /owner recovery is required/);
+  assert.equal(await readFile(file, "utf8"), used);
+  await assert.rejects(readFile(pointerPath, "utf8"), /ENOENT/);
+  for (const incomplete of ["", header.slice(0, 24)]) {
+    await writeFile(file, incomplete);
+    const fresh = await openCanonicalSession(agentDir, paths.workspace);
+    assert.notEqual(fresh.getSessionId(), created.getSessionId());
+    await assert.rejects(readFile(file, "utf8"), /ENOENT/);
+    const freshFile = fresh.getSessionFile();
+    assert.ok(freshFile);
+    await rm(freshFile);
+    await rm(pointerPath);
+  }
 });
 
 test("invalid persisted payloads and orphaned entries are not silently repaired", async t => {

@@ -184,3 +184,17 @@ struct PhoneCard<Content: View>: View {
             .bobeRaised(cornerRadius: BobeRadius.card)
     }
 }
+
+struct PhoneTroubleNote: View {
+    let text: String
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Label(self.text, systemImage: "exclamationmark.arrow.circlepath")
+            .phoneText(.footnote)
+            .foregroundStyle(self.theme.colors.warning)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 4)
+    }
+}

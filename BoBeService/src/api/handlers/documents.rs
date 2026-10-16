@@ -152,7 +152,7 @@ mod tests {
         )
     }
 
-    async fn keeps_its_wire_shape<K: DocumentKind>(list_field: &str) {
+    async fn keeps_its_wire_shape<K: DocumentKind>(list_field: &str, counts: &str) {
         let repo = Arc::new(SqliteDocumentRepo::<K>::new(in_memory_pool().await));
         let service = DocumentService::new(Arc::clone(&repo));
         let created = service
@@ -169,7 +169,7 @@ mod tests {
         assert_eq!(
             json(&service.list(false).await.expect("list")),
             format!(
-                r#"{{"{list_field}":[{}],"count":1,"enabled_count":1}}"#,
+                r#"{{"{list_field}":[{}],{counts}}}"#,
                 document_json(&stored)
             )
         );
@@ -198,11 +198,11 @@ mod tests {
 
     #[tokio::test]
     async fn souls_keep_their_wire_shape() {
-        keeps_its_wire_shape::<Souls>("souls").await;
+        keeps_its_wire_shape::<Souls>("souls", r#""count":1"#).await;
     }
 
     #[tokio::test]
     async fn user_profiles_keep_their_wire_shape() {
-        keeps_its_wire_shape::<UserProfiles>("profiles").await;
+        keeps_its_wire_shape::<UserProfiles>("profiles", r#""count":1,"enabled_count":1"#).await;
     }
 }

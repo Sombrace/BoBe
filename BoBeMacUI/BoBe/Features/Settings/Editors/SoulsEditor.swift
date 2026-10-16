@@ -13,8 +13,7 @@ struct SoulsEditor: View {
                 emptyDescription: L10n.tr("settings.souls.empty.description"),
                 emptySelectPrompt: L10n.tr("settings.souls.empty.select"),
                 deleteAccessibility: L10n.tr("settings.souls.delete.accessibility"),
-                toggleAccessibility: L10n.tr("settings.souls.toggle.enable_accessibility"),
-                defaultContent: { name in "# \(name)\n\nDescribe this soul here.\n" }
+                toggleAccessibility: L10n.tr("settings.souls.toggle.enable_accessibility")
             ),
             emptyIcon: "sparkles",
             actions: EntityActions(
@@ -27,8 +26,7 @@ struct SoulsEditor: View {
                 buildCreateRequest: { name in
                     SoulCreateRequest(name: name, content: "# \(name)\n\nDescribe this soul here.\n")
                 },
-                buildUpdateRequest: { content in SoulUpdateRequest(content: content) },
-                validate: { Validations.validateSoulContent($0) }
+                buildUpdateRequest: { content in SoulUpdateRequest(content: content) }
             )
         )
     }

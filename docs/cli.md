@@ -1,16 +1,15 @@
 # Command line
 
-`bobe` is both the daemon and its control client. Use it to run BoBe without
-the Mac app, on a server, or from scripts. Run any command with `--help`; most
-accept `--json`, and `--url` and `--token` to address another BoBe.
+`bobe` is both the daemon and its control client. Run any command with
+`--help`; most accept `--json`, and `--url` and `--token` address another BoBe.
 
 ## Install
 
 | Machine | How |
 |---|---|
-| Mac with the app | **Settings → Runtime → Install Command Line Tool…** links `~/.local/bin/bobe` to the app's own copy |
-| Linux x86_64 | Download `bobe-daemon-<version>-linux-x86_64.tar.gz` and its `.sha256` from [Releases](https://github.com/Sombrace/BoBe/releases); needs glibc 2.39 |
-| Anything else | Build an archive on that machine with `scripts/tasks/standalone.sh` (needs rustup and Python 3.11) |
+| Mac with the app | **Settings → Runtime → Install Command Line Tool…** links `~/.local/bin/bobe` to the app's copy |
+| Linux x86_64 | Download `bobe-daemon-<version>-linux-x86_64.tar.gz` and its `.sha256` from [Releases](https://github.com/Sombrace/BoBe/releases); needs glibc 2.39 and `ca-certificates` |
+| Anything else | Build an archive there with `scripts/tasks/standalone.sh` (rustup and Python 3.11) |
 
 ```bash
 sha256sum -c bobe-daemon-<version>-<platform>.tar.gz.sha256
@@ -19,9 +18,8 @@ tar -xzf bobe-daemon-<version>-<platform>.tar.gz
 ```
 
 The installer puts BoBe in `~/.local/share/bobe/versions/<version>/` and links
-`~/.local/bin/bobe` (`BOBE_INSTALL_PREFIX` changes `~/.local`). The archive's
-`uninstall.sh` removes the service and files and keeps `~/.bobe/`. From a
-checkout, `scripts/tasks/backend.sh` runs a development daemon.
+`~/.local/bin/bobe` (`BOBE_INSTALL_PREFIX` replaces `~/.local`). The archive's
+`uninstall.sh` removes the service and files and keeps `~/.bobe/`.
 
 ## Set up
 
@@ -31,12 +29,11 @@ bobe chat
 ```
 
 `bobe setup` installs the service, picks a provider and model, asks your name,
-optionally opens network access and pairs a device. It skips finished steps.
-
+optionally opens network access and pairs a device; it skips finished steps.
 The service is a launchd agent (`com.bobe.daemon`) on macOS and a systemd user
-unit (`bobe.service`) on Linux. It keeps running, and spending on a cloud
-provider, until `bobe service uninstall`. `bobe serve` runs the daemon in the
-foreground on `127.0.0.1:8766`.
+unit (`bobe.service`) on Linux, and runs (and spends on a cloud provider)
+until `bobe service uninstall`. `bobe serve` runs the daemon in the foreground
+on `127.0.0.1:8766`.
 
 ## Providers and models
 
@@ -66,13 +63,11 @@ bobe local-runtime install --chat-model qwen2.5:7b-instruct --batch-model qwen2.
 bobe service restart
 ```
 
-`bobe local-runtime install` uses an Ollama that is already running or
-installs BoBe's pinned Ollama under the data root, then pulls the models into
-Ollama's own `~/.ollama/`. When the daemon stops, it stops the Ollama it
-started and any model that Ollama loaded; a later start does not start it
-again, so run Ollama as your own service if local models must survive a
-restart. BoBe starts Ollama with a 40,960-token context so its prompts are not
-cut off; start your own Ollama with `OLLAMA_CONTEXT_LENGTH=40960` as well.
+`bobe local-runtime install` uses a running Ollama or installs BoBe's pinned
+one under the data root; models go to Ollama's own `~/.ollama/`. BoBe stops the
+Ollama it started when the daemon stops and does not start it again, so run
+`bobe local-runtime install` after a restart or run Ollama as your own service
+with `OLLAMA_CONTEXT_LENGTH=40960` (BoBe's prompts need that context).
 
 | Workload | Used for |
 |---|---|
@@ -82,26 +77,25 @@ cut off; start your own Ollama with `OLLAMA_CONTEXT_LENGTH=40960` as well.
 | `consolidate` | Tidying memory |
 
 `bobe model use <profile> <model> --workload <name|all>` reassigns one.
-Provider, credential and model changes apply after `bobe service restart`.
-`bobe doctor --probe` makes a small real request to test execution, streaming
-and tools.
+Provider, credential and model changes apply after `bobe service restart`, and
+`bobe doctor --probe` makes a small real request to test them.
 
 ## Working with BoBe
 
 | Command | Use |
 |---|---|
-| `bobe chat ["message"]` | Interactive, or one message. The CLI has its own thread |
-| `bobe runs list \| stop \| guide <id> "text"` | Current work; `--follow-up` applies guidance after the current task |
-| `bobe jobs list \| show \| cancel \| resume` | Background jobs. Interrupted jobs wait for `resume` |
+| `bobe chat ["message"]` | Interactive, or one message, in the CLI's own thread |
+| `bobe runs list \| stop \| guide <id> "text"` | Current work; `--follow-up` guides after the current task |
+| `bobe jobs list \| show \| cancel \| resume` | Background jobs; interrupted jobs wait for `resume` |
 | `bobe schedules create --at <time> [--every-seconds N] "title" "task"` | Planned work; also `list`, `pause`, `resume`, `reschedule`, `cancel` |
 | `bobe input list \| show \| answer <id> "text" \| cancel` | Questions BoBe saved for you |
-| `bobe agent status \| compact \| tools list \| tools disable <tool>` | Context, compaction and tool selection (restart to apply) |
+| `bobe agent status \| compact \| tools list \| tools disable <tool>` | Context, compaction and tools (restart to apply) |
 | `bobe memory show \| replace --file <f>` | The memory document |
 | `bobe profile list \| create \| disable` | User profiles |
 | `bobe skill list \| show \| reload` | Skills; `reload` after editing skill files by hand |
 | `bobe workspace path \| list \| read` | BoBe's working folder |
 | `bobe voice-models status \| install [--kind tts] \| cancel` | Daemon speech models |
-| `bobe voice preview "text" --output <wav> [--play]` | Speech without a provider ([speech.md](speech.md#preview-without-a-provider)) |
+| `bobe voice preview "text" --output <wav> [--play]` | Speech without a provider |
 
 Disabling a tool is not a sandbox: tools run with your account's permissions
 from `workspace/`.
@@ -123,11 +117,11 @@ bobe config unset voice.speed
 | `mcp.enabled` | MCP tools |
 | `server.host`, `server.port` | Where the daemon listens |
 
-Environment variables override keys as `BOBE_<SECTION>__<KEY>`, for example
-`BOBE_CAPTURE__ENABLED=false`. Providers and routes are managed only with
+`BOBE_<SECTION>__<KEY>` environment variables override keys, for example
+`BOBE_CAPTURE__ENABLED=false`. Providers and routes change only through
 `bobe provider` and `bobe model`.
 
-Data lives in `~/.bobe/` (`BOBE_DATA_DIR` moves it). One daemon may use a data
+Data lives in `~/.bobe/` (`BOBE_DATA_DIR` moves it); one daemon uses a data
 root at a time.
 
 | Path | Holds |
@@ -138,8 +132,8 @@ root at a time.
 | `skills/`, `workspace/` | Skills and BoBe's working folder |
 | `agent/` | Transcripts and provider sign-ins |
 | `headless-secrets.json` | API keys (mode 0600) |
-| `models/`, `backups/`, `logs/` | Speech models, backups, logs |
-| `ollama/` | The Ollama BoBe installed; its models stay in `~/.ollama/` |
+| `models/`, `ollama/` | Speech models and the Ollama BoBe installed |
+| `backups/`, `logs/` | Backups and logs |
 
 ## Remote access and pairing
 
@@ -152,39 +146,29 @@ bobe device list
 bobe device revoke <id>
 ```
 
-Codes work once and expire after five minutes. The daemon creates and renews
-its own TLS identity (`--tls-cert`/`--tls-key` supply your own); network
-traffic is always HTTPS. Opening a firewall or router is up to you. A phone
-can pair only with a daemon reachable on the network. Physical bodies enroll
-with `bobe endpoint` ([ESP32 SDK](../esp32-sdk/README.md)).
+Codes work once and expire after five minutes. Network traffic is always
+HTTPS with a certificate the daemon creates and renews (`--tls-cert` and
+`--tls-key` supply your own); opening a firewall or router is up to you.
+Physical bodies enroll with `bobe endpoint` ([ESP32 SDK](../esp32-sdk/README.md)).
 
-## Backup and restore
+## Backup, restore and update
 
 ```bash
 bobe backup create
 bobe backup list
 bobe backup verify <path>
 bobe backup restore <path>
+bobe update apply --manifest <archive>.manifest.json \
+  --signature <archive>.manifest.json.sig --archive <archive>
 ```
 
-Backups exclude provider sign-ins. A backup restores into a BoBe with the
-same backup format and the same or a newer schema; an older database is
-upgraded at the next start.
-
-## Update
-
-The Mac app updates with **Check for Updates…**. A standalone daemon applies a
-signed release:
-
-```bash
-bobe update apply \
-  --manifest bobe-daemon-X.Y.Z-<platform>.tar.gz.manifest.json \
-  --signature bobe-daemon-X.Y.Z-<platform>.tar.gz.manifest.json.sig \
-  --archive bobe-daemon-X.Y.Z-<platform>.tar.gz
-```
-
-It verifies the signature and hash, checks that the new version can upgrade
-the database, backs up, and rolls back if the new version does not start.
+Backups exclude provider sign-ins and restore into the same or a newer
+schema; a restore interrupted by a crash is finished or undone at the next
+start. `bobe update apply` installs a signed standalone release: it checks the
+signature, hash and database compatibility, backs up, and rolls back if the
+new version never becomes ready, saving the current data as a new backup
+first. An update interrupted after the new version became ready is finished,
+not rolled back. The Mac app updates with **Check for Updates…**.
 
 ## Troubleshooting
 
@@ -192,7 +176,7 @@ the database, backs up, and rolls back if the new version does not start.
 |---|---|
 | `bobe: command not found` | Add `~/.local/bin` to `PATH` |
 | A checkout daemon cannot start the agent | Use `scripts/tasks/backend.sh`, or set `BOBE_NODE_PATH=build/agent-runtime/node` and `BOBE_AGENT_ENTRY=build/agent-runtime/agent/dist/main.js` |
-| `database schema version N is newer than …` | The data was written by a newer BoBe; run that release |
-| `database schema version N cannot be upgraded …` | The data is too old to upgrade; move `~/.bobe/` aside and set up again |
+| `database schema version N is newer than …` | A newer BoBe wrote the data; run that release |
+| `database schema version N cannot be upgraded …` | The data is too old; move `~/.bobe/` aside and set up again |
 | A second daemon refuses to start | Stop the first, or give the second its own `BOBE_DATA_DIR` |
 | Something else | `bobe status`, `bobe doctor`, `bobe service logs`, `~/.bobe/logs/` |

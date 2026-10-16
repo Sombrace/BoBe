@@ -4,11 +4,11 @@ use sha2::{Digest, Sha256};
 use sqlx::{FromRow, SqlitePool};
 use uuid::Uuid;
 
+use crate::api::middleware::ENDPOINT_CREDENTIAL_PREFIX;
 use crate::api::scope::{Scope, ScopeSet};
 use crate::error::AppError;
 use crate::util::text::{constant_time_eq, hex_decode, hex_encode};
 
-const BEARER_PREFIX: &str = "bobe_v2_";
 const SECRET_BYTES: usize = 32;
 
 #[derive(FromRow)]
@@ -104,7 +104,10 @@ impl DeviceTrustRepo {
         let mut secret = [0_u8; SECRET_BYTES];
         rand::rng().fill(&mut secret);
         let verifier = bearer_verifier(&lookup_id, &secret);
-        let token = format!("{BEARER_PREFIX}{lookup_id}_{}", hex_encode(&secret));
+        let token = format!(
+            "{ENDPOINT_CREDENTIAL_PREFIX}{lookup_id}_{}",
+            hex_encode(&secret)
+        );
         secret.fill(0);
 
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -352,7 +355,7 @@ impl DeviceTrustRepo {
 }
 
 fn parse_bearer(token: &str) -> Option<(&str, Vec<u8>)> {
-    let suffix = token.strip_prefix(BEARER_PREFIX)?;
+    let suffix = token.strip_prefix(ENDPOINT_CREDENTIAL_PREFIX)?;
     let (lookup_id, encoded_secret) = suffix.split_once('_')?;
     if lookup_id.len() != 32 || !lookup_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;
@@ -421,7 +424,7 @@ mod tests {
     async fn issues_unique_bearer_and_stores_only_verifier() {
         let repo = repo().await;
         let issued = enroll(&repo, &[Scope::ConversationRead], 4).await;
-        assert!(issued.token.starts_with(BEARER_PREFIX));
+        assert!(issued.token.starts_with(ENDPOINT_CREDENTIAL_PREFIX));
         let credential_id = active_bearer_id(&repo).await;
         let record: (Option<Vec<u8>>, Option<String>) =
             sqlx::query_as("SELECT verifier, lookup_id FROM endpoint_credentials WHERE id = ?1")
@@ -434,7 +437,7 @@ mod tests {
             !issued
                 .token
                 .contains(record.1.as_deref().unwrap_or_default())
-                || issued.token.starts_with(BEARER_PREFIX)
+                || issued.token.starts_with(ENDPOINT_CREDENTIAL_PREFIX)
         );
         let authenticated = repo
             .authenticate_bearer(&issued.token, 4)

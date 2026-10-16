@@ -34,10 +34,14 @@ pub(crate) enum ClientMessage {
         #[serde(default)]
         partial_text: Option<String>,
         playhead_chunk: u64,
+        #[serde(default)]
+        turn_id: Option<String>,
     },
     PlaybackAck {
         chunk_id: u64,
         played_ms: u64,
+        #[serde(default)]
+        turn_id: Option<String>,
     },
     Control {
         action: ControlAction,
@@ -105,6 +109,9 @@ pub(crate) enum ServerMessage {
 
 pub(crate) const VOICE_CAPTURE_HEADER_LEN: usize = 13;
 pub(crate) const VOICE_CAPTURE_PCM_BYTES: usize = 640;
+pub(crate) const VOICE_CAPTURE_SAMPLE_RATE: u32 = 16_000;
+pub(crate) const VOICE_CAPTURE_FRAME_SAMPLES: usize = 320;
+const _: () = assert!(VOICE_CAPTURE_PCM_BYTES == VOICE_CAPTURE_FRAME_SAMPLES * size_of::<i16>());
 
 pub(crate) struct VoiceCaptureFrame<'a> {
     pub(crate) stream_id: u32,
@@ -197,6 +204,16 @@ mod tests {
     }
 
     const MAC_OFFER: &str = r#"{
+        "language":"en",
+        "playback_rates":[24000],
+        "endpoint_stt":[{"id":"parakeet","languages":["en"],"partials":true,"eou":true,"voices":[],"sample_rates":[],"ready":true}],
+        "endpoint_tts":[],
+        "audio_uplink":false,
+        "overrides":{"stt":"auto","tts":"daemon"},
+        "remote_audio_consent":false
+    }"#;
+
+    const MAC_OFFER_0_9_0: &str = r#"{
         "endpoint_id":"00000000-0000-0000-0000-000000000001",
         "endpoint_kind":"mac_app",
         "language":"en",
@@ -208,6 +225,15 @@ mod tests {
         "daemon_is_non_loopback":false,
         "remote_audio_consent":false
     }"#;
+
+    #[test]
+    fn capture_frames_carry_twenty_milliseconds_of_sixteen_bit_audio() {
+        assert_eq!(
+            VOICE_CAPTURE_FRAME_SAMPLES as u32 * 1_000 / VOICE_CAPTURE_SAMPLE_RATE,
+            20
+        );
+        assert_eq!(VOICE_CAPTURE_PCM_BYTES, VOICE_CAPTURE_FRAME_SAMPLES * 2);
+    }
 
     #[test]
     fn hello_requires_a_speech_offer() {
@@ -229,12 +255,31 @@ mod tests {
                 assert_eq!(session_id, "abc");
                 assert_eq!(voice_id, None);
                 assert_eq!(speed, None);
-                assert_eq!(speech_offer.endpoint_kind, "mac_app");
                 assert_eq!(speech_offer.language, "en");
                 assert_eq!(speech_offer.endpoint_stt[0].id, "parakeet");
             }
             other => panic!("expected Hello, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn hello_from_a_0_9_0_app_still_parses_and_ignores_client_identity_claims() {
+        let raw =
+            format!(r#"{{"type":"hello","session_id":"abc","speech_offer":{MAC_OFFER_0_9_0}}}"#);
+        let parsed: ClientMessage = serde_json::from_str(&raw).unwrap();
+        let ClientMessage::Hello { speech_offer, .. } = parsed else {
+            panic!("expected Hello");
+        };
+        let current =
+            format!(r#"{{"type":"hello","session_id":"abc","speech_offer":{MAC_OFFER}}}"#);
+        let ClientMessage::Hello {
+            speech_offer: current,
+            ..
+        } = serde_json::from_str::<ClientMessage>(&current).unwrap()
+        else {
+            panic!("expected Hello");
+        };
+        assert_eq!(speech_offer, current);
     }
 
     #[test]
@@ -304,14 +349,39 @@ mod tests {
                 playback_ms_played,
                 partial_text,
                 playhead_chunk,
+                turn_id,
             } => {
                 assert_eq!(ts_ms, 1_000);
                 assert_eq!(playback_ms_played, 420);
                 assert_eq!(partial_text, None);
                 assert_eq!(playhead_chunk, 7);
+                assert_eq!(turn_id, None);
             }
             other => panic!("expected BargeIn, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn overlap_and_playback_evidence_may_name_their_reply() {
+        let raw = r#"{"type":"barge_in","ts_ms":1000,"playback_ms_played":420,"playhead_chunk":7,"turn_id":"voice_a"}"#;
+        std::assert_matches!(
+            serde_json::from_str::<ClientMessage>(raw).unwrap(),
+            ClientMessage::BargeIn { turn_id: Some(ref turn), .. } if turn == "voice_a"
+        );
+        let legacy = r#"{"type":"playback_ack","chunk_id":3,"played_ms":900}"#;
+        std::assert_matches!(
+            serde_json::from_str::<ClientMessage>(legacy).unwrap(),
+            ClientMessage::PlaybackAck {
+                turn_id: None,
+                played_ms: 900,
+                ..
+            }
+        );
+        let named = r#"{"type":"playback_ack","chunk_id":3,"played_ms":900,"turn_id":"voice_a"}"#;
+        std::assert_matches!(
+            serde_json::from_str::<ClientMessage>(named).unwrap(),
+            ClientMessage::PlaybackAck { turn_id: Some(ref turn), .. } if turn == "voice_a"
+        );
     }
 
     #[test]

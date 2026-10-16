@@ -6,20 +6,30 @@ struct CommandLineToolInstaller {
             .appendingPathComponent(".local/bin/bobe")
     }
 
-    static func install(bundleURL: URL = Bundle.main.bundleURL) throws -> URL {
-        let daemon = bundleURL.appendingPathComponent("Contents/MacOS/bobe-daemon")
-        guard FileManager.default.isExecutableFile(atPath: daemon.path) else {
+    static func install(
+        bundleURL: URL = Bundle.main.bundleURL,
+        launcher: URL = Self.launcherURL
+    ) throws -> URL {
+        let executable = bundleURL.appendingPathComponent("Contents/MacOS/bobe-daemon")
+        guard FileManager.default.isExecutableFile(atPath: executable.path) else {
             throw CommandLineToolInstallerError.daemonMissing
         }
-        let launcher = self.launcherURL
+        let directory = launcher.deletingLastPathComponent()
         try FileManager.default.createDirectory(
-            at: launcher.deletingLastPathComponent(),
+            at: directory,
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o755]
         )
-        let script = "#!/bin/sh\nexec \"\(daemon.path.replacingOccurrences(of: "\\\"", with: "\\\\\\\""))\" \"$@\"\n"
-        try script.write(to: launcher, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: launcher.path)
+        let staged = directory.appendingPathComponent(".bobe-\(UUID().uuidString)")
+        try FileManager.default.createSymbolicLink(
+            atPath: staged.path,
+            withDestinationPath: executable.path
+        )
+        guard rename(staged.path, launcher.path) == 0 else {
+            let code = POSIXErrorCode(rawValue: errno) ?? .EIO
+            try? FileManager.default.removeItem(at: staged)
+            throw POSIXError(code)
+        }
         return launcher
     }
 }

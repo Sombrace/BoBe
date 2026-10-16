@@ -1,17 +1,62 @@
 import SwiftUI
 
-private enum LocalDefaults {
-    static let chatModel = "qwen2.5:7b-instruct"
-    static let batchModel = "qwen2.5:7b-instruct"
+struct LocalRuntimeModels: Equatable, Sendable {
+    static let setup = Self(
+        profileID: "local",
+        chatModel: "qwen2.5:7b-instruct",
+        batchModel: "qwen2.5:7b-instruct"
+    )
+
+    let profileID: String
+    let chatModel: String
+    let batchModel: String
+
+    var installRequest: LocalRuntimeInstallRequest {
+        LocalRuntimeInstallRequest(
+            profile: self.profileID,
+            chatModel: self.chatModel,
+            batchModel: self.batchModel
+        )
+    }
+
+    var activationRequest: ProviderActivationRequest {
+        .ollama(chatModel: self.chatModel, batchModel: self.batchModel)
+    }
+}
+
+enum LocalRuntimeInstallError: LocalizedError {
+    case cancelFailed
+
+    var errorDescription: String? {
+        L10n.tr("setup.local.cancel_failed")
+    }
+}
+
+@MainActor
+enum LocalRuntimeInstall {
+    static func cancel() async throws {
+        try await self.cancel { try await DaemonClient.shared.cancelLocalRuntimeInstall() }
+    }
+
+    static func cancel(using request: () async throws -> Void) async throws {
+        do {
+            try await request()
+        } catch {
+            throw LocalRuntimeInstallError.cancelFailed
+        }
+    }
 }
 
 struct LocalSetupStepView: View {
     let onContinue: () -> Void
+    var onCriticalOperationChange: (Bool) -> Void = { _ in }
 
     @State private var snapshot: LocalRuntimeSnapshot?
     @State private var ramGB: Int? = systemMemoryGB()
     @State private var streamTask: Task<Void, Never>?
     @State private var startError: String?
+    @State private var cancelError: String?
+    @State private var isCanceling = false
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -110,20 +155,32 @@ struct LocalSetupStepView: View {
                 .bobeButton(.primary, size: .regular)
             }
         case .idle, .running:
-            Button(L10n.tr("setup.local.cancel"), action: self.cancelInstall)
+            VStack(spacing: 8) {
+                if let cancelError = self.cancelError {
+                    Text(cancelError)
+                        .bobeTextStyle(.helper)
+                        .foregroundStyle(self.theme.colors.error)
+                        .multilineTextAlignment(.center)
+                }
+                Button(action: self.cancelInstall) {
+                    HStack(spacing: 6) {
+                        if self.isCanceling {
+                            BobeSpinner(size: 12)
+                        }
+                        Text(L10n.tr(self.isCanceling ? "setup.local.canceling" : "setup.local.cancel"))
+                    }
+                }
                 .bobeButton(.secondary, size: .small)
+                .disabled(self.isCanceling)
+            }
         }
     }
 
     private func startInstall() async {
         self.startError = nil
-        let request = LocalRuntimeInstallRequest(
-            profile: "local",
-            chatModel: LocalDefaults.chatModel,
-            batchModel: LocalDefaults.batchModel
-        )
+        self.cancelError = nil
         do {
-            try await DaemonClient.shared.startLocalRuntimeInstall(request)
+            try await DaemonClient.shared.startLocalRuntimeInstall(LocalRuntimeModels.setup.installRequest)
         } catch {
             if !error.localizedDescription.lowercased().contains("conflict") {
                 self.startError = error.localizedDescription
@@ -149,15 +206,19 @@ struct LocalSetupStepView: View {
     }
 
     private func cancelInstall() {
-        self.streamTask?.cancel()
-        self.startError = L10n.tr("setup.local.canceling")
-        Task {
+        guard !self.isCanceling else { return }
+        self.isCanceling = true
+        self.cancelError = nil
+        self.onCriticalOperationChange(true)
+        Task { @MainActor in
             do {
-                try await DaemonClient.shared.cancelLocalRuntimeInstall()
-                await MainActor.run { self.subscribeToStatus() }
+                try await LocalRuntimeInstall.cancel()
             } catch {
-                await MainActor.run { self.startError = error.localizedDescription }
+                self.cancelError = error.localizedDescription
             }
+            self.isCanceling = false
+            self.onCriticalOperationChange(false)
+            self.subscribeToStatus()
         }
     }
 }

@@ -12,7 +12,7 @@ import { McpResources } from "./mcp.js";
 import { ModelProfiles } from "./models.js";
 import { TurnEvents } from "./events.js";
 import { boundedOutput, subagentTool, type DelegateTask, type DelegateResult } from "./delegation.js";
-import { Cancelled, Serial, assertActive, type Redactor } from "./errors.js";
+import { Cancelled, Serial, WorkerFault, assertActive, failureDetail, settleEach, type Redactor } from "./errors.js";
 import { createChildSession, flushSession, openBackgroundSession, openChannelSession, OWNER_CHANNEL } from "./persistence.js";
 import { backgroundTools } from "./background.js";
 import { scheduleTool } from "./scheduling.js";
@@ -54,6 +54,10 @@ function personaSection(persona: Persona): string {
 
 const noPersona: Persona = { souls: [], profiles: [] };
 
+function rejections(outcomes: readonly PromiseSettledResult<unknown>[]): unknown[] {
+  return outcomes.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
+}
+
 interface SessionCallbacks {
   domain(name: string, args: JsonObject, requestId: number, signal?: AbortSignal): Promise<Json>;
   event(requestId: number, delta: Delta): void;
@@ -71,6 +75,7 @@ interface TurnContext {
   channel: "voice" | "text";
   depth: number;
   childrenCreated: { count: number };
+  faults: WorkerFault[];
   visibleOutput: boolean;
   deferredInput?: DeferredOwnerInput;
 }
@@ -78,7 +83,7 @@ interface TurnContext {
 export class SessionBundle {
   current: TurnContext = {
     requestId: 0, context: "", memoryContext: "", persona: noPersona, channel: "text", depth: 0,
-    childrenCreated: { count: 0 }, visibleOutput: false,
+    childrenCreated: { count: 0 }, faults: [], visibleOutput: false,
   };
   readonly errors: string[] = [];
   private closePromise: Promise<void> | undefined;
@@ -105,21 +110,14 @@ export class SessionBundle {
   }
 
   private async dispose(): Promise<void> {
-    const failures: unknown[] = [];
     const previousErrors = this.errors.length;
-    for (const operation of [
+    const failures = await settleEach([
       () => this.session.abort(),
       () => this.session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }),
       () => this.mcp.close(),
       () => this.session.settingsManager.flush(),
       () => flushSession(this.session.sessionManager),
-    ]) {
-      try {
-        await operation();
-      } catch (error) {
-        failures.push(error);
-      }
-    }
+    ]);
     this.session.dispose();
     const cleanupErrors = this.errors.slice(previousErrors);
     if (cleanupErrors.length) failures.push(new Error(`Session extension cleanup failed: ${cleanupErrors.join("; ")}`));
@@ -239,11 +237,12 @@ export class Sessions {
     extraTools: ToolDefinition[] = [],
     finitePrompt?: string,
     isCanonical = false,
+    mcpConfig: McpConfig = full ? this.mcpConfig : { servers: {} },
   ): Promise<SessionBundle> {
     assertActive();
     if (this.closed) throw new Error("Sessions are closed");
     const skillVersion = this.skillVersion;
-    const mcp = new McpResources(full ? this.mcpConfig : { servers: {} }, this.agentDir, this.redactor, this.processes,
+    const mcp = new McpResources(mcpConfig, this.agentDir, this.redactor, this.processes,
       tool => this.models.execution.tool(tool));
     const settings = SettingsManager.inMemory({
       defaultTools: full ? builtins.filter(name => this.config.enabled_tools.includes(name)) : [],
@@ -449,25 +448,51 @@ export class Sessions {
     if (!this.maintenance) for (const resolve of this.maintenanceWaiters.splice(0)) resolve();
   }
 
-  async reload(mcp?: McpConfig, directories?: string[]): Promise<void> {
+  async reload(mcp?: McpConfig, directories?: string[], signal?: AbortSignal): Promise<void> {
     if (mcp && (this.activeRuns.size || this.channelLeases.size)) throw new Error("MCP refresh requires idle execution");
     this.maintenance++;
     try {
-    if (directories) await this.refreshSkills(directories);
-    else await this.refreshSkills();
-    if (mcp) {
-      for (const creating of this.channels.values()) {
-        const channel = await creating;
-        await channel.mcp.replace(mcp);
-        channel.errors.length = 0;
-        await channel.session.reload();
-        await channel.mcp.ready();
-        if (channel.errors.length) throw new Error(`MCP reload failed: ${channel.errors.join("; ")}`);
-        await flushSession(channel.session.sessionManager);
-      }
-      this.mcpConfig = mcp;
-    }
+      if (directories) await this.refreshSkills(directories);
+      else await this.refreshSkills();
+      if (mcp) await this.channelChanges.run(() => this.replaceMcp(mcp, signal));
     } finally { this.finishMaintenance(); }
+  }
+
+  private async replaceMcp(next: McpConfig, signal?: AbortSignal): Promise<void> {
+    const staged = await this.create(
+      SessionManager.inMemory(this.config.workspace), false, undefined, [], "Owner MCP server verification.", false, next,
+    );
+    try {
+      await this.connectMcp(staged, signal);
+    } finally {
+      await this.release(staged);
+    }
+    const previous = this.mcpConfig;
+    const bundles = await Promise.all(this.channels.values());
+    const failures = rejections(await Promise.allSettled(bundles.map(bundle => this.applyMcp(bundle, next, signal))));
+    if (failures.length) {
+      const restoreFailures = rejections(await Promise.allSettled(bundles.map(bundle => this.applyMcp(bundle, previous))));
+      if (restoreFailures.length) {
+        throw new WorkerFault(
+          `MCP reload failed and the previous servers could not be restored: ${failureDetail([...failures, ...restoreFailures])}`,
+        );
+      }
+      throw new Error(`MCP reload was rolled back: ${failureDetail(failures)}`);
+    }
+    this.mcpConfig = next;
+  }
+
+  private async applyMcp(bundle: SessionBundle, config: McpConfig, signal?: AbortSignal): Promise<void> {
+    await bundle.mcp.replace(config);
+    bundle.errors.length = 0;
+    await bundle.session.reload();
+    await this.connectMcp(bundle, signal);
+    await flushSession(bundle.session.sessionManager);
+  }
+
+  private async connectMcp(bundle: SessionBundle, signal?: AbortSignal): Promise<void> {
+    await bundle.mcp.ready(signal);
+    if (bundle.errors.length) throw new Error(`MCP reload failed: ${bundle.errors.join("; ")}`);
   }
 
   async select(bundle: SessionBundle, route: Route, channel: "voice" | "text", signal?: AbortSignal): Promise<void> {
@@ -486,7 +511,8 @@ export class Sessions {
     persona = noPersona,
   ): void {
     bundle.current = {
-      requestId, context, memoryContext, persona, channel, depth: 0, childrenCreated: { count: 0 }, visibleOutput: false,
+      requestId, context, memoryContext, persona, channel, depth: 0, childrenCreated: { count: 0 }, faults: [],
+      visibleOutput: false,
     };
   }
 
@@ -526,21 +552,20 @@ export class Sessions {
       } : undefined,
       stream ? name => this.callbacks.activity(bundle.current.requestId, name) : undefined,
     );
-    let cancellation: Promise<void> | undefined;
-    const cancelResources = async (): Promise<void> => {
-      const outcomes = await Promise.allSettled([bundle.session.abort(), bundle.mcp.cancelActive()]);
-      const failures = outcomes.filter(outcome => outcome.status === "rejected");
-      if (failures.length) throw new AggregateError(failures.map(failure => failure.reason), "Turn cancellation failed");
+    const cancellations: Promise<PromiseSettledResult<void>[]>[] = [];
+    const cancelResources = (): void => {
+      cancellations.push(Promise.allSettled([bundle.session.abort(), bundle.mcp.cancelActive()]));
     };
+    let cancelled = false;
     const cancel = (): void => {
-      cancellation ??= cancelResources();
+      if (cancelled) return;
+      cancelled = true;
+      cancelResources();
     };
     let budgetFailure = false;
     const unsubscribe = bundle.session.subscribe(event => {
       events.event(event);
-      if (event.type === "agent_start" && (signal.aborted || budgetFailure)) {
-        cancellation = cancelResources();
-      }
+      if (event.type === "agent_start" && (signal.aborted || budgetFailure)) cancelResources();
       if (events.turns >= turnLimit && event.type === "turn_end" &&
         event.message.role === "assistant" && event.message.stopReason === "toolUse" && !allowToolTermination && !bundle.current.deferredInput) {
         budgetFailure = true;
@@ -573,7 +598,7 @@ export class Sessions {
       const prompt = hint ? `[bobe.turn_context]\n${hint}\n[/bobe.turn_context]\n\n${text}` : text;
       await bundle.session.prompt(prompt, { source: "rpc", expandPromptTemplates: false });
       await bundle.session.waitForIdle();
-      await cancellation;
+      await Promise.all(cancellations);
       assertActive(signal);
       if (budgetFailure) throw new Error("pi execution exceeded the bounded turn limit");
       if (bundle.errors.length) throw new Error(`Session extension failed: ${bundle.errors.join("; ")}`);
@@ -582,11 +607,20 @@ export class Sessions {
       return events;
     } finally {
       signal.removeEventListener("abort", cancel);
-      await cancellation;
-      if (!bundle.session.isIdle) await bundle.session.abort();
-      events.endFailedTools();
-      unsubscribe();
-      await flushSession(bundle.session.sessionManager);
+      const failures = await settleEach([
+        async () => {
+          const failed = rejections((await Promise.all(cancellations)).flat());
+          if (failed.length) throw new AggregateError(failed, "Turn cancellation failed");
+        },
+        async () => { if (!bundle.session.isIdle) await bundle.session.abort(); },
+        () => bundle.session.clearQueue(),
+        () => events.endFailedTools(),
+        unsubscribe,
+        () => flushSession(bundle.session.sessionManager),
+      ]);
+      if (failures.length) bundle.current.faults.push(new WorkerFault(`Run cleanup failed: ${failureDetail(failures)}`));
+      const [fault] = bundle.current.faults;
+      if (fault) throw fault;
     }
   }
 
@@ -728,6 +762,7 @@ export class Sessions {
         success: true, error: null,
       };
     } catch (error) {
+      if (error instanceof WorkerFault) throw error;
       if (signal?.aborted) throw new Cancelled("Scoped subagent canceled");
       return {
         agent, text: "", output_tokens: 0, success: false,
@@ -742,6 +777,10 @@ export class Sessions {
   async release(bundle: SessionBundle): Promise<void> {
     try {
       await bundle.close();
+    } catch (error) {
+      const fault = new WorkerFault(`Session cleanup failed: ${failureDetail([error])}`, { cause: error });
+      bundle.current.faults.push(fault);
+      throw fault;
     } finally {
       this.bundles.delete(bundle);
     }

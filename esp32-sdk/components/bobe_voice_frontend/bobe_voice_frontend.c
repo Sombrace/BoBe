@@ -52,6 +52,7 @@ static esp_afe_sr_data_t *afe_data;
 static srmodel_list_t *models;
 static QueueHandle_t input_queue;
 static StaticQueue_t input_queue_state;
+static uint8_t *input_queue_storage;
 static int16_t *feed_buffer;
 static int feed_chunk_samples;
 static int feed_buffered_samples;
@@ -65,6 +66,7 @@ static SemaphoreHandle_t preroll_lock;
 static EventGroupHandle_t afe_pause_events;
 static atomic_bool afe_pause_requested;
 static atomic_bool feed_frame_in_flight;
+static TaskHandle_t feed_task_handle;
 static TaskHandle_t fetch_task_handle;
 
 static bool submit_afe_chunk(const int16_t *samples)
@@ -305,7 +307,7 @@ static esp_err_t initialize_afe(void)
         (size_t)feed_chunk_samples * sizeof(int16_t),
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
-    uint8_t *queue_storage = heap_caps_malloc(
+    input_queue_storage = heap_caps_malloc(
         BOBE_AFE_INPUT_QUEUE_FRAMES * sizeof(bobe_audio_frame_t),
         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
     );
@@ -315,7 +317,7 @@ static esp_err_t initialize_afe(void)
     );
     preroll_lock = xSemaphoreCreateMutex();
     afe_pause_events = xEventGroupCreate();
-    if (feed_buffer == NULL || queue_storage == NULL ||
+    if (feed_buffer == NULL || input_queue_storage == NULL ||
         preroll_frames == NULL || preroll_lock == NULL ||
         afe_pause_events == NULL) {
         return ESP_ERR_NO_MEM;
@@ -323,21 +325,26 @@ static esp_err_t initialize_afe(void)
     input_queue = xQueueCreateStatic(
         BOBE_AFE_INPUT_QUEUE_FRAMES,
         sizeof(bobe_audio_frame_t),
-        queue_storage,
+        input_queue_storage,
         &input_queue_state
     );
-    if (input_queue == NULL ||
-        xTaskCreatePinnedToCoreWithCaps(
+    if (input_queue == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    if (xTaskCreatePinnedToCoreWithCaps(
             feed_task,
             "bobe_afe_feed",
             4096,
             NULL,
             BOBE_TASK_PRIORITY_AFE,
-            NULL,
+            &feed_task_handle,
             BOBE_REALTIME_CORE,
             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
-        ) != pdPASS ||
-        xTaskCreatePinnedToCoreWithCaps(
+        ) != pdPASS) {
+        feed_task_handle = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+    if (xTaskCreatePinnedToCoreWithCaps(
             fetch_task,
             "bobe_afe_fetch",
             4096,
@@ -347,11 +354,52 @@ static esp_err_t initialize_afe(void)
             BOBE_REALTIME_CORE,
             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
         ) != pdPASS) {
+        fetch_task_handle = NULL;
         return ESP_ERR_NO_MEM;
     }
     atomic_store(&wake_available, wake_model != NULL);
     afe_operations->print_pipeline(afe_data);
     return ESP_OK;
+}
+
+static void release_afe(void)
+{
+    if (fetch_task_handle != NULL) {
+        vTaskDeleteWithCaps(fetch_task_handle);
+        fetch_task_handle = NULL;
+    }
+    if (feed_task_handle != NULL) {
+        vTaskDeleteWithCaps(feed_task_handle);
+        feed_task_handle = NULL;
+    }
+    if (input_queue != NULL) {
+        vQueueDelete(input_queue);
+        input_queue = NULL;
+    }
+    heap_caps_free(input_queue_storage);
+    input_queue_storage = NULL;
+    heap_caps_free(preroll_frames);
+    preroll_frames = NULL;
+    heap_caps_free(feed_buffer);
+    feed_buffer = NULL;
+    if (afe_pause_events != NULL) {
+        vEventGroupDelete(afe_pause_events);
+        afe_pause_events = NULL;
+    }
+    if (preroll_lock != NULL) {
+        vSemaphoreDelete(preroll_lock);
+        preroll_lock = NULL;
+    }
+    if (afe_data != NULL) {
+        afe_operations->destroy(afe_data);
+        afe_data = NULL;
+    }
+    afe_operations = NULL;
+    if (models != NULL) {
+        esp_srmodel_deinit(models);
+        models = NULL;
+    }
+    atomic_store(&wake_available, false);
 }
 #endif
 
@@ -420,6 +468,14 @@ esp_err_t bobe_voice_frontend_init(
 #if defined(CONFIG_BOBE_ENABLE_ESP_SR)
     const esp_err_t result = initialize_afe();
     if (result != ESP_OK) {
+        ESP_LOGE(
+            TAG,
+            "voice front end initialization failed: %s",
+            esp_err_to_name(result)
+        );
+        release_afe();
+        vSemaphoreDelete(lifecycle_lock);
+        lifecycle_lock = NULL;
         return result;
     }
 #endif
