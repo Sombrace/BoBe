@@ -55,7 +55,8 @@ revoking an enrollment disconnects the device.
 
 Every message is UTF-8 JSON of at most 4096 bytes with `type` and
 `protocol_major: 1`. Malformed messages and route mismatches close the
-connection; the SDK also rejects duplicate keys. The daemon closes the
+connection, except late capture messages for a lease the daemon ended; the SDK
+also rejects duplicate keys. The daemon closes the
 connection on unknown types; the SDK ignores them. "Route" is the `lease_id`,
 `turn_id` and `stream_id` of the active voice lease and stream.
 
@@ -76,8 +77,8 @@ Device to daemon:
 | `input.action` | `request_id`, `action`, `label` | A person used a named control |
 | `input.cancel` | `request_id` | Cancels this connection's running request |
 | `sensor.sample` | `name`, `sequence`, `value`, optional `unit` | One observation |
-| `health.report` | Status fields | The daemon reads only `build_number`, to decide on update offers |
-| `battery.state` | `percent`, `charging` | Battery level; the daemon only checks that `percent` is 0–100 |
+| `health.report` | Status fields | The daemon reads `build_number`, `lifecycle` and `turn`, to decide on update offers |
+| `battery.state` | `percent`, `charging` | Battery level and charging, used to retry an update offer |
 | `button.event` | `boot_id`, `event_id`, `button`, `action`, `monotonic_us` | A physical button edge; the daemon accepts and ignores it |
 | `update.state` | `phase`, `progress_percent`, optional `reason` | Update progress |
 
@@ -125,7 +126,8 @@ One device at a time holds the voice lease.
 `lease_ttl_ms` starts a watchdog that each phase's progress extends, up to 10
 minutes per turn. Among simultaneous `wake_word` requests the daemon picks one by
 the optional `wake` scores (`confidence`, `snr_db`, `energy_dbfs`); an
-`action_button` request wins.
+`action_button` request wins, and a granted `wake_word` lease that has not
+opened capture ends with `turn.state` `idle`.
 
 ## Media frames
 
@@ -193,11 +195,15 @@ reading any field, then requires its own model, a higher `build_number` than
 its own, an image that fits its update slot and a trusted clock inside
 `[not_before, expires_at)`. A failed offer closes the connection.
 
-The daemon sends its configured offer once per connection, when `health.report`
-shows an older `build_number`. The SDK installs only while online and idle with
+The daemon sends its configured offer when `health.report` shows an older
+`build_number`. The SDK installs only while online and idle with
 the battery at 50 % or charging, and reports `update.state` `accepted` then
 `rebooting`, or `failed` with `reason` `busy`, `battery_unknown`, `low_battery`
-or `install_failed`. A new image that does not reach an authenticated session
+or `install_failed`. After `busy`, `battery_unknown` or `low_battery` the
+daemon offers again with backoff (30 s doubling to 15 minutes), sooner once
+the device reports idle or charging. After `accepted`, `install_failed` or a
+reconnect without an answer, it waits for a daemon restart or a new
+enrollment. A new image that does not reach an authenticated session
 within 10 minutes rolls back. The
 [WB-12 guide](../examples/wb12/README.md#signed-updates) shows how to create an
 offer.

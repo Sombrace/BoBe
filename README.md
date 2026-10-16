@@ -43,17 +43,13 @@ Rail Relay, GitHub Copilot, or a local model through Ollama.
 
 ## What she does
 
-- **Notices your work.** Reads the text on your screen every couple of
-  minutes; the picture never leaves your Mac. Optional.
-- **Remembers you.** One memory document you can read and edit.
-- **Works on your goals.** Goals are Markdown files. She reviews active ones
-  hourly, makes quiet progress, and gives every goal an end.
-- **Speaks first, politely.** Quiet, Balanced or Proactive, with cooldowns so
-  she does not interrupt.
-- **Talks and listens.** Speech runs on your own hardware; raw audio is never
-  stored.
-- **Uses tools.** Files, search, shell, Git, MCP servers, skills and helper
-  agents, all in one folder you can open.
+- **Notices your work** by reading the text on your screen (optional); the
+  picture never leaves your Mac.
+- **Remembers you** in one memory document you can read and edit.
+- **Works on your goals**, kept as Markdown files, with quiet progress every hour.
+- **Speaks first, politely**: Quiet, Balanced or Proactive, with cooldowns.
+- **Talks and listens** with speech on your own hardware; raw audio is never stored.
+- **Uses tools**: files, search, shell, Git, MCP servers, skills and helper agents.
 
 She also runs headless on a Mac or Linux machine, and the same BoBe can meet
 you on an [iPhone](docs/using-bobe.md#iphone) or in a small
@@ -64,7 +60,7 @@ you on an [iPhone](docs/using-bobe.md#iphone) or in a small
 Download `BoBe.dmg` from [Releases](https://github.com/Sombrace/BoBe/releases),
 drag BoBe to Applications and open it. You need an Apple Silicon Mac with
 macOS 26 and a model: an API key, a Rail Relay token, a supported sign-in or
-Ollama. Setup takes a few minutes. Read the [guide](docs/using-bobe.md).
+Ollama ([guide](docs/using-bobe.md)).
 
 To build from source (Xcode 26 and [rustup](https://rustup.rs); nothing is
 installed globally):
@@ -86,12 +82,12 @@ bobe chat
 
 ## Your data
 
-Everything BoBe knows lives in `~/.bobe/` on the machine that runs her daemon.
-Memory and goals are plain Markdown. A cloud model receives only the context a
-request needs, and **Settings → Privacy** can delete her data. The daemon
-listens only on `127.0.0.1` unless you turn on remote access, and her tools run
-as your user account, which is not a sandbox. Report vulnerabilities through
-[SECURITY.md](SECURITY.md).
+Everything BoBe knows lives in `~/.bobe/` on the machine that runs her daemon,
+with memory and goals in plain Markdown. A cloud model receives only the
+context a request needs, and **Settings → Privacy** can delete her data. The
+daemon listens only on `127.0.0.1` unless you turn on remote access, and her
+tools run as your user account, which is not a sandbox. Report vulnerabilities
+through [SECURITY.md](SECURITY.md).
 
 ## Documentation
 
