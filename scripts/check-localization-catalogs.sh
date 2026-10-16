@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/locales.sh"
 MAC_SOURCE_ROOT="$ROOT/BoBeMacUI/BoBe"
 MAC_CATALOG_ROOT="$MAC_SOURCE_ROOT/Resources/i18n"
 PHONE_SOURCE_ROOT="$ROOT/BoBeiOS/BoBe"
@@ -30,19 +31,22 @@ check_catalogs() {
     mkdir "$work"
 
     if [[ "$(uname -s)" == Darwin ]]; then
-        local catalog
-        for catalog in "$catalog_root"/*.lproj/"$table"; do
-            plutil -lint "$catalog" >/dev/null
+        local locale
+        for locale in "${BOBE_LOCALES[@]}"; do
+            if [[ -f "$catalog_root/$locale.lproj/$table" ]]; then
+                plutil -lint "$catalog_root/$locale.lproj/$table" >/dev/null
+            fi
         done
     fi
 
-    python3 - "$english" "$catalog_root" <<'PY'
+    python3 - "$english" "$catalog_root" "${BOBE_LOCALES[@]}" <<'PY'
 import pathlib
 import re
 import sys
 
 english_path = pathlib.Path(sys.argv[1])
 catalog_root = pathlib.Path(sys.argv[2])
+locales = sys.argv[3:]
 entry = re.compile(r'^"((?:[^"\\]|\\.)+)" = "((?:[^"\\]|\\.)*)";$')
 conversion = re.compile(
     r'%(?!%)(?:(\d+)\$)?[-+ #0]*(?:\d+)?(?:\.(?:\d+))?'
@@ -91,10 +95,18 @@ def report(catalog, problem, keys):
     return f"{catalog} {problem}:\n" + "\n".join(f"  {key}" for key in keys)
 
 
+if english_path.parent != catalog_root / "en.lproj" or "en" not in locales:
+    raise SystemExit(f"{english_path} must be the en.lproj source catalog of the canonical locales")
 english = catalog_values(english_path)
 problems = []
-for locale in sorted(catalog_root.glob("*.lproj")):
-    catalog = locale / english_path.name
+present = {path.name[: -len(".lproj")] for path in catalog_root.glob("*.lproj")}
+if present != set(locales):
+    problems.append(
+        f"{catalog_root} locales differ from the canonical set {locales}: "
+        f"missing={sorted(set(locales) - present)}, unexpected={sorted(present - set(locales))}"
+    )
+for locale in locales:
+    catalog = catalog_root / f"{locale}.lproj" / english_path.name
     if catalog == english_path:
         continue
     if not catalog.is_file():

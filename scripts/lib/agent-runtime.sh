@@ -81,7 +81,7 @@ bobe_prepare_node() {
 }
 
 bobe_stage_search_tools() {
-    local root="$1" destination="$2" platform target tool version repo asset expected archive extracted
+    local root="$1" destination="$2" platform target tool version repo asset expected archive download extracted
     platform="$(bobe_node_platform)" || return
     mkdir -p "$root/.tools/cache/pi-tools" "$destination/bin" "$destination/licenses"
     for tool in rg fd; do
@@ -114,23 +114,24 @@ bobe_stage_search_tools() {
             asset="fd-$version-$target"
         fi
         archive="$root/.tools/cache/pi-tools/$asset.tar.gz"
+        if [[ -f "$archive" && "$(bobe_sha256 "$archive")" != "$expected" ]]; then
+            echo "Discarding cached native pi tool with a checksum mismatch: $archive" >&2
+            rm -f "$archive"
+        fi
         if [[ ! -f "$archive" ]]; then
+            download="$archive.download-$$"
             if ! curl --fail --location --silent --show-error --max-time 120 --proto '=https' \
-                "https://github.com/$repo/releases/download/$version/$asset.tar.gz" -o "$archive.download"; then
-                rm -f "$archive.download"
+                "https://github.com/$repo/releases/download/$version/$asset.tar.gz" -o "$download"; then
+                rm -f "$download"
                 return 1
             fi
-            if [[ "$(bobe_sha256 "$archive.download")" != "$expected" ]]; then
-                rm -f "$archive.download"
+            if [[ "$(bobe_sha256 "$download")" != "$expected" ]]; then
+                rm -f "$download"
                 echo "Native pi tool checksum mismatch: $asset" >&2
                 return 1
             fi
-            mv "$archive.download" "$archive"
+            mv "$download" "$archive"
         fi
-        [[ "$(bobe_sha256 "$archive")" == "$expected" ]] || {
-            echo "Cached native pi tool checksum mismatch: $archive" >&2
-            return 1
-        }
         extracted="$destination/.extract-$tool"
         mkdir "$extracted"
         tar -xzf "$archive" -C "$extracted" --strip-components=1

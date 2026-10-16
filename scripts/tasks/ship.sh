@@ -20,6 +20,7 @@ verify_release_state() {
         echo "Refusing to ship: HEAD does not match $tag" >&2
         exit 1
     fi
+    "$ROOT/scripts/check-release-version.sh" "$version"
 }
 verify_release_state
 
@@ -33,6 +34,7 @@ verify_release_state
 
 echo "=== Build + Bundle + Sign + DMG ==="
 "$TASK_DIR/release.sh" "${version}" "${identity}"
+"$ROOT/scripts/check-release-version.sh" "$version" --daemon build/BoBe.app/Contents/MacOS/bobe-daemon
 
 echo "=== Notarize ==="
 "$TASK_DIR/notarize.sh" "${version}"

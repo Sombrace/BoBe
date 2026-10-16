@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+source "$ROOT/scripts/lib/locales.sh"
 APP="${1:-$ROOT/BoBeMacUI/.build/xcode-derived/Build/Products/Debug/BoBe.app}"
 EXECUTABLE="$APP/Contents/MacOS/BoBe"
 
@@ -9,7 +10,7 @@ EXECUTABLE="$APP/Contents/MacOS/BoBe"
 [[ -f "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle" ]]
 [[ -d "$APP/Contents/Resources/textual_Textual.bundle" ]]
 [[ -d "$APP/Contents/Resources/swiftui-math_SwiftUIMath.bundle" ]]
-[[ -f "$APP/Contents/Resources/en.lproj/UI.strings" ]]
+bobe_check_bundle_locales "$APP/Contents/Resources" UI.strings
 [[ -f "$APP/Contents/Resources/PrivacyInfo.xcprivacy" ]]
 
 LINK_IMAGE="$EXECUTABLE"
