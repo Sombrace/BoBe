@@ -142,9 +142,16 @@ struct OverlayPresentationTests {
                     .background(theme.colors.background)
                     .environment(\.theme, theme)
                     .environment(\.colorScheme, macAppearance),
-                size: CGSize(width: 320, height: 180)
+                size: CGSize(width: 320, height: 180),
+                appearance: macAppearance
             )
-            let well = try Self.srgb(theme.well)
+            let well = try #require(
+                Self.renderedPixels(
+                    Rectangle().fill(theme.well).environment(\.colorScheme, macAppearance),
+                    size: CGSize(width: 4, height: 4),
+                    appearance: macAppearance
+                ).first
+            )
             let wrong = try #require(systemCodeBackground[macAppearance])
 
             #expect(pixels.filter { Self.isNear($0, well) }.count > 40)
@@ -153,7 +160,11 @@ struct OverlayPresentationTests {
     }
 
     @MainActor
-    private static func renderedPixels(_ view: some View, size: CGSize) throws -> [SIMD3<Int>] {
+    private static func renderedPixels(
+        _ view: some View,
+        size: CGSize,
+        appearance: ColorScheme
+    ) throws -> [SIMD3<Int>] {
         let host = NSHostingView(rootView: view.frame(width: size.width, height: size.height))
         let window = NSWindow(
             contentRect: CGRect(origin: .zero, size: size),
@@ -161,6 +172,7 @@ struct OverlayPresentationTests {
             backing: .buffered,
             defer: false
         )
+        window.appearance = NSAppearance(named: appearance == .dark ? .darkAqua : .aqua)
         window.isReleasedWhenClosed = false
         window.contentView = host
         defer { window.close() }
@@ -177,10 +189,6 @@ struct OverlayPresentationTests {
             }
         }
         return pixels
-    }
-
-    private static func srgb(_ color: Color) throws -> SIMD3<Int> {
-        try self.srgb(NSColor(color))
     }
 
     private static func srgb(_ color: NSColor) throws -> SIMD3<Int> {
