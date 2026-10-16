@@ -532,3 +532,131 @@ async fn run_trigger(
         }
     }
 }
+
+#[cfg(test)]
+impl RuntimeSession {
+    pub(crate) async fn for_tests(root: &std::path::Path, pool: sqlx::SqlitePool) -> Arc<Self> {
+        let paths = Arc::new(
+            crate::util::paths::DataPaths::resolve(
+                root,
+                &format!("sqlite:{}", root.join("bobrust.db").display()),
+            )
+            .and_then(crate::util::paths::DataPaths::prepare_root)
+            .expect("test data paths"),
+        );
+        let config = Config::default();
+        let skills = crate::provider::SkillStore::prepare(&paths)
+            .await
+            .expect("test skills");
+        let memory = crate::provider::MemoryFile::new(root.join("memory.md"));
+        let goals = Arc::new(crate::services::goals::goals_service::GoalsService::new(
+            crate::services::goals::file_store::GoalFileStore::new(root.join("goals")),
+        ));
+        let jobs = crate::db::agent_job_repo::AgentJobRepo::new(pool.clone());
+        let persona = crate::provider::PersonaSource::new(
+            Arc::new(crate::services::documents::SoulsService::new(Arc::new(
+                crate::db::SqliteSoulRepo::new(pool.clone()),
+            ))),
+            Arc::new(crate::services::documents::UserProfileService::new(
+                Arc::new(crate::db::SqliteUserProfileRepo::new(pool.clone())),
+            )),
+        );
+        let conversations = Arc::new(crate::db::SqliteConversationRepo::new(pool.clone()));
+        let workers = crate::agent::PiRuntime::new(
+            &config,
+            Arc::clone(&paths),
+            crate::secrets::headless_secret_store(&paths)
+                .expect("test secrets")
+                .as_ref(),
+            Arc::clone(&persona),
+            Arc::clone(&skills),
+            crate::provider::DomainTools::new(
+                Arc::clone(&memory),
+                Arc::clone(&goals),
+                skills,
+                true,
+                true,
+            ),
+            Arc::clone(&jobs),
+            Arc::clone(&conversations),
+            Arc::new(crate::provider::AgentAuthorityLifecycle::default()),
+            crate::provider::McpRuntimeConfig::default(),
+            Arc::new(crate::voice::sinks::VoiceSink::new()),
+            Arc::new(ArcSwap::from_pointee(
+                crate::voice::engines::VoiceEnginesSnapshot::default(),
+            )),
+        )
+        .expect("test pi runtime");
+        let conversation = Arc::new(ConversationService::new(conversations));
+        let cooldown = Arc::new(SqliteCooldownRepo::new(pool));
+        let event_queue = Arc::new(EventQueue::new(64));
+        let connections = Arc::new(SseConnectionManager::new());
+        let admission = TurnAdmission::new();
+        let runs = Arc::new(crate::runtime::run_registry::RunRegistry::new());
+        let personal = Arc::new(tokio::sync::RwLock::new(()));
+        let goal_route = config.routes.goals.clone();
+        let config = Arc::new(ArcSwap::from_pointee(config));
+        let generator = Arc::new(
+            crate::runtime::proactive_generator::ProactiveGenerator::new(
+                Arc::clone(&workers),
+                Arc::clone(&conversation),
+                Arc::clone(&event_queue),
+                Arc::clone(&cooldown),
+                Arc::clone(&persona),
+                Arc::clone(&goals),
+                Arc::clone(&config),
+                Arc::clone(&admission),
+                Arc::clone(&connections),
+                Arc::clone(&runs),
+            ),
+        );
+        let capture = CaptureTrigger::new(
+            Arc::clone(&connections),
+            Arc::new(crate::runtime::capture_learner::CaptureLearner::new(
+                Arc::clone(&workers),
+                memory,
+                true,
+            )),
+            Arc::clone(&generator),
+            Arc::clone(&cooldown),
+            Arc::clone(&event_queue),
+            Arc::clone(&config),
+            Arc::clone(&personal),
+        );
+        let checkin = CheckinTrigger::new(
+            crate::runtime::triggers::CheckinScheduler::new(&[], None, 0, false),
+            generator,
+            Arc::clone(&conversation),
+            Arc::clone(&cooldown),
+            Arc::clone(&config),
+            Arc::clone(&personal),
+        );
+        let goal = Arc::new(GoalTrigger::new(
+            goals,
+            Arc::clone(&jobs),
+            goal_route,
+            Arc::clone(&config),
+            personal,
+        ));
+        Arc::new(Self::new(
+            checkin,
+            goal,
+            capture,
+            Arc::new(MessageHandler::new(
+                workers,
+                Arc::clone(&conversation),
+                Arc::clone(&cooldown),
+                Arc::clone(&event_queue),
+                persona,
+                jobs,
+            )),
+            conversation,
+            cooldown,
+            event_queue,
+            config,
+            connections,
+            admission,
+            runs,
+        ))
+    }
+}

@@ -44,10 +44,7 @@ pub(crate) struct SpeechOverrides {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(deny_unknown_fields)]
 pub(crate) struct SpeechOffer {
-    pub(crate) endpoint_id: Uuid,
-    pub(crate) endpoint_kind: String,
     pub(crate) language: String,
     pub(crate) playback_rates: Vec<u32>,
     pub(crate) endpoint_stt: Vec<SpeechEngineOffer>,
@@ -56,8 +53,6 @@ pub(crate) struct SpeechOffer {
     pub(crate) audio_uplink: bool,
     #[serde(default)]
     pub(crate) overrides: SpeechOverrides,
-    #[serde(default)]
-    pub(crate) daemon_is_non_loopback: bool,
     #[serde(default)]
     pub(crate) remote_audio_consent: bool,
 }
@@ -130,11 +125,10 @@ impl SpeechPlan {
         voice_id: Option<String>,
         daemon_stt: Option<&crate::speech::SttDescriptor>,
         daemon_tts_ready: bool,
+        daemon_is_non_loopback: bool,
     ) -> Result<Self, SpeechPlanError> {
-        if offer.endpoint_kind.is_empty() || offer.language.is_empty() {
-            return Err(SpeechPlanError::InvalidOffer(
-                "endpoint kind and language are required".into(),
-            ));
+        if offer.language.is_empty() {
+            return Err(SpeechPlanError::InvalidOffer("language is required".into()));
         }
         if !offer
             .playback_rates
@@ -182,10 +176,7 @@ impl SpeechPlan {
             daemon_stt.map(|descriptor| descriptor.id),
             "STT",
         )?;
-        if stt_site == SpeechSite::Daemon
-            && offer.daemon_is_non_loopback
-            && !offer.remote_audio_consent
-        {
+        if stt_site == SpeechSite::Daemon && daemon_is_non_loopback && !offer.remote_audio_consent {
             return Err(SpeechPlanError::RemoteAudioConsentRequired);
         }
         let (tts_site, tts_engine_id) = resolve_site(
@@ -375,8 +366,6 @@ mod tests {
 
     fn offer() -> SpeechOffer {
         SpeechOffer {
-            endpoint_id: Uuid::new_v4(),
-            endpoint_kind: "mac_app".into(),
             language: "en".into(),
             playback_rates: vec![24_000],
             endpoint_stt: vec![endpoint_engine(
@@ -397,9 +386,23 @@ mod tests {
             )],
             audio_uplink: false,
             overrides: SpeechOverrides::default(),
-            daemon_is_non_loopback: false,
             remote_audio_consent: false,
         }
+    }
+
+    fn resolve(
+        offer: &SpeechOffer,
+        voice_id: Option<String>,
+        daemon_stt: Option<&crate::speech::SttDescriptor>,
+    ) -> Result<SpeechPlan, SpeechPlanError> {
+        SpeechPlan::resolve_voice_v2(offer, &defaults(), voice_id, daemon_stt, true, false)
+    }
+
+    fn resolve_on_network(
+        offer: &SpeechOffer,
+        daemon_stt: Option<&crate::speech::SttDescriptor>,
+    ) -> Result<SpeechPlan, SpeechPlanError> {
+        SpeechPlan::resolve_voice_v2(offer, &defaults(), None, daemon_stt, true, true)
     }
 
     fn daemon_stt() -> crate::speech::SttDescriptor {
@@ -415,9 +418,7 @@ mod tests {
 
     #[test]
     fn v2_auto_prefers_ready_endpoint_speech() {
-        let plan =
-            SpeechPlan::resolve_voice_v2(&offer(), &defaults(), None, Some(&daemon_stt()), true)
-                .unwrap();
+        let plan = resolve(&offer(), None, Some(&daemon_stt())).unwrap();
         assert_eq!(plan.stt_site, SpeechSite::Endpoint);
         assert_eq!(plan.tts_site, SpeechSite::Endpoint);
         assert_eq!(plan.uplink, SpeechUplink::Transcript);
@@ -428,7 +429,7 @@ mod tests {
     fn v2_accepts_apple_speech_as_endpoint_only() {
         let mut offer = offer();
         offer.endpoint_stt[0].id = APPLE_SPEECH_ANALYZER_ENGINE.into();
-        let plan = SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, None, true).unwrap();
+        let plan = resolve(&offer, None, None).unwrap();
         assert_eq!(plan.stt_site, SpeechSite::Endpoint);
         assert_eq!(plan.stt_engine_id, APPLE_SPEECH_ANALYZER_ENGINE);
         assert_eq!(plan.uplink, SpeechUplink::Transcript);
@@ -440,7 +441,7 @@ mod tests {
         let mut offer = offer();
         offer.endpoint_stt[0].id = "invented_endpoint_stt".into();
         assert_eq!(
-            SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, None, true).unwrap_err(),
+            resolve(&offer, None, None).unwrap_err(),
             SpeechPlanError::NoSpeechPath("STT".into())
         );
     }
@@ -452,7 +453,7 @@ mod tests {
         offer.endpoint_stt[0].languages = vec!["ja".into()];
         offer.overrides.tts = SpeechPlacementOverride::Endpoint;
         assert_eq!(
-            SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, None, true).unwrap_err(),
+            resolve(&offer, None, None).unwrap_err(),
             SpeechPlanError::NoSpeechPath("TTS".into())
         );
     }
@@ -461,7 +462,7 @@ mod tests {
     fn v2_can_resolve_endpoint_stt_and_daemon_tts() {
         let mut offer = offer();
         offer.overrides.tts = SpeechPlacementOverride::Daemon;
-        let plan = SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, None, true).unwrap();
+        let plan = resolve(&offer, None, None).unwrap();
         assert_eq!(plan.stt_site, SpeechSite::Endpoint);
         assert_eq!(plan.tts_site, SpeechSite::Daemon);
     }
@@ -473,25 +474,23 @@ mod tests {
         offer.endpoint_stt[0].languages = vec!["fr".into()];
         offer.overrides.tts = SpeechPlacementOverride::Daemon;
         assert_eq!(
-            SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, None, true).unwrap_err(),
+            resolve(&offer, None, None).unwrap_err(),
             SpeechPlanError::NoSpeechPath("TTS".into())
         );
         offer.language = "en-GB".into();
         offer.endpoint_stt[0].languages = vec!["en".into()];
-        assert!(SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, None, true).is_ok());
+        assert!(resolve(&offer, None, None).is_ok());
     }
 
     #[test]
     fn voice_negotiation_accepts_only_installed_pocket_voices() {
         let mut offer = offer();
         offer.overrides.tts = SpeechPlacementOverride::Daemon;
-        let plan =
-            SpeechPlan::resolve_voice_v2(&offer, &defaults(), Some("marius".into()), None, true)
-                .unwrap();
+        let plan = resolve(&offer, Some("marius".into()), None).unwrap();
         assert_eq!(plan.voice_id, "marius");
         for voice in ["af_bella", "7", "cosette", "jean", "unknown"] {
             assert!(matches!(
-                SpeechPlan::resolve_voice_v2(&offer, &defaults(), Some(voice.into()), None, true),
+                resolve(&offer, Some(voice.into()), None),
                 Err(SpeechPlanError::InvalidOffer(_))
             ));
         }
@@ -502,8 +501,7 @@ mod tests {
         let mut offer = offer();
         offer.endpoint_stt.clear();
         assert_eq!(
-            SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, Some(&daemon_stt()), true,)
-                .unwrap_err(),
+            resolve(&offer, None, Some(&daemon_stt())).unwrap_err(),
             SpeechPlanError::NoSpeechPath("STT".into())
         );
     }
@@ -513,9 +511,7 @@ mod tests {
         let mut offer = offer();
         offer.endpoint_stt.clear();
         offer.audio_uplink = true;
-        let plan =
-            SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, Some(&daemon_stt()), true)
-                .unwrap();
+        let plan = resolve(&offer, None, Some(&daemon_stt())).unwrap();
         assert_eq!(plan.stt_site, SpeechSite::Daemon);
         assert_eq!(plan.uplink, SpeechUplink::Audio);
         assert_eq!(plan.eou_owner, SpeechBoundaryOwner::Daemon);
@@ -526,10 +522,8 @@ mod tests {
         let mut offer = offer();
         offer.endpoint_stt.clear();
         offer.audio_uplink = true;
-        offer.daemon_is_non_loopback = true;
         assert_eq!(
-            SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, Some(&daemon_stt()), true,)
-                .unwrap_err(),
+            resolve_on_network(&offer, Some(&daemon_stt())).unwrap_err(),
             SpeechPlanError::RemoteAudioConsentRequired
         );
     }
@@ -539,23 +533,43 @@ mod tests {
         let mut offer = offer();
         offer.endpoint_stt.clear();
         offer.audio_uplink = true;
-        offer.daemon_is_non_loopback = true;
         offer.remote_audio_consent = true;
-        let plan =
-            SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, Some(&daemon_stt()), true)
-                .unwrap();
+        let plan = resolve_on_network(&offer, Some(&daemon_stt())).unwrap();
         assert_eq!(plan.stt_site, SpeechSite::Daemon);
         assert_eq!(plan.uplink, SpeechUplink::Audio);
     }
 
     #[test]
     fn v2_remote_endpoint_stt_needs_no_audio_consent() {
-        let mut offer = offer();
-        offer.daemon_is_non_loopback = true;
-        offer.remote_audio_consent = false;
-        let plan = SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, None, true).unwrap();
+        let plan = resolve_on_network(&offer(), None).unwrap();
         assert_eq!(plan.stt_site, SpeechSite::Endpoint);
         assert_eq!(plan.uplink, SpeechUplink::Transcript);
+    }
+
+    #[test]
+    fn a_client_claiming_a_loopback_daemon_cannot_skip_remote_consent() {
+        let offer: SpeechOffer = serde_json::from_str(
+            r#"{
+                "endpoint_id":"00000000-0000-0000-0000-000000000001",
+                "endpoint_kind":"mac_app",
+                "language":"en",
+                "playback_rates":[24000],
+                "endpoint_stt":[],
+                "endpoint_tts":[],
+                "audio_uplink":true,
+                "daemon_is_non_loopback":false,
+                "remote_audio_consent":false
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_on_network(&offer, Some(&daemon_stt())).unwrap_err(),
+            SpeechPlanError::RemoteAudioConsentRequired
+        );
+        assert_eq!(
+            resolve(&offer, None, Some(&daemon_stt())).unwrap().stt_site,
+            SpeechSite::Daemon
+        );
     }
 
     #[test]
@@ -563,7 +577,19 @@ mod tests {
         let mut offer = offer();
         offer.overrides.stt = SpeechPlacementOverride::Daemon;
         assert_eq!(
-            SpeechPlan::resolve_voice_v2(&offer, &defaults(), None, None, true).unwrap_err(),
+            resolve(&offer, None, None).unwrap_err(),
+            SpeechPlanError::NoSpeechPath("STT".into())
+        );
+    }
+
+    #[test]
+    fn an_explicit_endpoint_recognizer_never_falls_back_to_daemon_audio() {
+        let mut offer = offer();
+        offer.endpoint_stt.clear();
+        offer.audio_uplink = true;
+        offer.overrides.stt = SpeechPlacementOverride::Endpoint;
+        assert_eq!(
+            resolve(&offer, None, Some(&daemon_stt())).unwrap_err(),
             SpeechPlanError::NoSpeechPath("STT".into())
         );
     }

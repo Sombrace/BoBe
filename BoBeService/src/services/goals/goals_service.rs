@@ -50,13 +50,8 @@ impl GoalsService {
     }
 
     pub(crate) async fn create(&self, mut doc: GoalDoc) -> Result<GoalDoc, AppError> {
-        doc.title = normalize_title(&doc.title)?;
-        validate_priority(doc.priority)?;
-        validate_goal_sections(&doc)?;
         doc.id = GoalId::new();
-        let now = Utc::now();
-        doc.created_at = now;
-        doc.updated_at = now;
+        let doc = prepare_new(doc)?;
         self.store.save(&doc).await?;
         info!(
             goal_id = %doc.id,
@@ -64,6 +59,19 @@ impl GoalsService {
             "goals_service.created"
         );
         Ok(doc)
+    }
+
+    pub(crate) async fn create_if_absent(&self, doc: GoalDoc) -> Result<bool, AppError> {
+        let doc = prepare_new(doc)?;
+        let created = self.store.save_if_absent(&doc).await?;
+        if created {
+            info!(
+                goal_id = %doc.id,
+                title = %doc.title,
+                "goals_service.created"
+            );
+        }
+        Ok(created)
     }
 
     pub(crate) async fn update(
@@ -193,6 +201,16 @@ impl GoalsService {
         }
         Ok(removed)
     }
+}
+
+fn prepare_new(mut doc: GoalDoc) -> Result<GoalDoc, AppError> {
+    doc.title = normalize_title(&doc.title)?;
+    validate_priority(doc.priority)?;
+    validate_goal_sections(&doc)?;
+    let now = Utc::now();
+    doc.created_at = now;
+    doc.updated_at = now;
+    Ok(doc)
 }
 
 fn normalize_title(title: &str) -> Result<String, AppError> {

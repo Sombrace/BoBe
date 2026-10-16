@@ -6,7 +6,6 @@ use axum::extract::State;
 use serde::{Deserialize, Serialize};
 
 use crate::app_state::AppState;
-use crate::bootstrap::mcp_loader::load_mcp_servers;
 use crate::config::{BodyTheme, PauseSensitivity};
 use crate::error::AppError;
 
@@ -140,26 +139,16 @@ pub(crate) async fn update_settings(
         }));
     }
 
-    let mcp_config_guard = if body.mcp_enabled.is_some() {
-        Some(state.infra.mcp_config_lock.lock().await)
+    let result = if body.mcp_enabled.is_some() {
+        super::config_admin::update_with_mcp(&state, changes).await?
     } else {
-        None
+        tokio::task::block_in_place(|| state.infra.config_manager.update(&changes))?
     };
-    let previous_mcp_enabled = state.config().mcp.enabled;
-    let result = tokio::task::block_in_place(|| state.infra.config_manager.update(&changes))?;
     let current_config = (**state.config()).clone();
     let body_theme_changed = result
         .applied_fields
         .iter()
         .any(|field| field == "body.theme");
-    if previous_mcp_enabled != current_config.mcp.enabled {
-        state
-            .runtime
-            .workers
-            .apply_mcp_config(load_mcp_servers(&current_config))
-            .await?;
-    }
-    drop(mcp_config_guard);
     let body_theme_delivered = if body_theme_changed {
         Some(
             state

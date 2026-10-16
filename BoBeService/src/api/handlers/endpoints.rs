@@ -168,12 +168,29 @@ pub(crate) async fn revoke_self(
 }
 
 fn decode_sha256(value: &str) -> Result<Vec<u8>, AppError> {
+    let invalid =
+        || AppError::Validation("certificate_sha256 must be 64 hexadecimal characters".into());
     if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(AppError::Config(
-            "certificate_sha256 must be 64 hexadecimal characters".into(),
-        ));
+        return Err(invalid());
     }
-    crate::util::text::hex_decode(value).ok_or_else(|| {
-        AppError::Config("certificate_sha256 must be 64 hexadecimal characters".into())
-    })
+    crate::util::text::hex_decode(value).ok_or_else(invalid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_malformed_certificate_digest_is_a_client_error() {
+        let non_hex = "g".repeat(64);
+        let short = "a".repeat(63);
+        for malformed in ["", "abc", non_hex.as_str(), short.as_str()] {
+            let status = decode_sha256(malformed)
+                .unwrap_err()
+                .into_response()
+                .status();
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{malformed:?}");
+        }
+        assert_eq!(decode_sha256(&"aB".repeat(32)).unwrap(), vec![0xab; 32]);
+    }
 }

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
@@ -68,17 +68,38 @@ fn validate_subprocess_command_spec(
     let resolved = resolve_command_path(command);
     if let Some(ref resolved) = resolved {
         validate_command_target(&resolved.to_string_lossy(), blocked)?;
-        if let Some(interpreter) = read_script_interpreter(resolved) {
-            validate_command_target(&interpreter, blocked)?;
+        if let Some(shebang) = read_shebang(resolved) {
+            validate_shebang(&shebang, blocked)?;
         }
     }
 
     if uses_env_wrapper(command, resolved.as_deref())
-        && let Some(wrapped_command) = extract_env_wrapped_command(args)
+        && let Some((wrapped_command, wrapped_args)) =
+            env_wrapped_command(args, EnvArguments::Exec)?
     {
-        validate_subprocess_command_spec(wrapped_command, &[], blocked)?;
+        validate_subprocess_command_spec(&wrapped_command, &wrapped_args, blocked)?;
     }
 
+    Ok(())
+}
+
+fn validate_shebang(tokens: &[String], blocked: &[String]) -> Result<(), String> {
+    let Some((interpreter, args)) = tokens.split_first() else {
+        return Ok(());
+    };
+    validate_command_target(interpreter, blocked)?;
+    if command_basename(interpreter) != Some("env") {
+        return Ok(());
+    }
+    let mut wrapped = env_wrapped_command(args, EnvArguments::Shebang)?;
+    while let Some((command, rest)) = wrapped {
+        validate_command_target(&command, blocked)?;
+        wrapped = if command_basename(&command) == Some("env") {
+            env_wrapped_command(&rest, EnvArguments::Exec)?
+        } else {
+            None
+        };
+    }
     Ok(())
 }
 
@@ -138,7 +159,7 @@ fn resolve_command_path(command: &str) -> Option<PathBuf> {
     which::which(command).ok()
 }
 
-fn read_script_interpreter(path: &Path) -> Option<String> {
+fn read_shebang(path: &Path) -> Option<Vec<String>> {
     let file = std::fs::File::open(path).ok()?;
     let mut reader = std::io::BufReader::new(file);
     let mut first_line = String::new();
@@ -146,19 +167,8 @@ fn read_script_interpreter(path: &Path) -> Option<String> {
         return None;
     }
 
-    let shebang = first_line.strip_prefix("#!")?.trim();
-    let mut parts = shebang.split_whitespace();
-    let interpreter = parts.next()?;
-
-    if Path::new(interpreter)
-        .file_name()
-        .and_then(|name| name.to_str())
-        == Some("env")
-    {
-        return parts.find(|part| !part.starts_with('-')).map(str::to_owned);
-    }
-
-    Some(interpreter.to_owned())
+    let shebang = first_line.strip_prefix("#!")?;
+    Some(shebang.split_whitespace().map(str::to_owned).collect())
 }
 
 fn uses_env_wrapper(command: &str, resolved: Option<&Path>) -> bool {
@@ -175,58 +185,96 @@ fn command_basename(command: &str) -> Option<&str> {
         .and_then(|name| name.to_str())
 }
 
-fn extract_env_wrapped_command(args: &[String]) -> Option<&str> {
-    let mut index = 0usize;
-    let mut treat_remaining_as_command = false;
-
-    while index < args.len() {
-        let arg = args[index].as_str();
-        if treat_remaining_as_command {
-            return Some(arg);
-        }
-
-        if arg == "--" {
-            treat_remaining_as_command = true;
-            index += 1;
-            continue;
-        }
-
-        if arg.contains('=') {
-            index += 1;
-            continue;
-        }
-
-        if let Some(consumed) = env_option_value_arity(arg) {
-            index += 1 + consumed;
-            continue;
-        }
-
-        if arg.starts_with('-') {
-            index += 1;
-            continue;
-        }
-
-        return Some(arg);
-    }
-
-    None
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EnvArguments {
+    Exec,
+    Shebang,
 }
 
-fn env_option_value_arity(arg: &str) -> Option<usize> {
-    match arg {
-        "-u" | "--unset" | "-C" | "--chdir" | "-S" | "--split-string" => Some(1),
-        _ if arg.starts_with("--unset=")
-            || arg.starts_with("--chdir=")
-            || arg.starts_with("--split-string=")
-            || arg.starts_with("-u")
-            || arg.starts_with("-C")
-            || arg.starts_with("-S") =>
-        {
-            Some(0)
+type EnvWrappedCommand = Option<(String, Vec<String>)>;
+
+fn env_wrapped_command(args: &[String], form: EnvArguments) -> Result<EnvWrappedCommand, String> {
+    let mut tokens: VecDeque<String> = args.iter().cloned().collect();
+    while let Some(token) = tokens.pop_front() {
+        if token == "--" || token == "-" {
+            break;
         }
-        _ if arg.starts_with('-') => Some(0),
-        _ => None,
+        let Some(option) = token.strip_prefix('-') else {
+            tokens.push_front(token);
+            break;
+        };
+        if let Some(long) = option.strip_prefix('-') {
+            let (name, value) = long
+                .split_once('=')
+                .map_or((long, None), |(name, value)| (name, Some(value)));
+            match (name, value) {
+                ("ignore-environment" | "null" | "debug", None) | ("unset" | "chdir", Some(_)) => {}
+                ("unset" | "chdir", None) => take_env_option_value(&mut tokens, &token)?,
+                ("split-string", value) if form == EnvArguments::Shebang => {
+                    ensure_literal_split_string(args)?;
+                    if let Some(value) = value {
+                        tokens.push_front(value.to_owned());
+                    }
+                }
+                _ => return Err(disallowed_env_option(&token)),
+            }
+            continue;
+        }
+        for (index, flag) in option.char_indices() {
+            let attached = &option[index + flag.len_utf8()..];
+            match flag {
+                'i' | '0' | 'v' => continue,
+                'u' | 'C' if attached.is_empty() => take_env_option_value(&mut tokens, &token)?,
+                'u' | 'C' => {}
+                'S' if form == EnvArguments::Shebang => {
+                    ensure_literal_split_string(args)?;
+                    if !attached.is_empty() {
+                        tokens.push_front(attached.to_owned());
+                    }
+                }
+                _ => return Err(disallowed_env_option(&token)),
+            }
+            break;
+        }
     }
+    while tokens.front().is_some_and(|token| token.contains('=')) {
+        tokens.pop_front();
+    }
+    let Some(command) = tokens.pop_front() else {
+        return Ok(None);
+    };
+    if command.starts_with('-') {
+        return Err(format!(
+            "env would run '{command}', which looks like an option; MCP commands must name an executable"
+        ));
+    }
+    Ok(Some((command, tokens.into())))
+}
+
+fn take_env_option_value(tokens: &mut VecDeque<String>, option: &str) -> Result<(), String> {
+    tokens
+        .pop_front()
+        .map(drop)
+        .ok_or_else(|| format!("env option '{option}' is missing its value"))
+}
+
+fn ensure_literal_split_string(tokens: &[String]) -> Result<(), String> {
+    if tokens
+        .iter()
+        .any(|token| token.contains(['"', '\'', '\\', '$']))
+    {
+        return Err(
+            "env -S with quotes, escapes or variables is not allowed in an MCP script interpreter"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+fn disallowed_env_option(option: &str) -> String {
+    format!(
+        "env option '{option}' is not allowed in MCP commands because it can hide the program that runs"
+    )
 }
 
 #[cfg(test)]
@@ -347,6 +395,102 @@ mod tests {
         fs::remove_dir(&tmp).unwrap();
 
         assert!(result.is_err());
+    }
+
+    fn env_args(args: &[&str]) -> Vec<String> {
+        args.iter().map(|arg| (*arg).to_owned()).collect()
+    }
+
+    #[test]
+    fn env_split_string_is_rejected_in_every_form() {
+        for args in [
+            &["-S", "bash -c id"][..],
+            &["-Sbash -c id"],
+            &["-S", "rm -rf /srv/data"],
+            &["--split-string=sh -c id"],
+            &["--split-string", "bash -c id"],
+            &["--split=bash -c id"],
+            &["-iS", "bash -c id"],
+            &["-i", "-vSbash -c id"],
+            &["-S", "node server.js"],
+        ] {
+            let error = validate_mcp_command_with_args("env", &env_args(args), &[])
+                .expect_err("env split strings hide the program that runs");
+            assert!(
+                error.to_string().contains("not allowed"),
+                "{args:?}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn env_options_with_values_do_not_hide_a_blocked_command() {
+        for args in [
+            &["-u", "HOME", "bash"][..],
+            &["-uHOME", "bash"],
+            &["--unset", "HOME", "bash"],
+            &["--unset=HOME", "rm", "-rf", "."],
+            &["-C", "/srv", "sh"],
+            &["-iC/srv", "bash"],
+            &["--chdir=/srv", "bash"],
+            &["--", "FOO=1", "bash"],
+            &["-", "FOO=1", "bash"],
+            &["env", "-S", "bash -c id"],
+            &["env", "-i", "bash"],
+            &["-P", "/bin", "sh"],
+            &["-a", "node", "bash"],
+            &["--argv0=node", "bash"],
+            &["FOO=1", "-i", "bash"],
+        ] {
+            assert!(
+                validate_mcp_command_with_args("env", &env_args(args), &[]).is_err(),
+                "{args:?}"
+            );
+        }
+        for args in [
+            &["-u", "HOME", "node", "server.js"][..],
+            &["--chdir=/srv", "node", "server.js"],
+            &["--", "FOO=1", "node", "server.js"],
+            &["-0iv", "FOO=1", "node"],
+        ] {
+            assert!(
+                validate_mcp_command_with_args("env", &env_args(args), &[]).is_ok(),
+                "{args:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn env_shebangs_are_parsed_like_env_arguments() {
+        let tmp = std::env::temp_dir().join(format!("bobe-mcp-security-{}", Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+        let validate = |name: &str, shebang: &str| {
+            let script = tmp.join(name);
+            fs::write(&script, format!("{shebang}\nconsole.log('ok')\n")).unwrap();
+            validate_mcp_command_with_args(script.to_str().unwrap(), &[], &[])
+        };
+
+        let blocked = [
+            validate("split", "#!/usr/bin/env -S bash -e"),
+            validate("attached", "#!/usr/bin/env -Ssh"),
+            validate("unset", "#!/usr/bin/env -u HOME bash"),
+            validate("assignment", "#!/usr/bin/env FOO=1 sh"),
+            validate("variable", "#!/usr/bin/env -S ${SHELL}"),
+            validate("nested", "#!/usr/bin/env env -S bash"),
+        ];
+        let allowed = [
+            validate("node", "#!/usr/bin/env node"),
+            validate("node-flags", "#!/usr/bin/env -S node --no-warnings"),
+        ];
+        fs::remove_dir_all(&tmp).unwrap();
+
+        for result in blocked {
+            assert!(result.is_err());
+        }
+        for result in allowed {
+            assert!(result.is_ok(), "{result:?}");
+        }
     }
 
     #[test]

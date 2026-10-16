@@ -9,12 +9,12 @@ use crate::services::mcp_config_service::{
     self as mcp_svc, McpConfigDeps, McpConfigMutationRequest,
 };
 
-fn deps_from(state: &AppState) -> McpConfigDeps<'_> {
+fn deps_from(state: &AppState) -> McpConfigDeps {
     McpConfigDeps {
-        config: &state.infra.config,
-        mcp_config_lock: &state.infra.mcp_config_lock,
-        workers: &state.runtime.workers,
-        secret_store: &state.infra.secret_store,
+        config: Arc::clone(&state.infra.config),
+        mcp_config_lock: Arc::clone(&state.infra.mcp_config_lock),
+        workers: Arc::clone(&state.runtime.workers),
+        secret_store: Arc::clone(&state.infra.secret_store),
     }
 }
 

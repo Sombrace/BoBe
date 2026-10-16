@@ -21,6 +21,7 @@ const ROOT_FILES: &[&str] = &[
     "headless-secrets.json",
     "owner-api-token",
 ];
+const SETTINGS_FILES: &[&str] = &["mcp.json", "secrets.json", "headless-secrets.json"];
 const ROOT_DIRECTORIES: &[&str] = &["goals", "skills", "workspace"];
 const TLS_DIRECTORY: &str = "tls";
 const TLS_FILES: &[&str] = &[
@@ -48,10 +49,20 @@ pub(crate) struct BackupFile {
     pub(crate) bytes: u64,
 }
 
+pub(crate) struct SettingsLocks {
+    pub(crate) config: std::sync::Arc<std::sync::Mutex<()>>,
+    pub(crate) mcp: std::sync::Arc<tokio::sync::Mutex<()>>,
+}
+
+struct SettingsSnapshot {
+    files: Vec<(String, Vec<u8>)>,
+}
+
 pub(crate) async fn create_live(
     pool: &sqlx::SqlitePool,
     paths: &DataPaths,
     config_file: &Path,
+    locks: &SettingsLocks,
     authority_id: uuid::Uuid,
     authority_epoch: i64,
     database_schema: i64,
@@ -64,14 +75,18 @@ pub(crate) async fn create_live(
     sqlx::query(sqlx::AssertSqlSafe(format!("VACUUM INTO '{escaped}'")))
         .execute(pool)
         .await?;
-    let result = create_with_database(
-        paths,
-        config_file,
-        authority_id,
-        authority_epoch,
-        database_schema,
-        &snapshot,
-    )
+    let result = async {
+        let settings = snapshot_settings_locked(paths, config_file, locks).await?;
+        create_with_database(
+            paths,
+            settings,
+            authority_id,
+            authority_epoch,
+            database_schema,
+            &snapshot,
+        )
+        .await
+    }
     .await;
     drop(crate::util::durable_fs::durable_remove_file(&snapshot).await);
     result
@@ -87,9 +102,13 @@ pub(crate) async fn create(
     let database = paths
         .database_file()
         .ok_or_else(|| AppError::Config("backup requires a file-backed SQLite database".into()))?;
+    let sources = settings_sources(paths, config_file);
+    let settings = tokio::task::spawn_blocking(move || read_settings(sources))
+        .await
+        .map_err(|error| AppError::Internal(format!("backup settings join: {error}")))??;
     create_with_database(
         paths,
-        config_file,
+        settings,
         authority_id,
         authority_epoch,
         database_schema,
@@ -98,9 +117,76 @@ pub(crate) async fn create(
     .await
 }
 
-async fn create_with_database(
+pub(crate) async fn create_offline(
     paths: &DataPaths,
     config_file: &Path,
+) -> Result<PathBuf, AppError> {
+    let database = paths
+        .database_file()
+        .ok_or_else(|| AppError::Config("backup requires a file-backed SQLite database".into()))?;
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&database)
+        .create_if_missing(false);
+    let mut connection = sqlx::SqliteConnection::connect_with(&options).await?;
+    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+        .execute(&mut connection)
+        .await?;
+    connection.close().await?;
+    let schema = crate::bootstrap::database::read_schema_version(&database).await?;
+    let (authority, epoch) = read_authority(&database).await?;
+    create(paths, config_file, authority, epoch, schema).await
+}
+
+fn settings_sources(paths: &DataPaths, config_file: &Path) -> Vec<(String, PathBuf)> {
+    std::iter::once((CONFIG_ARTIFACT.to_owned(), config_file.to_path_buf()))
+        .chain(
+            SETTINGS_FILES
+                .iter()
+                .map(|name| (format!("{DATA_PREFIX}{name}"), paths.root().join(name))),
+        )
+        .collect()
+}
+
+async fn snapshot_settings_locked(
+    paths: &DataPaths,
+    config_file: &Path,
+    locks: &SettingsLocks,
+) -> Result<SettingsSnapshot, AppError> {
+    let _mcp = locks.mcp.lock().await;
+    let config = std::sync::Arc::clone(&locks.config);
+    let sources = settings_sources(paths, config_file);
+    tokio::task::spawn_blocking(move || {
+        let _config = config
+            .lock()
+            .map_err(|_| AppError::Io(std::io::Error::other("config write lock poisoned")))?;
+        read_settings(sources)
+    })
+    .await
+    .map_err(|error| AppError::Internal(format!("backup settings join: {error}")))?
+}
+
+fn read_settings(sources: Vec<(String, PathBuf)>) -> Result<SettingsSnapshot, AppError> {
+    let mut files = Vec::new();
+    for (artifact, path) in sources {
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if !metadata.is_file() {
+            return Err(AppError::Config(format!(
+                "backup artifact is not a regular file: {}",
+                path.display()
+            )));
+        }
+        files.push((artifact, std::fs::read(&path)?));
+    }
+    Ok(SettingsSnapshot { files })
+}
+
+async fn create_with_database(
+    paths: &DataPaths,
+    settings: SettingsSnapshot,
     authority_id: uuid::Uuid,
     authority_epoch: i64,
     database_schema: i64,
@@ -120,10 +206,13 @@ async fn create_with_database(
     let result = async {
         let mut files = Vec::new();
         copy_file_no_follow(database, &staging, DATABASE_ARTIFACT, &mut files).await?;
-        if config_file.is_file() {
-            copy_file_no_follow(config_file, &staging, CONFIG_ARTIFACT, &mut files).await?;
+        for (artifact, bytes) in &settings.files {
+            store_artifact(&staging, artifact, bytes, &mut files).await?;
         }
-        for name in ROOT_FILES {
+        for name in ROOT_FILES
+            .iter()
+            .filter(|name| !SETTINGS_FILES.contains(name))
+        {
             let source = paths.root().join(name);
             if tokio::fs::try_exists(&source).await? {
                 copy_file_no_follow(
@@ -400,12 +489,80 @@ pub(crate) async fn restore(
     config_file: &Path,
     database_schemas: &RangeInclusive<i64>,
 ) -> Result<RestoreOutcome, AppError> {
+    restore_interruptible(backup, paths, config_file, database_schemas, |_| false).await
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RestorePoint {
+    Installing,
+    MovedAside,
+    Installed,
+    Committed,
+    Cleaned,
+}
+
+struct Checkpoints<F> {
+    interrupt: F,
+}
+
+enum StepError {
+    Interrupted,
+    Failed(AppError),
+}
+
+impl From<AppError> for StepError {
+    fn from(error: AppError) -> Self {
+        Self::Failed(error)
+    }
+}
+
+impl From<std::io::Error> for StepError {
+    fn from(error: std::io::Error) -> Self {
+        Self::Failed(error.into())
+    }
+}
+
+impl From<StepError> for AppError {
+    fn from(error: StepError) -> Self {
+        match error {
+            StepError::Interrupted => AppError::Internal("restore interrupted".into()),
+            StepError::Failed(error) => error,
+        }
+    }
+}
+
+impl<F: FnMut(RestorePoint) -> bool> Checkpoints<F> {
+    fn reach(&mut self, point: RestorePoint) -> Result<(), StepError> {
+        if (self.interrupt)(point) {
+            return Err(StepError::Interrupted);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Reconciled {
+    Absent,
+    Completed,
+    RolledBack,
+}
+
+const RESTORE_JOURNAL: &str = "restore-journal.json";
+
+async fn restore_interruptible(
+    backup: &Path,
+    paths: &DataPaths,
+    config_file: &Path,
+    database_schemas: &RangeInclusive<i64>,
+    interrupt: impl FnMut(RestorePoint) -> bool,
+) -> Result<RestoreOutcome, AppError> {
+    let mut checkpoints = Checkpoints { interrupt };
     let manifest = verify(backup, database_schemas).await?;
     let database = paths
         .database_file()
         .ok_or_else(|| AppError::Config("restore requires a file-backed SQLite database".into()))?;
-    let journal_path = paths.root().join("restore-journal.json");
-    recover_restore(paths, config_file, &database, &journal_path).await?;
+    reconcile_restore_journals(paths, config_file).await?;
+    let journal_path = restore_journal_path(config_file)?;
     let (current_authority, current_epoch) = read_authority(&database).await?;
     if current_authority != manifest.runtime_authority_id {
         return Err(AppError::Conflict(
@@ -469,54 +626,73 @@ pub(crate) async fn restore(
             return Err(error);
         }
     };
-    let had_targets = replacements
-        .iter()
-        .map(|replacement| replacement.had_target)
-        .collect::<Vec<_>>();
-    write_restore_journal(
-        &journal_path,
-        &RestoreJournal {
-            transaction_id: transaction_id.clone(),
-            phase: "installing".into(),
-            had_targets,
-        },
-    )
-    .await?;
-    let mut installed = Vec::<InstalledReplacement>::new();
+    let mut journal = RestoreJournal {
+        transaction_id: transaction_id.clone(),
+        phase: "installing".into(),
+        had_targets: replacements
+            .iter()
+            .map(|replacement| replacement.had_target)
+            .collect(),
+        layout: Some(RestoreLayout {
+            data_root: paths.root().to_path_buf(),
+            database_url: paths.database_url().to_owned(),
+            stage_root: stage_root.clone(),
+            targets: replacements
+                .iter()
+                .map(|replacement| RestoreTarget {
+                    path: replacement.target.clone(),
+                    had_target: replacement.had_target,
+                    staged: Some(replacement.staged.is_some()),
+                })
+                .collect(),
+        }),
+    };
+    if let Err(error) = write_restore_journal(&journal_path, &journal).await {
+        drop(clean_prepared_replacements(paths, config_file, &database, &transaction_id).await);
+        drop(crate::util::durable_fs::durable_remove_dir_all(&stage_root).await);
+        drop(crate::util::durable_fs::durable_remove_file(&journal_path).await);
+        return Err(error);
+    }
+    checkpoints.reach(RestorePoint::Installing)?;
     for replacement in replacements {
-        if let Err(error) = install_replacement(replacement, &transaction_id, &mut installed).await
-        {
-            let rollback_error = rollback(&mut installed).await.err();
-            return Err(AppError::Internal(match rollback_error {
-                Some(rollback) => format!("restore failed: {error}; rollback failed: {rollback}"),
-                None => format!("restore failed and was rolled back: {error}"),
-            }));
+        match install_replacement(replacement, &transaction_id, &mut checkpoints).await {
+            Ok(()) => {}
+            Err(StepError::Interrupted) => return Err(StepError::Interrupted.into()),
+            Err(StepError::Failed(error)) => {
+                return match reconcile_journal(&journal_path, None).await {
+                    Ok(Reconciled::Completed) => Ok(RestoreOutcome {
+                        manifest,
+                        restored_authority_epoch: restored_epoch,
+                        cleanup_pending: false,
+                    }),
+                    Ok(_) => Err(AppError::Internal(format!(
+                        "restore failed and was rolled back: {error}"
+                    ))),
+                    Err(rollback) => Err(AppError::Internal(format!(
+                        "restore failed: {error}; rollback failed: {rollback}"
+                    ))),
+                };
+            }
         }
     }
-    write_restore_journal(
-        &journal_path,
-        &RestoreJournal {
-            transaction_id: transaction_id.clone(),
-            phase: "installed".into(),
-            had_targets: installed
-                .iter()
-                .map(|replacement| replacement.old.is_some())
-                .collect(),
-        },
-    )
-    .await?;
-    let cleanup_pending = async {
-        for replacement in installed {
-            if let Some(old) = replacement.old {
-                remove_entry(&old).await?;
-            }
+    journal.phase = "installed".into();
+    write_restore_journal(&journal_path, &journal).await?;
+    checkpoints.reach(RestorePoint::Committed)?;
+    let cleanup = async {
+        for target in journal.layout.iter().flat_map(|layout| &layout.targets) {
+            remove_entry(&replacement_path(&target.path, "old", &transaction_id)?).await?;
+            checkpoints.reach(RestorePoint::Cleaned)?;
         }
         crate::util::durable_fs::durable_remove_dir_all(&stage_root).await?;
         crate::util::durable_fs::durable_remove_file(&journal_path).await?;
-        Ok::<(), AppError>(())
+        Ok::<(), StepError>(())
     }
-    .await
-    .is_err();
+    .await;
+    let cleanup_pending = match cleanup {
+        Ok(()) => false,
+        Err(StepError::Interrupted) => return Err(StepError::Interrupted.into()),
+        Err(StepError::Failed(_)) => true,
+    };
     Ok(RestoreOutcome {
         manifest,
         restored_authority_epoch: restored_epoch,
@@ -548,6 +724,24 @@ struct RestoreJournal {
     transaction_id: String,
     phase: String,
     had_targets: Vec<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    layout: Option<RestoreLayout>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RestoreLayout {
+    data_root: PathBuf,
+    database_url: String,
+    stage_root: PathBuf,
+    targets: Vec<RestoreTarget>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RestoreTarget {
+    path: PathBuf,
+    had_target: bool,
+    #[serde(default)]
+    staged: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -555,11 +749,6 @@ struct Replacement {
     staged: Option<PathBuf>,
     target: PathBuf,
     had_target: bool,
-}
-
-struct InstalledReplacement {
-    target: PathBuf,
-    old: Option<PathBuf>,
 }
 
 async fn write_artifact_file(path: &Path, artifact: &str, bytes: &[u8]) -> Result<(), AppError> {
@@ -810,98 +999,181 @@ async fn copy_artifact_directory(
 async fn install_replacement(
     replacement: Replacement,
     transaction_id: &str,
-    installed: &mut Vec<InstalledReplacement>,
-) -> Result<(), AppError> {
+    checkpoints: &mut Checkpoints<impl FnMut(RestorePoint) -> bool>,
+) -> Result<(), StepError> {
     if let Some(parent) = replacement.target.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    let old = replacement_path(&replacement.target, "old", transaction_id)?;
-    let had_target = replacement.had_target;
-    if had_target {
+    if replacement.had_target {
+        let old = replacement_path(&replacement.target, "old", transaction_id)?;
         tokio::fs::rename(&replacement.target, &old).await?;
         sync_parent(&replacement.target).await?;
+        checkpoints.reach(RestorePoint::MovedAside)?;
     }
-    installed.push(InstalledReplacement {
-        target: replacement.target.clone(),
-        old: had_target.then_some(old.clone()),
-    });
-    if let Some(staged) = replacement.staged
-        && let Err(error) = tokio::fs::rename(staged, &replacement.target).await
-    {
-        return Err(error.into());
+    if let Some(staged) = replacement.staged {
+        tokio::fs::rename(staged, &replacement.target).await?;
+        sync_parent(&replacement.target).await?;
+        checkpoints.reach(RestorePoint::Installed)?;
     }
-    sync_parent(&replacement.target).await?;
     Ok(())
-}
-
-async fn rollback(installed: &mut Vec<InstalledReplacement>) -> Result<(), AppError> {
-    let mut failures = Vec::new();
-    while let Some(replacement) = installed.pop() {
-        if let Err(error) = remove_entry(&replacement.target).await {
-            failures.push(format!("remove {}: {error}", replacement.target.display()));
-        }
-        if let Some(old) = replacement.old
-            && let Err(error) = tokio::fs::rename(&old, &replacement.target).await
-        {
-            failures.push(format!(
-                "restore {} from {}: {error}",
-                replacement.target.display(),
-                old.display()
-            ));
-        }
-    }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(AppError::Internal(failures.join("; ")))
-    }
 }
 
 async fn write_restore_journal(path: &Path, journal: &RestoreJournal) -> Result<(), AppError> {
     crate::util::durable_fs::atomic_write(path, &serde_json::to_vec_pretty(journal)?).await
 }
 
-async fn recover_restore(
+fn restore_journal_path(config_file: &Path) -> Result<PathBuf, AppError> {
+    Ok(config_file
+        .parent()
+        .ok_or_else(|| AppError::Config("config file has no parent directory".into()))?
+        .join(RESTORE_JOURNAL))
+}
+
+pub(crate) fn restore_journal_pending(paths: &DataPaths) -> bool {
+    std::fs::symlink_metadata(paths.root().join(RESTORE_JOURNAL)).is_ok()
+}
+
+async fn read_restore_journal(path: &Path) -> Result<Option<RestoreJournal>, AppError> {
+    match tokio::fs::read(path).await {
+        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub(crate) async fn reconcile_interrupted_restore(
+    config_root: &Path,
+) -> Result<Reconciled, AppError> {
+    let journal_path = config_root.join(RESTORE_JOURNAL);
+    let Some(layout) = read_restore_journal(&journal_path)
+        .await?
+        .and_then(|journal| journal.layout)
+    else {
+        return Ok(Reconciled::Absent);
+    };
+    let paths = DataPaths::resolve(&layout.data_root, &layout.database_url)?;
+    let _locks = crate::util::runtime_lock::RuntimeLocks::acquire(&paths).map_err(|error| {
+        AppError::Conflict(format!(
+            "an interrupted restore cannot be reconciled while another BoBe process owns its data: {error}"
+        ))
+    })?;
+    reconcile_journal(&journal_path, None).await
+}
+
+pub(crate) async fn reconcile_restore_journals(
     paths: &DataPaths,
     config_file: &Path,
-    database: &Path,
+) -> Result<Reconciled, AppError> {
+    let database = paths
+        .database_file()
+        .ok_or_else(|| AppError::Config("restore requires a file-backed SQLite database".into()))?;
+    let legacy = LegacyLayout {
+        paths,
+        config_file,
+        database: &database,
+    };
+    let configured = reconcile_journal(&restore_journal_path(config_file)?, Some(&legacy)).await?;
+    let legacy = reconcile_journal(&paths.root().join(RESTORE_JOURNAL), Some(&legacy)).await?;
+    Ok(if configured == Reconciled::Absent {
+        legacy
+    } else {
+        configured
+    })
+}
+
+struct LegacyLayout<'a> {
+    paths: &'a DataPaths,
+    config_file: &'a Path,
+    database: &'a Path,
+}
+
+async fn reconcile_journal(
     journal_path: &Path,
-) -> Result<(), AppError> {
-    if !tokio::fs::try_exists(journal_path).await? {
-        return Ok(());
-    }
-    let journal: RestoreJournal = serde_json::from_slice(&tokio::fs::read(journal_path).await?)?;
-    let targets = restore_targets(paths, config_file, database);
-    if journal.had_targets.len() != targets.len() {
-        return Err(AppError::Conflict(
-            "restore journal does not match the current artifact inventory".into(),
-        ));
-    }
-    for (target, had_target) in targets.into_iter().zip(journal.had_targets).rev() {
-        let old = replacement_path(&target, "old", &journal.transaction_id)?;
-        let staged = replacement_path(&target, "new", &journal.transaction_id)?;
-        if journal.phase == "installed" {
-            remove_entry(&old).await?;
-            remove_entry(&staged).await?;
-            continue;
+    legacy: Option<&LegacyLayout<'_>>,
+) -> Result<Reconciled, AppError> {
+    let Some(mut journal) = read_restore_journal(journal_path).await? else {
+        return Ok(Reconciled::Absent);
+    };
+    let layout = match (journal.layout.clone(), legacy) {
+        (Some(layout), _) => layout,
+        (None, Some(legacy)) => {
+            let targets = restore_targets(legacy.paths, legacy.config_file, legacy.database);
+            if journal.had_targets.len() != targets.len() {
+                return Err(AppError::Conflict(
+                    "restore journal does not match the current artifact inventory".into(),
+                ));
+            }
+            let always_staged = [legacy.database.to_path_buf(), legacy.paths.agent_dir()];
+            RestoreLayout {
+                data_root: legacy.paths.root().to_path_buf(),
+                database_url: legacy.paths.database_url().to_owned(),
+                stage_root: legacy
+                    .paths
+                    .root()
+                    .join(format!(".restore-{}", journal.transaction_id)),
+                targets: targets
+                    .into_iter()
+                    .zip(journal.had_targets.iter().copied())
+                    .map(|(path, had_target)| RestoreTarget {
+                        staged: always_staged.contains(&path).then_some(true),
+                        path,
+                        had_target,
+                    })
+                    .collect(),
+            }
         }
-        if tokio::fs::try_exists(&old).await? {
-            remove_entry(&target).await?;
-            tokio::fs::rename(&old, &target).await?;
-            sync_parent(&target).await?;
-        } else if !had_target {
-            remove_entry(&target).await?;
+        (None, None) => return Ok(Reconciled::Absent),
+    };
+    let transaction_id = journal.transaction_id.clone();
+    let finish = journal.phase == "installed" || fully_installed(&layout, &transaction_id)?;
+    if finish {
+        if journal.phase != "installed" {
+            journal.phase = "installed".into();
+            write_restore_journal(journal_path, &journal).await?;
         }
-        remove_entry(&staged).await?;
+        for target in &layout.targets {
+            remove_entry(&replacement_path(&target.path, "old", &transaction_id)?).await?;
+            remove_entry(&replacement_path(&target.path, "new", &transaction_id)?).await?;
+        }
+    } else {
+        for target in layout.targets.iter().rev() {
+            let old = replacement_path(&target.path, "old", &transaction_id)?;
+            if entry_exists(&old) {
+                remove_entry(&target.path).await?;
+                tokio::fs::rename(&old, &target.path).await?;
+                sync_parent(&target.path).await?;
+            } else if !target.had_target {
+                remove_entry(&target.path).await?;
+            }
+            remove_entry(&replacement_path(&target.path, "new", &transaction_id)?).await?;
+        }
     }
-    crate::util::durable_fs::durable_remove_dir_all(
-        &paths
-            .root()
-            .join(format!(".restore-{}", journal.transaction_id)),
-    )
-    .await?;
+    crate::util::durable_fs::durable_remove_dir_all(&layout.stage_root).await?;
     crate::util::durable_fs::durable_remove_file(journal_path).await?;
-    Ok(())
+    Ok(if finish {
+        Reconciled::Completed
+    } else {
+        Reconciled::RolledBack
+    })
+}
+
+fn fully_installed(layout: &RestoreLayout, transaction_id: &str) -> Result<bool, AppError> {
+    for target in &layout.targets {
+        let moved_aside = !target.had_target
+            || entry_exists(&replacement_path(&target.path, "old", transaction_id)?);
+        let staged_pending = entry_exists(&replacement_path(&target.path, "new", transaction_id)?);
+        let placed = target
+            .staged
+            .is_none_or(|staged| entry_exists(&target.path) == staged);
+        if !moved_aside || staged_pending || !placed {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn entry_exists(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
 }
 
 fn restore_targets(paths: &DataPaths, config_file: &Path, database: &Path) -> Vec<PathBuf> {
@@ -1075,12 +1347,21 @@ async fn copy_file_no_follow(
 ) -> Result<(), AppError> {
     reject_symlink(source).await?;
     let bytes = read_regular_no_follow(source).await?;
+    store_artifact(backup, artifact, &bytes, files).await
+}
+
+async fn store_artifact(
+    backup: &Path,
+    artifact: &str,
+    bytes: &[u8],
+    files: &mut Vec<BackupFile>,
+) -> Result<(), AppError> {
     let target = safe_backup_path(backup, artifact)?;
     ensure_artifact_parent(backup, artifact, is_session_state_artifact(artifact)).await?;
-    write_artifact_file(&target, artifact, &bytes).await?;
+    write_artifact_file(&target, artifact, bytes).await?;
     files.push(BackupFile {
         path: artifact.into(),
-        sha256: hex_encode(&Sha256::digest(&bytes)),
+        sha256: hex_encode(&Sha256::digest(bytes)),
         bytes: bytes.len() as u64,
     });
     Ok(())
@@ -1676,7 +1957,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn interrupted_restore_recovers_old_database_before_retry() {
+    async fn an_interrupted_legacy_restore_recovers_the_old_database() {
         let root = std::env::temp_dir().join(format!("bobe-restore-test-{}", uuid::Uuid::new_v4()));
         let data = root.join("data");
         let database = data.join("bobe.sqlite3");
@@ -1710,14 +1991,22 @@ mod tests {
                 transaction_id: transaction_id.into(),
                 phase: "installing".into(),
                 had_targets,
+                layout: None,
             },
         )
         .await
         .unwrap();
 
-        recover_restore(&paths, &config, &database, &journal_path)
-            .await
-            .unwrap();
+        reconcile_journal(
+            &journal_path,
+            Some(&LegacyLayout {
+                paths: &paths,
+                config_file: &config,
+                database: &database,
+            }),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(tokio::fs::read(&database).await.unwrap(), b"old-database");
         assert_eq!(tokio::fs::read(&config).await.unwrap(), b"old-config");
@@ -1728,7 +2017,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn completed_restore_recovery_keeps_new_target_and_cleans_old() {
+    async fn a_completed_legacy_restore_keeps_the_new_target_and_cleans_the_old() {
         let root = std::env::temp_dir().join(format!("bobe-restore-test-{}", uuid::Uuid::new_v4()));
         let data = root.join("data");
         let database = data.join("bobe.sqlite3");
@@ -1760,18 +2049,433 @@ mod tests {
                 transaction_id: transaction_id.into(),
                 phase: "installed".into(),
                 had_targets,
+                layout: None,
             },
         )
         .await
         .unwrap();
 
-        recover_restore(&paths, &config, &database, &journal_path)
-            .await
-            .unwrap();
+        reconcile_journal(
+            &journal_path,
+            Some(&LegacyLayout {
+                paths: &paths,
+                config_file: &config,
+                database: &database,
+            }),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(tokio::fs::read(&database).await.unwrap(), b"new-database");
         assert!(!old_database.exists());
         assert!(!journal_path.exists());
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
+    struct RestoreFixture {
+        root: PathBuf,
+        paths: DataPaths,
+        config: PathBuf,
+        database: PathBuf,
+        backup: PathBuf,
+    }
+
+    const TRACKED: [&str; 9] = [
+        "config.toml",
+        "memory.md",
+        "goals/old.md",
+        "goals/new.md",
+        "skills/learned/notes/SKILL.md",
+        "workspace/notes.md",
+        "tls/server-cert.pem",
+        "agent/session.json",
+        "agent/sessions/main.jsonl",
+    ];
+
+    async fn restore_fixture() -> RestoreFixture {
+        let root =
+            std::env::temp_dir().join(format!("bobe-restore-crash-{}", uuid::Uuid::new_v4()));
+        let data = root.join("authority");
+        let paths = DataPaths::resolve(
+            &data,
+            &format!("sqlite:{}", data.join("data/bobrust.db").display()),
+        )
+        .unwrap()
+        .prepare_root()
+        .unwrap();
+        let database = paths.database_file().unwrap();
+        crate::agent::state::prepare(&paths).unwrap();
+        let pointer = br#"{"version":1,"session_id":"019a3a19-4410-7000-8000-000000000001","file":"sessions/main.jsonl"}"#;
+        let transcript = br#"{"type":"session","id":"019a3a19-4410-7000-8000-000000000001"}"#;
+        for (name, bytes) in [
+            ("config.toml", b"[voice]\nenabled = true\n".as_slice()),
+            ("memory.md", b"memory-backup".as_slice()),
+            ("goals/old.md", b"goal-backup".as_slice()),
+            ("skills/learned/notes/SKILL.md", b"skill-backup".as_slice()),
+            ("workspace/notes.md", b"workspace-backup".as_slice()),
+            ("tls/server-cert.pem", b"certificate".as_slice()),
+            ("tls/server-key.pem", b"key".as_slice()),
+            ("tls/identity.json", b"identity".as_slice()),
+            ("agent/session.json", pointer.as_slice()),
+            ("agent/sessions/main.jsonl", transcript.as_slice()),
+        ] {
+            crate::util::durable_fs::atomic_write(&data.join(name), bytes)
+                .await
+                .unwrap();
+        }
+        let authority = uuid::Uuid::new_v4();
+        tokio::fs::create_dir_all(database.parent().unwrap())
+            .await
+            .unwrap();
+        let mut connection = sqlx::SqliteConnection::connect_with(
+            &sqlx::sqlite::SqliteConnectOptions::new()
+                .filename(&database)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+        sqlx::raw_sql(include_str!("../../migrations/schema.sql"))
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO runtime_authority (singleton, authority_id, authority_epoch, data_root) VALUES (1, ?1, 7, ?2)",
+        )
+        .bind(authority)
+        .bind(data.to_string_lossy().as_ref())
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO bobe_schema (singleton, version) VALUES (1, ?1)")
+            .bind(CURRENT_SCHEMA_VERSION)
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        connection.close().await.unwrap();
+        let config = data.join("config.toml");
+        let backup = create(&paths, &config, authority, 7, CURRENT_SCHEMA_VERSION)
+            .await
+            .unwrap();
+        for (name, bytes) in [
+            ("config.toml", b"[voice]\nenabled = false\n".as_slice()),
+            ("memory.md", b"memory-live".as_slice()),
+            ("goals/old.md", b"goal-live".as_slice()),
+            ("goals/new.md", b"goal-written-after-backup".as_slice()),
+            ("skills/learned/notes/SKILL.md", b"skill-live".as_slice()),
+            ("workspace/notes.md", b"workspace-live".as_slice()),
+            ("tls/server-cert.pem", b"certificate".as_slice()),
+            ("agent/sessions/main.jsonl", transcript.as_slice()),
+        ] {
+            crate::util::durable_fs::atomic_write(&data.join(name), bytes)
+                .await
+                .unwrap();
+        }
+        let mut connection = sqlx::SqliteConnection::connect_with(
+            &sqlx::sqlite::SqliteConnectOptions::new().filename(&database),
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE runtime_authority SET data_root = 'live'")
+            .execute(&mut connection)
+            .await
+            .unwrap();
+        connection.close().await.unwrap();
+        RestoreFixture {
+            root,
+            paths,
+            config,
+            database,
+            backup,
+        }
+    }
+
+    async fn tracked_state(fixture: &RestoreFixture) -> Vec<(String, Option<Vec<u8>>)> {
+        let mut state = Vec::new();
+        for name in TRACKED {
+            state.push((
+                name.to_owned(),
+                tokio::fs::read(fixture.paths.root().join(name)).await.ok(),
+            ));
+        }
+        state.push((
+            "database".into(),
+            Some(tokio::fs::read(&fixture.database).await.unwrap()),
+        ));
+        state
+    }
+
+    fn leftovers(directory: &Path) -> Vec<String> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(directory).unwrap().filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.contains(".bobe-old-")
+                || name.contains(".bobe-new-")
+                || name.starts_with(".restore-")
+                || name == RESTORE_JOURNAL
+            {
+                found.push(entry.path().display().to_string());
+            }
+            if entry.file_type().unwrap().is_dir() && !name.starts_with("backups") {
+                found.extend(leftovers(&entry.path()));
+            }
+        }
+        found
+    }
+
+    #[tokio::test]
+    async fn a_restore_interrupted_at_any_step_is_reconciled_at_startup() {
+        let reference = restore_fixture().await;
+        let mut points = Vec::new();
+        restore_interruptible(
+            &reference.backup,
+            &reference.paths,
+            &reference.config,
+            &SUPPORTED_SCHEMA_VERSIONS,
+            |point| {
+                points.push(point);
+                false
+            },
+        )
+        .await
+        .unwrap();
+        let restored = tracked_state(&reference).await;
+        tokio::fs::remove_dir_all(&reference.root).await.unwrap();
+        let last_swap = points
+            .iter()
+            .rposition(|point| matches!(point, RestorePoint::MovedAside | RestorePoint::Installed))
+            .unwrap();
+        assert!(points.len() > last_swap + 2);
+
+        for interrupted_at in 0..points.len() {
+            let fixture = restore_fixture().await;
+            let live = tracked_state(&fixture).await;
+            let mut reached = 0;
+            let error = restore_interruptible(
+                &fixture.backup,
+                &fixture.paths,
+                &fixture.config,
+                &SUPPORTED_SCHEMA_VERSIONS,
+                |_| {
+                    reached += 1;
+                    reached == interrupted_at + 1
+                },
+            )
+            .await
+            .expect_err("the restore must stop at the interruption");
+            assert!(error.to_string().contains("interrupted"), "{error}");
+            assert!(
+                fixture.config.with_file_name(RESTORE_JOURNAL).exists(),
+                "step {interrupted_at}: {:?}",
+                points[interrupted_at]
+            );
+
+            reconcile_interrupted_restore(fixture.config.parent().unwrap())
+                .await
+                .unwrap();
+
+            let state = tracked_state(&fixture).await;
+            if interrupted_at >= last_swap {
+                let mut expected = restored.clone();
+                let database = expected.pop().unwrap();
+                let mut actual = state.clone();
+                actual.pop();
+                assert_eq!(
+                    actual, expected,
+                    "step {interrupted_at}: {:?}",
+                    points[interrupted_at]
+                );
+                assert!(database.1.is_some());
+                assert_eq!(read_authority(&fixture.database).await.unwrap().1, 8);
+            } else {
+                assert_eq!(
+                    state, live,
+                    "step {interrupted_at}: {:?}",
+                    points[interrupted_at]
+                );
+                assert_eq!(read_authority(&fixture.database).await.unwrap().1, 7);
+            }
+            assert!(
+                leftovers(fixture.paths.root()).is_empty(),
+                "step {interrupted_at}: {:?}",
+                leftovers(fixture.paths.root())
+            );
+            reconcile_interrupted_restore(fixture.config.parent().unwrap())
+                .await
+                .unwrap();
+            reconcile_restore_journals(&fixture.paths, &fixture.config)
+                .await
+                .unwrap();
+            let (pool, _) = crate::bootstrap::initialize_storage(&fixture.paths)
+                .await
+                .unwrap();
+            pool.close().await;
+            tokio::fs::remove_dir_all(&fixture.root).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_restore_waits_while_another_process_holds_the_authority() {
+        let fixture = restore_fixture().await;
+        let mut reached = 0;
+        restore_interruptible(
+            &fixture.backup,
+            &fixture.paths,
+            &fixture.config,
+            &SUPPORTED_SCHEMA_VERSIONS,
+            |_| {
+                reached += 1;
+                reached == 3
+            },
+        )
+        .await
+        .expect_err("interrupted");
+        let journal = fixture.config.with_file_name(RESTORE_JOURNAL);
+        let before = tokio::fs::read(&journal).await.unwrap();
+
+        let holder = crate::util::runtime_lock::RuntimeLocks::acquire(&fixture.paths).unwrap();
+        let error = reconcile_interrupted_restore(fixture.config.parent().unwrap())
+            .await
+            .expect_err("a held authority must block reconciliation");
+        assert!(matches!(error, AppError::Conflict(_)), "{error}");
+        assert_eq!(tokio::fs::read(&journal).await.unwrap(), before);
+        assert!(
+            crate::bootstrap::initialize_storage(&fixture.paths)
+                .await
+                .is_err()
+        );
+        drop(holder);
+
+        reconcile_interrupted_restore(fixture.config.parent().unwrap())
+            .await
+            .unwrap();
+        assert!(!journal.exists());
+        assert_eq!(read_authority(&fixture.database).await.unwrap().1, 7);
+        tokio::fs::remove_dir_all(&fixture.root).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_offline_copy_keeps_committed_rows_that_are_still_in_the_write_ahead_log() {
+        let root = std::env::temp_dir().join(format!("bobe-offline-copy-{}", uuid::Uuid::new_v4()));
+        let paths = DataPaths::resolve(
+            &root,
+            &format!("sqlite:{}", root.join("data/bobrust.db").display()),
+        )
+        .unwrap()
+        .prepare_root()
+        .unwrap();
+        let (pool, identity) = crate::bootstrap::initialize_storage(&paths).await.unwrap();
+        sqlx::query("PRAGMA wal_autocheckpoint = 0")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO runtime_markers (key) VALUES ('written-after-update')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let database = paths.database_file().unwrap();
+        let wal = database_sidecar(&database, "-wal");
+        assert!(std::fs::metadata(&wal).unwrap().len() > 0);
+
+        let backup = create_offline(&paths, &root.join("config.toml"))
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let manifest = verify(&backup, &SUPPORTED_SCHEMA_VERSIONS).await.unwrap();
+        assert_eq!(manifest.runtime_authority_id, identity.runtime_authority_id);
+        let mut connection = read_only_database(&backup.join(DATABASE_ARTIFACT))
+            .await
+            .unwrap();
+        let kept: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runtime_markers WHERE key = 'written-after-update'",
+        )
+        .fetch_one(&mut connection)
+        .await
+        .unwrap();
+        connection.close().await.unwrap();
+        assert_eq!(kept, 1);
+        tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_live_backup_never_separates_a_credential_reference_from_its_secret() {
+        let root = std::env::temp_dir().join(format!("bobe-live-backup-{}", uuid::Uuid::new_v4()));
+        let paths = DataPaths::resolve(
+            &root,
+            &format!("sqlite:{}", root.join("data/bobrust.db").display()),
+        )
+        .unwrap()
+        .prepare_root()
+        .unwrap();
+        let (pool, identity) = crate::bootstrap::initialize_storage(&paths).await.unwrap();
+        let config = root.join("config.toml");
+        let secrets = paths.headless_secrets_file();
+        let referenced =
+            b"[providers.profiles.openai]\ncredential = 'bobe-secret://provider-openai'\n";
+        let cleared = b"[providers.profiles.openai]\n";
+        std::fs::write(&config, referenced).unwrap();
+        std::fs::write(&secrets, br#"{"provider-openai":"sk-test"}"#).unwrap();
+        let locks = SettingsLocks {
+            config: std::sync::Arc::new(std::sync::Mutex::new(())),
+            mcp: std::sync::Arc::new(tokio::sync::Mutex::new(())),
+        };
+
+        let (held_tx, held_rx) = std::sync::mpsc::channel();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel::<()>();
+        let clear_credential = std::thread::spawn({
+            let lock = std::sync::Arc::clone(&locks.config);
+            let (config, secrets) = (config.clone(), secrets.clone());
+            move || {
+                let _guard = lock.lock().unwrap();
+                std::fs::write(&secrets, b"{}").unwrap();
+                held_tx.send(()).unwrap();
+                finish_rx.recv().unwrap();
+                std::fs::write(&config, cleared).unwrap();
+            }
+        });
+        tokio::task::spawn_blocking(move || held_rx.recv().unwrap())
+            .await
+            .unwrap();
+        let backup = tokio::spawn({
+            let (pool, paths, config) = (pool.clone(), paths.clone(), config.clone());
+            let locks = SettingsLocks {
+                config: std::sync::Arc::clone(&locks.config),
+                mcp: std::sync::Arc::clone(&locks.mcp),
+            };
+            async move {
+                create_live(
+                    &pool,
+                    &paths,
+                    &config,
+                    &locks,
+                    identity.runtime_authority_id,
+                    identity.runtime_authority_epoch,
+                    identity.schema_version,
+                )
+                .await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert!(
+            !backup.is_finished(),
+            "the backup must wait for the in-flight credential change"
+        );
+        finish_tx.send(()).unwrap();
+        clear_credential.join().unwrap();
+        let backup = backup.await.unwrap().unwrap();
+
+        verify(&backup, &SUPPORTED_SCHEMA_VERSIONS).await.unwrap();
+        assert_eq!(
+            tokio::fs::read(backup.join(CONFIG_ARTIFACT)).await.unwrap(),
+            cleared
+        );
+        assert_eq!(
+            tokio::fs::read(backup.join("data/headless-secrets.json"))
+                .await
+                .unwrap(),
+            b"{}"
+        );
+        pool.close().await;
         tokio::fs::remove_dir_all(root).await.unwrap();
     }
 

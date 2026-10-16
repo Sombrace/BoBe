@@ -153,6 +153,7 @@ pub(crate) async fn install(
         ));
     }
     let definition = render(executable, agent, paths)?;
+    ensure_executable(executable).await?;
     tokio::fs::create_dir_all(&paths.logs).await?;
     let parent = paths
         .definition
@@ -167,13 +168,166 @@ pub(crate) async fn install(
                 "could not enable the persistent user service: {error}; run `loginctl enable-linger` and retry"
             ))
         })?;
-    disable_and_stop_if_loaded().await?;
-    crate::util::durable_fs::atomic_write(&paths.definition, definition.as_bytes()).await?;
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        run_systemctl(&["daemon-reload"]).await?;
+    replace_definition(&SystemServiceManager, paths, definition.as_bytes()).await
+}
+
+async fn ensure_executable(executable: &Path) -> Result<(), AppError> {
+    let metadata = tokio::fs::metadata(executable).await.map_err(|error| {
+        AppError::Config(format!(
+            "service executable {} is unavailable: {error}",
+            executable.display()
+        ))
+    })?;
+    #[cfg(unix)]
+    let runnable = {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+    };
+    #[cfg(not(unix))]
+    let runnable = metadata.is_file();
+    if !runnable {
+        return Err(AppError::Config(format!(
+            "service executable is not a runnable file: {}",
+            executable.display()
+        )));
     }
-    start(paths).await
+    Ok(())
+}
+
+trait ServiceManager {
+    async fn check_definition(&self, definition: &Path) -> Result<(), AppError>;
+    async fn active(&self) -> Result<bool, AppError>;
+    async fn stop(&self) -> Result<(), AppError>;
+    async fn reload(&self) -> Result<(), AppError>;
+    async fn start(&self, paths: &ServicePaths) -> Result<(), AppError>;
+}
+
+struct SystemServiceManager;
+
+impl ServiceManager for SystemServiceManager {
+    async fn check_definition(&self, definition: &Path) -> Result<(), AppError> {
+        check_definition(definition).await
+    }
+
+    async fn active(&self) -> Result<bool, AppError> {
+        #[cfg(target_os = "macos")]
+        {
+            let uid = user_id().await?;
+            ensure_launchd_gui_domain(&uid).await?;
+            return command_succeeds(
+                "/bin/launchctl",
+                &["print", &format!("gui/{uid}/{LAUNCHD_LABEL}")],
+            )
+            .await;
+        }
+        #[cfg(all(unix, not(target_os = "macos")))]
+        return Ok(
+            command_succeeds("systemctl", &["--user", "is-enabled", SYSTEMD_UNIT]).await?
+                || command_succeeds("systemctl", &["--user", "is-active", SYSTEMD_UNIT]).await?,
+        );
+        #[cfg(not(unix))]
+        unreachable!()
+    }
+
+    async fn stop(&self) -> Result<(), AppError> {
+        disable_and_stop_if_loaded().await
+    }
+
+    async fn reload(&self) -> Result<(), AppError> {
+        reload_definitions().await
+    }
+
+    async fn start(&self, paths: &ServicePaths) -> Result<(), AppError> {
+        start(paths).await
+    }
+}
+
+async fn check_definition(definition: &Path) -> Result<(), AppError> {
+    #[cfg(target_os = "macos")]
+    return run_command("/usr/bin/plutil", &["-lint", &path_text(definition)?]).await;
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = definition;
+        Ok(())
+    }
+}
+
+async fn reload_definitions() -> Result<(), AppError> {
+    #[cfg(all(unix, not(target_os = "macos")))]
+    return run_systemctl(&["daemon-reload"]).await;
+    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    Ok(())
+}
+
+async fn replace_definition(
+    manager: &impl ServiceManager,
+    paths: &ServicePaths,
+    definition: &[u8],
+) -> Result<(), AppError> {
+    let parent = paths
+        .definition
+        .parent()
+        .ok_or_else(|| AppError::Config("service definition has no parent".into()))?;
+    let name = paths
+        .definition
+        .file_name()
+        .ok_or_else(|| AppError::Config("service definition has no name".into()))?
+        .to_string_lossy();
+    let staged = parent.join(format!(".{name}.bobe-new"));
+    let prepared = async {
+        crate::util::durable_fs::atomic_write(&staged, definition).await?;
+        manager.check_definition(&staged).await?;
+        let previous = match tokio::fs::read(&paths.definition).await {
+            Ok(previous) => Some(previous),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        let was_active = manager.active().await?;
+        manager.stop().await?;
+        Ok::<_, AppError>((previous, was_active))
+    }
+    .await;
+    let (previous, was_active) = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            drop(crate::util::durable_fs::durable_remove_file(&staged).await);
+            return Err(error);
+        }
+    };
+    let installed = async {
+        tokio::fs::rename(&staged, &paths.definition).await?;
+        crate::util::durable_fs::sync_directory(parent).await?;
+        manager.reload().await?;
+        manager.start(paths).await
+    }
+    .await;
+    let Err(error) = installed else {
+        return Ok(());
+    };
+    drop(crate::util::durable_fs::durable_remove_file(&staged).await);
+    let restored = async {
+        drop(manager.stop().await);
+        match previous.as_deref() {
+            Some(previous) => {
+                crate::util::durable_fs::atomic_write(&paths.definition, previous).await?;
+            }
+            None => {
+                crate::util::durable_fs::durable_remove_file(&paths.definition).await?;
+            }
+        }
+        manager.reload().await?;
+        if previous.is_some() && was_active {
+            manager.start(paths).await?;
+        }
+        Ok::<(), AppError>(())
+    }
+    .await;
+    Err(match restored {
+        Ok(()) => error,
+        Err(restore_error) => AppError::Internal(format!(
+            "service installation failed: {error}; restoring the previous service failed: {restore_error}"
+        )),
+    })
 }
 
 pub(crate) async fn uninstall(paths: &ServicePaths) -> Result<(), AppError> {
@@ -626,6 +780,187 @@ mod tests {
         );
         assert!(!service_paths.logs.exists());
         tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
+    struct FakeManager {
+        fail: Option<&'static str>,
+        calls: std::sync::Mutex<Vec<&'static str>>,
+        active: bool,
+    }
+
+    impl FakeManager {
+        fn new(fail: Option<&'static str>, active: bool) -> Self {
+            Self {
+                fail,
+                calls: std::sync::Mutex::new(Vec::new()),
+                active,
+            }
+        }
+
+        fn call(&self, name: &'static str) -> Result<(), AppError> {
+            let mut calls = self.calls.lock().unwrap();
+            calls.push(name);
+            let first = calls.iter().filter(|call| **call == name).count() == 1;
+            if first && self.fail == Some(name) {
+                return Err(AppError::Internal(format!("{name} failed")));
+            }
+            Ok(())
+        }
+
+        fn calls(&self) -> Vec<&'static str> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl ServiceManager for FakeManager {
+        async fn check_definition(&self, _definition: &Path) -> Result<(), AppError> {
+            self.call("check")
+        }
+
+        async fn active(&self) -> Result<bool, AppError> {
+            self.call("active").map(|()| self.active)
+        }
+
+        async fn stop(&self) -> Result<(), AppError> {
+            self.call("stop")
+        }
+
+        async fn reload(&self) -> Result<(), AppError> {
+            self.call("reload")
+        }
+
+        async fn start(&self, _paths: &ServicePaths) -> Result<(), AppError> {
+            self.call("start")
+        }
+    }
+
+    fn reinstall_fixture(previous: Option<&str>) -> (PathBuf, ServicePaths) {
+        let root =
+            std::env::temp_dir().join(format!("bobe-service-reinstall-{}", uuid::Uuid::new_v4()));
+        let service_paths =
+            paths(&root.join("home"), &root.join("data"), &root.join("data")).unwrap();
+        std::fs::create_dir_all(service_paths.definition.parent().unwrap()).unwrap();
+        if let Some(previous) = previous {
+            std::fs::write(&service_paths.definition, previous).unwrap();
+        }
+        (root, service_paths)
+    }
+
+    fn staged_leftovers(service_paths: &ServicePaths) -> usize {
+        std::fs::read_dir(service_paths.definition.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with('.'))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn a_successful_reinstall_validates_before_stopping_the_previous_service() {
+        let (root, service_paths) = reinstall_fixture(Some("previous"));
+        let manager = FakeManager::new(None, true);
+
+        replace_definition(&manager, &service_paths, b"next")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            manager.calls(),
+            ["check", "active", "stop", "reload", "start"]
+        );
+        assert_eq!(std::fs::read(&service_paths.definition).unwrap(), b"next");
+        assert_eq!(staged_leftovers(&service_paths), 0);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_reinstall_that_fails_before_stopping_leaves_the_previous_service_untouched() {
+        for failure in ["check", "active", "stop"] {
+            let (root, service_paths) = reinstall_fixture(Some("previous"));
+            let manager = FakeManager::new(Some(failure), true);
+
+            let error = replace_definition(&manager, &service_paths, b"next")
+                .await
+                .expect_err("injected failure");
+
+            assert!(error.to_string().contains(failure), "{failure}: {error}");
+            assert!(!manager.calls().contains(&"start"), "{failure}");
+            assert_eq!(
+                std::fs::read(&service_paths.definition).unwrap(),
+                b"previous",
+                "{failure}"
+            );
+            assert_eq!(staged_leftovers(&service_paths), 0, "{failure}");
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_reinstall_that_fails_after_stopping_restores_and_restarts_the_previous_service() {
+        for failure in ["reload", "start"] {
+            let (root, service_paths) = reinstall_fixture(Some("previous"));
+            let manager = FakeManager::new(Some(failure), true);
+
+            let error = replace_definition(&manager, &service_paths, b"next")
+                .await
+                .expect_err("injected failure");
+
+            assert!(error.to_string().contains(failure), "{failure}: {error}");
+            assert_eq!(
+                std::fs::read(&service_paths.definition).unwrap(),
+                b"previous",
+                "{failure}"
+            );
+            let calls = manager.calls();
+            assert_eq!(calls.last(), Some(&"start"), "{failure}: {calls:?}");
+            assert_eq!(
+                calls.iter().filter(|call| **call == "start").count(),
+                if failure == "start" { 2 } else { 1 },
+                "{failure}: {calls:?}"
+            );
+            assert_eq!(staged_leftovers(&service_paths), 0, "{failure}");
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_first_install_leaves_no_service_definition() {
+        let (root, service_paths) = reinstall_fixture(None);
+        let manager = FakeManager::new(Some("start"), false);
+
+        replace_definition(&manager, &service_paths, b"next")
+            .await
+            .expect_err("injected failure");
+
+        assert!(!service_paths.definition.exists());
+        assert_eq!(
+            manager.calls(),
+            [
+                "check", "active", "stop", "reload", "start", "stop", "reload"
+            ]
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_stopped_previous_service_is_restored_without_starting_it() {
+        let (root, service_paths) = reinstall_fixture(Some("previous"));
+        let manager = FakeManager::new(Some("start"), false);
+
+        replace_definition(&manager, &service_paths, b"next")
+            .await
+            .expect_err("injected failure");
+
+        assert_eq!(
+            std::fs::read(&service_paths.definition).unwrap(),
+            b"previous"
+        );
+        assert_eq!(
+            manager.calls(),
+            [
+                "check", "active", "stop", "reload", "start", "stop", "reload"
+            ]
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]

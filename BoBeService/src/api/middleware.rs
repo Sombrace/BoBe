@@ -15,6 +15,8 @@ use crate::constants::MILLIS_PER_SECOND;
 use crate::util::text::constant_time_eq;
 use crate::{app_state::AppState, error::AppError};
 
+pub(crate) const ENDPOINT_CREDENTIAL_PREFIX: &str = "bobe_v2_";
+
 pub(crate) async fn personal_data_exclusion(
     State(state): State<Arc<AppState>>,
     request: Request<Body>,
@@ -165,7 +167,7 @@ pub(crate) async fn bearer_auth(
         .and_then(|value| value.strip_prefix("Bearer "));
 
     if let Some(supplied) = supplied
-        && supplied.starts_with("bobe_v2_")
+        && supplied.starts_with(ENDPOINT_CREDENTIAL_PREFIX)
     {
         match state
             .body

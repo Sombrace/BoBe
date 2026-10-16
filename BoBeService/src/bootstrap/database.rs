@@ -263,10 +263,12 @@ async fn move_placed_skills_to_learned(skills: &Path) -> Result<(), AppError> {
             placed.push(entry.path());
         }
     }
+    placed.sort();
     let learned = skills.join(LEARNED_DIRECTORY);
+    let mut taken = learned_skill_names(&learned).await?;
     let mut moved = false;
     for source in placed {
-        match move_to_learned(&source, &learned).await {
+        match move_to_learned(&source, &learned, &mut taken).await {
             Ok(target) => {
                 moved = true;
                 info!(
@@ -287,23 +289,124 @@ async fn move_placed_skills_to_learned(skills: &Path) -> Result<(), AppError> {
     Ok(())
 }
 
-async fn move_to_learned(source: &Path, learned: &Path) -> Result<PathBuf, AppError> {
+async fn learned_skill_names(
+    learned: &Path,
+) -> Result<std::collections::BTreeSet<String>, AppError> {
+    let mut names = std::collections::BTreeSet::new();
+    let mut entries = match tokio::fs::read_dir(learned).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(names),
+        Err(error) => return Err(error.into()),
+    };
+    while let Some(entry) = entries.next_entry().await? {
+        names.insert(entry.file_name().to_string_lossy().into_owned());
+        if let Ok(content) = tokio::fs::read_to_string(entry.path().join("SKILL.md")).await
+            && let Some(name) = frontmatter_name(&content)
+        {
+            names.insert(name.to_owned());
+        }
+    }
+    Ok(names)
+}
+
+async fn move_to_learned(
+    source: &Path,
+    learned: &Path,
+    taken: &mut std::collections::BTreeSet<String>,
+) -> Result<PathBuf, AppError> {
     if !tokio::fs::symlink_metadata(source).await?.is_dir() {
         return Err(AppError::Validation(
             "a skill must be a directory, not a link or file".into(),
         ));
     }
     validate_skill_directory(source).await?;
-    let target = learned.join(source.file_name().unwrap_or_default());
+    let id = source
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .ok_or_else(|| AppError::Validation("skill directory name must be UTF-8".into()))?
+        .to_owned();
+    let skill = source.join("SKILL.md");
+    let content = tokio::fs::read_to_string(&skill).await?;
+    let name = frontmatter_name(&content)
+        .ok_or_else(|| AppError::Validation("skill name is missing".into()))?
+        .to_owned();
+    let target_id = if taken.contains(&id) || taken.contains(&name) {
+        let target_id = if taken.contains(&id) {
+            unique_learned_id(&id, taken)
+        } else {
+            id
+        };
+        let renamed = rename_frontmatter(&content, &target_id)
+            .ok_or_else(|| AppError::Validation("skill name is missing".into()))?;
+        crate::util::durable_fs::atomic_write(&skill, renamed.as_bytes()).await?;
+        target_id
+    } else {
+        taken.insert(name);
+        id
+    };
+    let target = learned.join(&target_id);
     if tokio::fs::symlink_metadata(&target).await.is_ok() {
         return Err(AppError::Conflict(format!(
             "{} already exists",
             target.display()
         )));
     }
+    taken.insert(target_id);
     tokio::fs::create_dir_all(learned).await?;
     tokio::fs::rename(source, &target).await?;
     Ok(target)
+}
+
+fn unique_learned_id(id: &str, taken: &std::collections::BTreeSet<String>) -> String {
+    let mut attempt = 2_usize;
+    loop {
+        let suffix = format!("-{attempt}");
+        let base = &id[..id.len().min(64 - suffix.len())];
+        let candidate = format!("{}{suffix}", base.trim_end_matches('-'));
+        if !taken.contains(&candidate) {
+            return candidate;
+        }
+        attempt += 1;
+    }
+}
+
+fn frontmatter_lines(content: &str) -> Option<(&str, &str)> {
+    content.strip_prefix("---\n")?.split_once("\n---\n")
+}
+
+fn is_name_line(line: &str) -> bool {
+    line.split_once(':')
+        .is_some_and(|(key, _)| key.trim() == "name")
+}
+
+fn frontmatter_name(content: &str) -> Option<&str> {
+    frontmatter_lines(content)?
+        .0
+        .lines()
+        .rev()
+        .find_map(|line| {
+            line.split_once(':')
+                .filter(|(key, _)| key.trim() == "name")
+                .map(|(_, value)| value.trim())
+        })
+}
+
+fn rename_frontmatter(content: &str, name: &str) -> Option<String> {
+    let (frontmatter, body) = frontmatter_lines(content)?;
+    let lines = frontmatter
+        .lines()
+        .map(|line| {
+            if is_name_line(line) {
+                format!("name: {name}")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>();
+    frontmatter
+        .lines()
+        .any(is_name_line)
+        .then(|| format!("---\n{}\n---\n{body}", lines.join("\n")))
 }
 
 #[cfg(test)]
@@ -904,13 +1007,13 @@ mod tests {
         for kept in [
             "Release_Check/SKILL.md",
             "no-frontmatter/SKILL.md",
-            "taken/SKILL.md",
             "chat.retired/SKILL.md",
             ".archive/SKILL.md",
             "notes/readme.md",
         ] {
             assert!(skills.join(kept).is_file(), "{kept}");
         }
+        assert!(!skills.join("taken").exists());
         assert!(
             std::fs::symlink_metadata(skills.join("linked"))
                 .unwrap()
@@ -920,6 +1023,10 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(skills.join("learned/taken/SKILL.md")).unwrap(),
             placed_skill("original")
+        );
+        assert_eq!(
+            std::fs::read_to_string(skills.join("learned/taken-2/SKILL.md")).unwrap(),
+            placed_skill("taken").replacen("name: taken", "name: taken-2", 1)
         );
         let learned = crate::provider::SkillStore::prepare(&fixture.paths)
             .await
@@ -935,9 +1042,80 @@ mod tests {
             [
                 ("release-check".to_owned(), "release-check".to_owned()),
                 ("taken".to_owned(), "original".to_owned()),
+                ("taken-2".to_owned(), "taken-2".to_owned()),
             ]
         );
         fixture.remove();
+    }
+
+    #[tokio::test]
+    async fn a_placed_skill_that_collides_with_a_learned_one_moves_to_a_unique_loadable_name() {
+        let fixture = Fixture::new();
+        let skills = fixture.root.join("skills");
+        for (relative, content) in [
+            ("skills/foo/SKILL.md", placed_skill("foo")),
+            ("skills/foo/notes.md", "placed notes\n".to_owned()),
+            ("skills/learned/foo/SKILL.md", placed_skill("foo")),
+            ("skills/learned/foo-2/SKILL.md", placed_skill("foo-2")),
+            ("skills/bar/SKILL.md", placed_skill("foo")),
+        ] {
+            fixture.write(relative, &content);
+        }
+
+        move_placed_skills_to_learned(&skills).await.unwrap();
+        move_placed_skills_to_learned(&skills).await.unwrap();
+
+        assert!(!skills.join("foo").exists());
+        assert!(!skills.join("bar").exists());
+        assert_eq!(
+            std::fs::read_to_string(skills.join("learned/foo/SKILL.md")).unwrap(),
+            placed_skill("foo")
+        );
+        assert_eq!(
+            std::fs::read_to_string(skills.join("learned/foo-3/SKILL.md")).unwrap(),
+            placed_skill("foo").replacen("name: foo", "name: foo-3", 1)
+        );
+        assert_eq!(
+            std::fs::read_to_string(skills.join("learned/foo-3/notes.md")).unwrap(),
+            "placed notes\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(skills.join("learned/bar/SKILL.md")).unwrap(),
+            placed_skill("foo").replacen("name: foo", "name: bar", 1)
+        );
+        let learned = crate::provider::SkillStore::prepare(&fixture.paths)
+            .await
+            .unwrap()
+            .list()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|skill| (skill.id, skill.name))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            learned,
+            [
+                ("bar".to_owned(), "bar".to_owned()),
+                ("foo".to_owned(), "foo".to_owned()),
+                ("foo-2".to_owned(), "foo-2".to_owned()),
+                ("foo-3".to_owned(), "foo-3".to_owned()),
+            ]
+        );
+        fixture.remove();
+    }
+
+    #[test]
+    fn unique_learned_names_stay_within_the_skill_name_limit() {
+        let long = "a".repeat(64);
+        let taken = std::collections::BTreeSet::from([long.clone()]);
+        let unique = unique_learned_id(&long, &taken);
+        assert_eq!(unique, format!("{}-2", "a".repeat(62)));
+        let hyphenated = format!("{}-b", "a".repeat(61));
+        let taken = std::collections::BTreeSet::from([hyphenated.clone()]);
+        assert_eq!(
+            unique_learned_id(&hyphenated, &taken),
+            format!("{}-2", "a".repeat(61))
+        );
     }
 
     #[tokio::test]

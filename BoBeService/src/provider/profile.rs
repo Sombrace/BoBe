@@ -5,6 +5,20 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppError;
 
 const SECRET_PREFIX: &str = "bobe-secret://";
+const MAX_MODEL_ID_BYTES: usize = 256;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
+#[sqlx(rename_all = "snake_case")]
+pub(crate) enum ReasoningEffort {
+    Off,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
@@ -116,7 +130,22 @@ pub(crate) struct WorkloadRoute {
     #[serde(default)]
     pub(crate) model: Option<String>,
     #[serde(default)]
-    pub(crate) reasoning_effort: Option<String>,
+    pub(crate) reasoning_effort: Option<ReasoningEffort>,
+}
+
+impl WorkloadRoute {
+    fn validate(&self) -> Result<(), AppError> {
+        self.model.as_deref().map_or(Ok(()), validate_model_id)
+    }
+}
+
+pub(crate) fn validate_model_id(model: &str) -> Result<(), AppError> {
+    if model.trim().is_empty() || model.len() > MAX_MODEL_ID_BYTES {
+        return Err(AppError::Validation(format!(
+            "model must be 1-{MAX_MODEL_ID_BYTES} bytes and not blank"
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -310,6 +339,7 @@ impl ProvidersConfig {
                     route.profile.as_str()
                 )));
             }
+            route.validate()?;
         }
         Ok(())
     }
@@ -553,5 +583,88 @@ mod tests {
             consolidate: route,
         };
         assert!(providers.validate(&routes).is_err());
+    }
+
+    #[test]
+    fn reasoning_efforts_are_the_worker_thinking_levels() {
+        let protocol = include_str!("../../../BoBeAgent/src/protocol.ts");
+        let start = protocol
+            .find("const thinkingSchema")
+            .expect("worker declares its thinking levels");
+        let declaration = &protocol[start..];
+        let declaration = &declaration[..declaration.find(';').expect("declaration ends")];
+        let worker: std::collections::BTreeSet<&str> =
+            declaration.split('"').skip(1).step_by(2).collect();
+        let rust: std::collections::BTreeSet<String> =
+            <ReasoningEffort as clap::ValueEnum>::value_variants()
+                .iter()
+                .map(|effort| {
+                    serde_json::to_value(effort)
+                        .unwrap()
+                        .as_str()
+                        .unwrap()
+                        .to_owned()
+                })
+                .collect();
+        assert_eq!(
+            rust,
+            worker.into_iter().map(str::to_owned).collect(),
+            "Rust reasoning efforts must match the worker's thinking levels"
+        );
+    }
+
+    #[test]
+    fn routes_reject_reasoning_efforts_the_worker_cannot_run() {
+        let route = |effort: &str| {
+            serde_json::from_value::<WorkloadRoute>(serde_json::json!({
+                "profile": "copilot",
+                "model": "gpt-test",
+                "reasoning_effort": effort,
+            }))
+        };
+        assert_eq!(
+            route("xhigh").unwrap().reasoning_effort,
+            Some(ReasoningEffort::Xhigh)
+        );
+        for invalid in ["invented", "", "HIGH", "none"] {
+            assert!(route(invalid).is_err(), "{invalid}");
+        }
+        assert!(
+            toml_edit::de::from_str::<WorkloadRoute>(
+                "profile = 'copilot'\nreasoning_effort = 'invented'\n"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn route_models_must_be_bounded_and_not_blank_before_they_are_saved() {
+        let config = crate::config::Config::default();
+        let original = config.providers;
+        let mut routes = config.routes;
+        for invalid in [
+            String::new(),
+            "   ".into(),
+            "m".repeat(MAX_MODEL_ID_BYTES + 1),
+        ] {
+            routes.goals.model = Some(invalid.clone());
+            let mut providers = original.clone();
+            assert!(
+                matches!(
+                    providers.remember_routes(&routes),
+                    Err(AppError::Validation(_))
+                ),
+                "{invalid:?}"
+            );
+            assert_eq!(providers, original);
+        }
+        for valid in [
+            "gpt-test".to_owned(),
+            "モデル-ä".to_owned(),
+            "m".repeat(MAX_MODEL_ID_BYTES),
+        ] {
+            routes.goals.model = Some(valid);
+            assert!(original.clone().remember_routes(&routes).is_ok());
+        }
     }
 }

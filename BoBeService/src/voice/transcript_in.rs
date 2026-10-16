@@ -6,7 +6,7 @@ use tracing::{info, warn};
 
 use crate::voice::context::VoiceContext;
 use crate::voice::run_text_turn::{VoiceTurnAdmission, run_text_turn};
-use crate::voice::session::{SessionVoiceConfig, TurnInFlight, VoiceSession};
+use crate::voice::session::{PlaybackReport, SessionVoiceConfig, TurnInFlight, VoiceSession};
 use crate::voice::spoken::SpokenScript;
 use crate::voice::turn_flow::{abort_active_turn, pending_interruption};
 
@@ -20,6 +20,7 @@ pub(crate) async fn dispatch_from_control(
         warn!(turn_id = %turn_id, "voice.transcript_final_no_session");
         return;
     };
+    s.note_final_utterance(&turn_id);
     if s.muted {
         warn!(turn_id = %turn_id, "voice.transcript_final_dropped_muted");
         return;
@@ -54,12 +55,12 @@ pub(crate) async fn dispatch_from_control(
         playback_receiver,
         Arc::clone(&script),
     );
-    s.begin_turn(TurnInFlight {
+    s.begin_turn(TurnInFlight::new(
         turn_id,
         join,
-        playback_complete: Some(playback_complete),
+        Some(playback_complete),
         script,
-    });
+    ));
 }
 
 fn spawn_text_turn(
@@ -67,7 +68,7 @@ fn spawn_text_turn(
     turn_id: String,
     ctx: &VoiceContext,
     s: &VoiceSession,
-    playback_complete: oneshot::Receiver<()>,
+    playback_complete: oneshot::Receiver<PlaybackReport>,
     script: Arc<SpokenScript>,
 ) -> JoinHandle<()> {
     let task_ctx = ctx.clone();
@@ -98,7 +99,7 @@ async fn run_mode_b_turn(
     turn_id: String,
     ctx: VoiceContext,
     voice_cfg: SessionVoiceConfig,
-    playback_complete: oneshot::Receiver<()>,
+    playback_complete: oneshot::Receiver<PlaybackReport>,
     script: Arc<SpokenScript>,
 ) {
     let trimmed = text.trim();

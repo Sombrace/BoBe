@@ -128,14 +128,19 @@ pub(crate) async fn activation_is_timely(
     cooldown: &SqliteCooldownRepo,
     config: &Config,
 ) -> bool {
-    if cooldown
+    match cooldown
         .check_cooldown(
             config.decision.cooldown_minutes,
             config.decision.extended_cooldown_minutes,
         )
-        .is_some()
+        .await
     {
-        return false;
+        Ok(None) => {}
+        Ok(Some(_)) => return false,
+        Err(error) => {
+            warn!(%error, "proactive_generator.cooldown_check_failed");
+            return false;
+        }
     }
     match conversation.latest_user_turn_at().await {
         Ok(Some(last_user_at)) => inactivity_timeout_elapsed(

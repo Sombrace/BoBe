@@ -6,11 +6,16 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 
+use tokio::io::AsyncReadExt;
 use tokio::sync::watch;
 use tracing::{info, warn};
 
 use crate::error::AppError;
+
+const VERSION_TIMEOUT: Duration = Duration::from_secs(15);
+const VERSION_STDERR_LIMIT: u64 = 64 * 1024;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DownloadProgress {
@@ -32,14 +37,14 @@ impl BinaryManager {
         }
     }
 
-    pub(crate) fn find_managed_ollama(&self) -> Option<PathBuf> {
-        let artifact = download::current_artifact().ok()?;
-        let managed = self.managed_binary_path(&artifact);
-        if managed.is_file() {
-            info!(path = %managed.display(), "binary_manager.found_managed");
-            return Some(managed);
+    fn find_installation(&self, artifact: &download::OllamaArtifact) -> Option<PathBuf> {
+        let install_dir = self.install_dir(artifact);
+        if extract::verify_runtime(&install_dir, artifact).is_err() {
+            return None;
         }
-        None
+        let managed = self.managed_binary_path(artifact);
+        info!(path = %managed.display(), "binary_manager.found_managed");
+        Some(managed)
     }
 
     pub(crate) async fn ensure_managed_ollama(
@@ -47,20 +52,42 @@ impl BinaryManager {
         progress_tx: &watch::Sender<DownloadProgress>,
         cancel_rx: watch::Receiver<bool>,
     ) -> Result<PathBuf, AppError> {
-        if let Some(path) = self.find_managed_ollama() {
-            progress_tx
-                .send(DownloadProgress {
-                    current_bytes: 0,
-                    total_bytes: None,
-                    percent: Some(100),
-                })
-                .ok();
-            return Ok(path);
-        }
-
         let artifact =
             download::current_artifact().map_err(|message| AppError::Config(message.into()))?;
-        let target_path = self.managed_binary_path(&artifact);
+        self.ensure_installation(&artifact, progress_tx, cancel_rx)
+            .await
+    }
+
+    async fn ensure_installation(
+        &self,
+        artifact: &download::OllamaArtifact,
+        progress_tx: &watch::Sender<DownloadProgress>,
+        cancel_rx: watch::Receiver<bool>,
+    ) -> Result<PathBuf, AppError> {
+        let install_dir = self.install_dir(artifact);
+        if let Some(path) = self.find_installation(artifact) {
+            match self.validate_ollama_binary(&path, cancel_rx.clone()).await {
+                Ok(()) => {
+                    progress_tx
+                        .send(DownloadProgress {
+                            current_bytes: 0,
+                            total_bytes: None,
+                            percent: Some(100),
+                        })
+                        .ok();
+                    return Ok(path);
+                }
+                Err(AppError::Canceled(message)) => return Err(AppError::Canceled(message)),
+                Err(error) => {
+                    warn!(path = %install_dir.display(), %error, "binary_manager.invalid_install_removed");
+                }
+            }
+        } else if install_dir.exists() {
+            warn!(path = %install_dir.display(), "binary_manager.incomplete_install_removed");
+        }
+        crate::util::durable_fs::durable_remove_entry(&install_dir).await?;
+
+        let target_path = self.managed_binary_path(artifact);
         let runtime_root = self.runtime_root();
         std::fs::create_dir_all(&runtime_root)?;
         let archive_path = runtime_root.join(artifact.archive_name);
@@ -75,9 +102,9 @@ impl BinaryManager {
 
         download::download_ollama(
             &self.http_client,
-            &artifact,
+            artifact,
             &archive_path,
-            cancel_rx,
+            cancel_rx.clone(),
             |current, total| {
                 let percent = total.map(|t| {
                     if t > 0 {
@@ -105,10 +132,13 @@ impl BinaryManager {
             })
             .ok();
 
-        let install_dir = self.install_dir(&artifact);
-        let installed = extract::install_ollama_runtime(&archive_path, &install_dir, &artifact);
+        let installed = extract::install_ollama_runtime(&archive_path, &install_dir, artifact);
         let _ignored = std::fs::remove_file(&archive_path);
         installed?;
+        if let Err(error) = self.validate_ollama_binary(&target_path, cancel_rx).await {
+            crate::util::durable_fs::durable_remove_entry(&install_dir).await?;
+            return Err(error);
+        }
         self.prune_stale_runtimes(&install_dir);
 
         progress_tx
@@ -123,7 +153,11 @@ impl BinaryManager {
         Ok(target_path)
     }
 
-    pub(crate) async fn validate_ollama_binary(&self, path: &Path) -> Result<(), AppError> {
+    pub(crate) async fn validate_ollama_binary(
+        &self,
+        path: &Path,
+        cancel_rx: watch::Receiver<bool>,
+    ) -> Result<(), AppError> {
         let metadata = tokio::fs::metadata(path)
             .await
             .map_err(|e| AppError::Config(format!("Managed Ollama binary missing: {e}")))?;
@@ -143,24 +177,7 @@ impl BinaryManager {
             )));
         }
 
-        let output = tokio::process::Command::new(path)
-            .arg("--version")
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .map_err(|e| AppError::Config(format!("Failed to invoke managed Ollama: {e}")))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError::Config(format!(
-                "Managed Ollama failed validation (status {}): {}",
-                output.status,
-                stderr.trim()
-            )));
-        }
-
-        Ok(())
+        run_version_check(path, VERSION_TIMEOUT, cancel_rx).await
     }
 
     fn prune_stale_runtimes(&self, keep: &Path) {
@@ -197,6 +214,94 @@ impl BinaryManager {
     pub(crate) fn managed_binary_path(&self, artifact: &download::OllamaArtifact) -> PathBuf {
         self.install_dir(artifact).join(artifact.binary)
     }
+}
+
+struct GroupKill(Option<u32>);
+
+impl GroupKill {
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for GroupKill {
+    fn drop(&mut self) {
+        if let Some(pid) = self.0 {
+            crate::util::process_group::signal_group(pid, libc::SIGKILL);
+        }
+    }
+}
+
+async fn run_version_check(
+    path: &Path,
+    timeout: Duration,
+    mut cancel_rx: watch::Receiver<bool>,
+) -> Result<(), AppError> {
+    let mut command = tokio::process::Command::new(path);
+    command
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command
+        .spawn()
+        .map_err(|e| AppError::Config(format!("Failed to invoke managed Ollama: {e}")))?;
+    let mut group = GroupKill(child.id());
+    let mut stderr = child.stderr.take();
+    let finished = tokio::select! {
+        result = async {
+            let mut captured = Vec::new();
+            if let Some(stderr) = stderr.as_mut() {
+                drop((&mut *stderr).take(VERSION_STDERR_LIMIT).read_to_end(&mut captured).await);
+            }
+            (child.wait().await, captured)
+        } => Ok(result),
+        () = tokio::time::sleep(timeout) => Err(AppError::Config(format!(
+            "Managed Ollama did not answer --version within {}s",
+            timeout.as_secs()
+        ))),
+        () = wait_for_cancel(&mut cancel_rx) => {
+            Err(AppError::Canceled("Ollama validation canceled".into()))
+        }
+    };
+    let (status, captured) = match finished {
+        Ok((status, captured)) => (status?, captured),
+        Err(error) => {
+            drop(group);
+            drop(child.start_kill());
+            drop(child.wait().await);
+            return Err(error);
+        }
+    };
+    if let Some(pid) = group.0
+        && crate::util::process_group::group_exists(pid)
+    {
+        crate::util::process_group::signal_group(pid, libc::SIGKILL);
+    }
+    group.disarm();
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&captured);
+        return Err(AppError::Config(format!(
+            "Managed Ollama failed validation (status {status}): {}",
+            stderr.trim()
+        )));
+    }
+    Ok(())
+}
+
+async fn wait_for_cancel(cancel_rx: &mut watch::Receiver<bool>) {
+    if *cancel_rx.borrow() {
+        return;
+    }
+    while cancel_rx.changed().await.is_ok() {
+        if *cancel_rx.borrow() {
+            return;
+        }
+    }
+    std::future::pending::<()>().await;
 }
 
 #[cfg(test)]
@@ -241,7 +346,7 @@ mod tests {
 
         let manager = BinaryManager::new(&dir, test_client());
         manager
-            .validate_ollama_binary(&binary_path)
+            .validate_ollama_binary(&binary_path, tokio::sync::watch::channel(false).1)
             .await
             .expect("validation should pass");
     }
@@ -259,7 +364,7 @@ mod tests {
 
         let manager = BinaryManager::new(&dir, test_client());
         let error = manager
-            .validate_ollama_binary(&binary_path)
+            .validate_ollama_binary(&binary_path, tokio::sync::watch::channel(false).1)
             .await
             .expect_err("validation should fail");
 
@@ -267,37 +372,259 @@ mod tests {
     }
 
     #[test]
-    fn find_managed_ollama_returns_none_for_fresh_data_dir() {
+    fn find_installation_returns_none_for_fresh_data_dir() {
         let dir = temp_dir("find-absent");
         let manager = BinaryManager::new(&dir, test_client());
-        assert_eq!(manager.find_managed_ollama(), None);
+        assert_eq!(
+            manager.find_installation(&current_artifact().expect("artifact")),
+            None
+        );
+    }
+
+    fn write_executable(path: &std::path::Path, content: &str) {
+        std::fs::create_dir_all(path.parent().expect("file should have a parent"))
+            .expect("parent should be created");
+        std::fs::write(path, content).expect("executable should be written");
+        #[cfg(unix)]
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .expect("permissions should be set");
     }
 
     #[test]
-    fn find_managed_ollama_returns_path_of_current_version() {
+    fn find_installation_returns_path_of_current_version() {
         let dir = temp_dir("find-present");
         let artifact = current_artifact().expect("developer platform should be supported");
-        let binary = dir
-            .join("ollama")
-            .join(format!("v{}", artifact.version))
-            .join(artifact.binary);
-        std::fs::create_dir_all(binary.parent().expect("binary should have a parent"))
-            .expect("runtime dir should be created");
-        std::fs::write(&binary, "fake").expect("fake binary should be written");
+        let install = dir.join("ollama").join(format!("v{}", artifact.version));
+        let binary = install.join(artifact.binary);
+        write_executable(&binary, "fake");
+        write_executable(&install.join(artifact.llama_server), "server");
 
         let manager = BinaryManager::new(&dir, test_client());
-        assert_eq!(manager.find_managed_ollama(), Some(binary));
+        assert_eq!(manager.find_installation(&artifact), Some(binary));
+        let _ignored = std::fs::remove_dir_all(dir);
     }
 
     #[test]
-    fn find_managed_ollama_ignores_a_binary_only_legacy_install() {
+    fn find_installation_ignores_an_incomplete_install() {
+        let artifact = current_artifact().expect("developer platform should be supported");
+        for (name, server) in [("missing-runner", None), ("empty-runner", Some(""))] {
+            let dir = temp_dir(name);
+            let install = dir.join("ollama").join(format!("v{}", artifact.version));
+            write_executable(&install.join(artifact.binary), "fake");
+            if let Some(server) = server {
+                write_executable(&install.join(artifact.llama_server), server);
+            }
+
+            let manager = BinaryManager::new(&dir, test_client());
+            assert_eq!(manager.find_installation(&artifact), None, "{name}");
+            let _ignored = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    fn hanging_binary(dir: &std::path::Path) -> (PathBuf, PathBuf) {
+        let pid_file = dir.join("pid");
+        let binary = dir.join("ollama");
+        write_executable(
+            &binary,
+            &format!(
+                "#!/bin/sh\necho $$ > '{pid}.tmp'\nmv '{pid}.tmp' '{pid}'\nsleep 600 &\nwait\n",
+                pid = pid_file.display()
+            ),
+        );
+        (binary, pid_file)
+    }
+
+    async fn started_pid(pid_file: &std::path::Path) -> u32 {
+        for _ in 0..500 {
+            if let Some(pid) = std::fs::read_to_string(pid_file)
+                .ok()
+                .and_then(|pid| pid.trim().parse().ok())
+            {
+                return pid;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("the fake binary never started");
+    }
+
+    async fn assert_group_gone(pid: u32) {
+        for _ in 0..100 {
+            if !crate::util::process_group::group_exists(pid) {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("process group {pid} survived validation");
+    }
+
+    #[tokio::test]
+    async fn a_version_check_that_never_exits_is_killed_with_its_process_group() {
+        let dir = temp_dir("hanging");
+        let (binary, pid_file) = hanging_binary(&dir);
+        let check = tokio::spawn(async move {
+            super::run_version_check(
+                &binary,
+                std::time::Duration::from_secs(5),
+                tokio::sync::watch::channel(false).1,
+            )
+            .await
+        });
+        let pid = started_pid(&pid_file).await;
+
+        let error = tokio::time::timeout(std::time::Duration::from_secs(30), check)
+            .await
+            .expect("the timeout should end validation")
+            .expect("check should join")
+            .expect_err("a hanging binary must fail validation");
+
+        assert!(error.to_string().contains("did not answer"), "{error}");
+        assert_group_gone(pid).await;
+        let _ignored = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn canceling_a_version_check_kills_its_process_group() {
+        let dir = temp_dir("canceled");
+        let (binary, pid_file) = hanging_binary(&dir);
+        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let check = tokio::spawn(async move {
+            super::run_version_check(&binary, std::time::Duration::from_mins(10), cancel_rx).await
+        });
+        let pid = started_pid(&pid_file).await;
+        cancel_tx.send(true).expect("cancel receiver should exist");
+
+        let error = tokio::time::timeout(std::time::Duration::from_secs(5), check)
+            .await
+            .expect("cancellation should be prompt")
+            .expect("check should join")
+            .expect_err("validation should be canceled");
+
+        assert!(matches!(error, crate::error::AppError::Canceled(_)));
+        assert_group_gone(pid).await;
+        let _ignored = std::fs::remove_dir_all(dir);
+    }
+
+    fn runtime_archive() -> Vec<u8> {
+        let mut builder = tar::Builder::new(Vec::new());
+        for (name, content) in [
+            (
+                "ollama",
+                "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo 'ollama version 0.0.0-test'\n  exit 0\nfi\nexit 1\n",
+            ),
+            ("llama-server", "#!/bin/sh\nexit 0\n"),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Regular);
+            header.set_mode(0o755);
+            header.set_size(content.len() as u64);
+            header.set_path(name).expect("path");
+            header.set_cksum();
+            builder
+                .append(&header, content.as_bytes())
+                .expect("entry should append");
+        }
+        let tar = builder.into_inner().expect("archive should finish");
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut encoder, &tar).expect("gzip should encode");
+        encoder.finish().expect("gzip should finish")
+    }
+
+    #[tokio::test]
+    async fn a_corrupt_managed_install_is_removed_and_reinstalled() {
+        use sha2::Digest;
+
+        let archive = runtime_archive();
+        let sha256: &'static str = Box::leak(
+            crate::util::text::hex_encode(&sha2::Sha256::digest(&archive)).into_boxed_str(),
+        );
+        let app = axum::Router::new().route(
+            "/ollama.tgz",
+            axum::routing::get(move || {
+                let archive = archive.clone();
+                async move { archive }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("test server should bind");
+        let address = listener.local_addr().expect("test address");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("test server");
+        });
+        let url: &'static str = Box::leak(format!("http://{address}/ollama.tgz").into_boxed_str());
+        let artifact = super::download::OllamaArtifact {
+            version: "0.0.0-test",
+            url,
+            sha256,
+            max_bytes: 1_000_000,
+            archive_name: "ollama-test.tgz",
+            format: super::download::ArchiveFormat::TarGz,
+            binary: "ollama",
+            llama_server: "llama-server",
+        };
+
+        for (name, binary, server) in [
+            (
+                "failing-binary",
+                "#!/bin/sh\nexit 1\n",
+                Some("#!/bin/sh\nexit 0\n"),
+            ),
+            ("missing-runner", "#!/bin/sh\nexit 0\n", None),
+        ] {
+            let dir = temp_dir(name);
+            let install = dir.join("ollama").join("v0.0.0-test");
+            write_executable(&install.join("ollama"), binary);
+            if let Some(server) = server {
+                write_executable(&install.join("llama-server"), server);
+            }
+            let manager = BinaryManager::new(&dir, test_client());
+            let (progress_tx, _progress_rx) =
+                tokio::sync::watch::channel(super::DownloadProgress::default());
+
+            let installed = manager
+                .ensure_installation(
+                    &artifact,
+                    &progress_tx,
+                    tokio::sync::watch::channel(false).1,
+                )
+                .await
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+
+            assert_eq!(installed, install.join("ollama"));
+            assert!(
+                std::fs::read_to_string(&installed)
+                    .expect("installed binary")
+                    .contains("0.0.0-test")
+            );
+            assert!(install.join("llama-server").is_file());
+            assert!(!dir.join("ollama").join("ollama-test.tgz").exists());
+            let again = manager
+                .ensure_installation(
+                    &artifact,
+                    &progress_tx,
+                    tokio::sync::watch::channel(false).1,
+                )
+                .await
+                .expect("a valid install is reused");
+            assert_eq!(again, installed);
+            let _ignored = std::fs::remove_dir_all(dir);
+        }
+        server.abort();
+        drop(server.await);
+    }
+
+    #[test]
+    fn find_installation_ignores_a_binary_only_legacy_install() {
         let dir = temp_dir("find-legacy");
         let bin_dir = dir.join("ollama").join("bin");
         std::fs::create_dir_all(&bin_dir).expect("bin dir should be created");
         std::fs::write(bin_dir.join("ollama"), "fake").expect("fake binary should be written");
 
         let manager = BinaryManager::new(&dir, test_client());
-        assert_eq!(manager.find_managed_ollama(), None);
+        assert_eq!(
+            manager.find_installation(&current_artifact().expect("artifact")),
+            None
+        );
     }
 
     #[test]

@@ -6,7 +6,7 @@ use sherpa_onnx::{OnlineRecognizer, OnlineRecognizerConfig, OnlineStream};
 
 use crate::speech::{SttDescriptor, SttEngine, SttEvent, SttHealth, SttStream};
 
-const SAMPLE_RATE: i32 = 16_000;
+const SAMPLE_RATE: i32 = crate::speech::protocol::VOICE_CAPTURE_SAMPLE_RATE as i32;
 const LEADING_PADDING: usize = SAMPLE_RATE as usize;
 const TRAILING_PADDING: usize = SAMPLE_RATE as usize * 66 / 100;
 const PROBE_AUDIO: Duration = Duration::from_secs(1);

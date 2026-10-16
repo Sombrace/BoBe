@@ -16,9 +16,10 @@ use super::outbound::{
 };
 use super::protocol::{
     AUDIO_FRAME_DURATION_MS, AdapterMediaHeader, AdapterMediaKind, AdapterOutbound,
-    CAPTURE_CHANNELS, CAPTURE_CODEC, CAPTURE_SAMPLE_RATE_HZ, MAX_LEASE_LIFETIME_MS,
-    MAX_PLAYBACK_CREDIT_MS, MEDIA_FLAG_DISCONTINUITY, OfferDecision, PROTOCOL_MAJOR,
-    PlaybackCredit, RouteDescriptor, SPEAKER_CHANNELS, SPEAKER_CODEC, SPEAKER_PCM_BYTES,
+    BodyBatteryState, BodyHealthReport, CAPTURE_CHANNELS, CAPTURE_CODEC, CAPTURE_SAMPLE_RATE_HZ,
+    CaptureDecision, CaptureRequest, MAX_LEASE_LIFETIME_MS, MAX_PLAYBACK_CREDIT_MS,
+    MEDIA_FLAG_DISCONTINUITY, OfferDecision, PROTOCOL_MAJOR, PlaybackCredit, RouteDescriptor,
+    RoutedStreamControl, SPEAKER_CHANNELS, SPEAKER_CODEC, SPEAKER_PCM_BYTES,
     SPEAKER_SAMPLE_RATE_HZ, ThemeSet, UpdateStateReport,
 };
 use super::update::UpdateOffer;
@@ -46,6 +47,9 @@ const MAX_PENDING_PLAYBACK_FRAMES: usize = 1_500;
 
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
 const CAPTION_MAX_BYTES: usize = 140;
+const UPDATE_RETRY_FLOOR: Duration = Duration::from_secs(5);
+const UPDATE_RETRY_INITIAL: Duration = Duration::from_secs(30);
+const UPDATE_RETRY_MAX: Duration = Duration::from_mins(15);
 const BODY_STATUS_DISABLED: u8 = 0;
 const BODY_STATUS_STARTING: u8 = 1;
 const BODY_STATUS_RUNNING: u8 = 2;
@@ -69,9 +73,9 @@ pub(crate) struct BodyRegistration {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct LeaseGrant {
-    pub(crate) route: RouteDescriptor,
-    pub(crate) ttl: Duration,
+struct LeaseGrant {
+    route: RouteDescriptor,
+    ttl: Duration,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,26 +125,192 @@ struct BodyConnection {
     send_gate: Arc<AsyncMutex<()>>,
     disconnect: CancellationToken,
     last_seen: Instant,
-    offered_build: Option<u32>,
+    preempted_route: Option<RouteDescriptor>,
     capabilities: super::capabilities::BodyCapabilities,
     limits: super::capabilities::BodyLimits,
     interactions: Arc<Mutex<super::interactions::InteractionState>>,
     sensors: Arc<Mutex<super::interactions::SensorState>>,
 }
 
-fn offer_decision(
-    offer_build: u32,
-    running_build: u32,
-    already_offered: Option<u32>,
-) -> OfferDecision {
-    if running_build == 0 {
-        OfferDecision::NoHealthYet
-    } else if running_build >= offer_build {
-        OfferDecision::NotNewer
-    } else if already_offered == Some(offer_build) {
-        OfferDecision::AlreadyOffered
-    } else {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateRefusal {
+    Busy,
+    BatteryUnknown,
+    LowBattery,
+}
+
+impl UpdateRefusal {
+    fn from_reason(reason: Option<&str>) -> Option<Self> {
+        match reason? {
+            "busy" => Some(Self::Busy),
+            "battery_unknown" => Some(Self::BatteryUnknown),
+            "low_battery" => Some(Self::LowBattery),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateOfferProgress {
+    Offered {
+        build: u32,
+        generation: u64,
+        refusals: u32,
+    },
+    Deferred {
+        build: u32,
+        refusals: u32,
+        refusal: UpdateRefusal,
+        refused_at: Instant,
+        cleared: bool,
+    },
+    Settled {
+        build: u32,
+    },
+}
+
+fn update_retry_delay(refusals: u32) -> Duration {
+    UPDATE_RETRY_INITIAL
+        .saturating_mul(2_u32.saturating_pow(refusals.saturating_sub(1)))
+        .min(UPDATE_RETRY_MAX)
+}
+
+#[derive(Default)]
+struct UpdateOffers {
+    devices: HashMap<String, UpdateOfferProgress>,
+}
+
+impl UpdateOffers {
+    fn classify(
+        &mut self,
+        device_id: &str,
+        generation: u64,
+        offer_build: u32,
+        running_build: u32,
+        now: Instant,
+    ) -> OfferDecision {
+        if running_build == 0 {
+            return OfferDecision::NoHealthYet;
+        }
+        if running_build >= offer_build {
+            return OfferDecision::NotNewer;
+        }
+        let refusals = match self.devices.get(device_id).copied() {
+            Some(UpdateOfferProgress::Settled { build }) if build == offer_build => {
+                return OfferDecision::Suppressed;
+            }
+            Some(UpdateOfferProgress::Offered {
+                build,
+                generation: offered_on,
+                ..
+            }) if build == offer_build => {
+                if offered_on == generation {
+                    return OfferDecision::AlreadyOffered;
+                }
+                tracing::warn!(
+                    device_id,
+                    offer_build,
+                    "body.update_offer_presumed_rejected"
+                );
+                self.devices
+                    .insert(device_id.to_owned(), UpdateOfferProgress::Settled { build });
+                return OfferDecision::Suppressed;
+            }
+            Some(UpdateOfferProgress::Deferred {
+                build,
+                refusals,
+                refused_at,
+                cleared,
+                ..
+            }) if build == offer_build => {
+                let wait = if cleared {
+                    UPDATE_RETRY_FLOOR
+                } else {
+                    update_retry_delay(refusals)
+                };
+                if now.saturating_duration_since(refused_at) < wait {
+                    return OfferDecision::RetryLater;
+                }
+                refusals
+            }
+            _ => 0,
+        };
+        self.devices.insert(
+            device_id.to_owned(),
+            UpdateOfferProgress::Offered {
+                build: offer_build,
+                generation,
+                refusals,
+            },
+        );
         OfferDecision::Send
+    }
+
+    fn delivery_failed(&mut self, device_id: &str, generation: u64) {
+        if matches!(
+            self.devices.get(device_id),
+            Some(UpdateOfferProgress::Offered { generation: offered_on, .. }) if *offered_on == generation
+        ) {
+            self.devices.remove(device_id);
+        }
+    }
+
+    fn record_state(
+        &mut self,
+        device_id: &str,
+        generation: u64,
+        report: &UpdateStateReport,
+        now: Instant,
+    ) {
+        let Some(UpdateOfferProgress::Offered {
+            build,
+            generation: offered_on,
+            refusals,
+        }) = self.devices.get(device_id).copied()
+        else {
+            return;
+        };
+        if offered_on != generation {
+            return;
+        }
+        let next = match (
+            report.phase.as_str(),
+            UpdateRefusal::from_reason(report.reason.as_deref()),
+        ) {
+            ("failed", Some(refusal)) => UpdateOfferProgress::Deferred {
+                build,
+                refusals: refusals.saturating_add(1),
+                refusal,
+                refused_at: now,
+                cleared: false,
+            },
+            _ => UpdateOfferProgress::Settled { build },
+        };
+        self.devices.insert(device_id.to_owned(), next);
+    }
+
+    fn observe(&mut self, device_id: &str, clears: impl FnOnce(UpdateRefusal) -> bool) {
+        if let Some(UpdateOfferProgress::Deferred {
+            refusal, cleared, ..
+        }) = self.devices.get_mut(device_id)
+            && clears(*refusal)
+        {
+            *cleared = true;
+        }
+    }
+
+    fn observe_health(&mut self, device_id: &str, health: &BodyHealthReport) {
+        let idle =
+            health.lifecycle.as_deref() == Some("online") && health.turn.as_deref() == Some("idle");
+        self.observe(device_id, |refusal| refusal == UpdateRefusal::Busy && idle);
+    }
+
+    fn observe_battery(&mut self, device_id: &str, battery: &BodyBatteryState) {
+        self.observe(device_id, |refusal| match refusal {
+            UpdateRefusal::BatteryUnknown => true,
+            UpdateRefusal::LowBattery => battery.charging,
+            UpdateRefusal::Busy => false,
+        });
     }
 }
 
@@ -252,6 +422,7 @@ struct GatewayState {
     bodies: HashMap<String, BodyConnection>,
     adapter: Option<AdapterConnection>,
     lease: Option<VoiceLease>,
+    update_offers: UpdateOffers,
 }
 
 impl GatewayState {
@@ -261,7 +432,14 @@ impl GatewayState {
             bodies: HashMap::new(),
             adapter: None,
             lease: None,
+            update_offers: UpdateOffers::default(),
         }
+    }
+
+    fn has_body(&self, device_id: &str, generation: u64) -> bool {
+        self.bodies
+            .get(device_id)
+            .is_some_and(|body| body.generation == generation)
     }
 
     fn take_generation(&mut self) -> u64 {
@@ -302,6 +480,47 @@ impl GatewayState {
         false
     }
 
+    fn preempt_for(
+        &mut self,
+        trigger: &str,
+    ) -> Result<Option<(RouteDescriptor, LeaseReleaseContext)>, &'static str> {
+        let Some(existing) = self.lease.as_ref() else {
+            return Ok(None);
+        };
+        if trigger != "action_button"
+            || existing.trigger != "wake_word"
+            || existing.phase != LeasePhase::Granted
+        {
+            return Err("another_endpoint_owns_voice_lease");
+        }
+        let route = existing.route.clone();
+        let release = self
+            .begin_lease_release(&route)
+            .ok_or("another_endpoint_owns_voice_lease")?;
+        if let Some(displaced) = self
+            .bodies
+            .get_mut(&route.device_id)
+            .filter(|body| body.generation == route.connection_generation)
+        {
+            displaced.preempted_route = Some(route.clone());
+        }
+        Ok(Some((route, release)))
+    }
+
+    fn preempted_route(
+        &self,
+        device_id: &str,
+        generation: u64,
+        stream_id: u32,
+    ) -> Option<&RouteDescriptor> {
+        self.bodies
+            .get(device_id)
+            .filter(|body| body.generation == generation)?
+            .preempted_route
+            .as_ref()
+            .filter(|route| route.capture_stream_id == stream_id)
+    }
+
     fn remove_adapter(&mut self, generation: u64) -> Option<CancellationToken> {
         if self
             .adapter
@@ -324,6 +543,7 @@ pub(crate) struct BodyGateway {
     theme_version: AtomicU64,
     status: AtomicU8,
     wake_arbitrator: crate::body::wake_arbitrator::WakeArbitrator,
+    lease_grants: AsyncMutex<()>,
     clock_origin: Instant,
     update_offer: Option<Arc<UpdateOffer>>,
     pub(super) sensor_states: Mutex<SensorStates>,
@@ -377,6 +597,7 @@ impl BodyGateway {
                 BODY_STATUS_DISABLED
             }),
             wake_arbitrator: crate::body::wake_arbitrator::WakeArbitrator::default(),
+            lease_grants: AsyncMutex::new(()),
             clock_origin: Instant::now(),
             update_offer,
             sensor_states: Mutex::new(HashMap::new()),
@@ -384,35 +605,43 @@ impl BodyGateway {
     }
 
     fn is_current_body(&self, device_id: &str, generation: u64) -> bool {
-        self.lock_state()
-            .bodies
-            .get(device_id)
-            .is_some_and(|body| body.generation == generation)
+        self.lock_state().has_body(device_id, generation)
     }
 
     pub(crate) fn classify_offer(
         &self,
         device_id: &str,
         generation: u64,
-        build_number: u32,
+        health: &BodyHealthReport,
     ) -> OfferDecision {
         let Some(offer) = self.update_offer.as_ref() else {
             return OfferDecision::NotConfigured;
         };
         let offer_build = offer.build_number();
         let mut state = self.lock_state();
-        let Some(body) = state
-            .bodies
-            .get_mut(device_id)
-            .filter(|body| body.generation == generation)
-        else {
+        if !state.has_body(device_id, generation) {
             return OfferDecision::StaleConnection;
-        };
-        let decision = offer_decision(offer_build, build_number, body.offered_build);
-        if decision == OfferDecision::Send {
-            body.offered_build = Some(offer_build);
         }
-        decision
+        state.update_offers.observe_health(device_id, health);
+        state.update_offers.classify(
+            device_id,
+            generation,
+            offer_build,
+            health.build_number,
+            Instant::now(),
+        )
+    }
+
+    pub(crate) fn record_battery(
+        &self,
+        device_id: &str,
+        generation: u64,
+        battery: &BodyBatteryState,
+    ) {
+        let mut state = self.lock_state();
+        if state.has_body(device_id, generation) {
+            state.update_offers.observe_battery(device_id, battery);
+        }
     }
 
     pub(crate) async fn send_update_offer(&self, device_id: &str, generation: u64) -> bool {
@@ -447,14 +676,9 @@ impl BodyGateway {
                 "body.update_offer_sent"
             );
         } else {
-            let mut state = self.lock_state();
-            if let Some(body) = state
-                .bodies
-                .get_mut(device_id)
-                .filter(|body| body.generation == generation)
-            {
-                body.offered_build = None;
-            }
+            self.lock_state()
+                .update_offers
+                .delivery_failed(device_id, generation);
             tracing::warn!(
                 device_id,
                 connection_generation = generation,
@@ -470,7 +694,12 @@ impl BodyGateway {
         generation: u64,
         report: &UpdateStateReport,
     ) {
-        if self.is_current_body(device_id, generation) {
+        let mut state = self.lock_state();
+        if state.has_body(device_id, generation) {
+            state
+                .update_offers
+                .record_state(device_id, generation, report, Instant::now());
+            drop(state);
             tracing::info!(
                 device_id,
                 connection_generation = generation,
@@ -480,6 +709,7 @@ impl BodyGateway {
                 "body.update_state"
             );
         } else {
+            drop(state);
             tracing::debug!(
                 device_id,
                 connection_generation = generation,
@@ -661,7 +891,7 @@ impl BodyGateway {
                 send_gate: Arc::new(AsyncMutex::new(())),
                 disconnect,
                 last_seen: Instant::now(),
-                offered_build: None,
+                preempted_route: None,
                 capabilities,
                 limits,
                 interactions: Arc::new(
@@ -712,6 +942,7 @@ impl BodyGateway {
         let (route, connection) = {
             let mut state = self.lock_state();
             let connection = state.bodies.remove(endpoint_id);
+            state.update_offers.devices.remove(endpoint_id);
             let route = state
                 .lease
                 .as_ref()
@@ -841,8 +1072,79 @@ impl BodyGateway {
         self.wake_arbitrator.preempt_pending().await;
     }
 
-    pub(crate) fn acquire_lease(
-        &self,
+    pub(crate) async fn request_capture(
+        self: &Arc<Self>,
+        device_id: &str,
+        generation: u64,
+        sender: &OutboundSender,
+        request: &CaptureRequest,
+    ) -> bool {
+        let _grants = self.lease_grants.lock().await;
+        let grant = match self
+            .acquire_lease(
+                device_id,
+                generation,
+                &request.request_id,
+                &request.trigger,
+                request.stream_id,
+            )
+            .await
+        {
+            Ok(grant) => grant,
+            Err(reason) => {
+                return send_json(
+                    sender,
+                    &CaptureDecision {
+                        r#type: "capture.denied",
+                        protocol_major: PROTOCOL_MAJOR,
+                        request_id: &request.request_id,
+                        stream_id: request.stream_id,
+                        lease_id: None,
+                        turn_id: None,
+                        lease_ttl_ms: None,
+                        reason: Some(reason),
+                    },
+                )
+                .await;
+            }
+        };
+        let decision = CaptureDecision {
+            r#type: "capture.granted",
+            protocol_major: PROTOCOL_MAJOR,
+            request_id: &request.request_id,
+            stream_id: request.stream_id,
+            lease_id: Some(grant.route.lease_id),
+            turn_id: Some(&grant.route.turn_id),
+            lease_ttl_ms: Some(grant.ttl.as_millis() as u64),
+            reason: None,
+        };
+        if !send_json(sender, &decision).await {
+            return false;
+        }
+        let gateway = Arc::clone(self);
+        let route = grant.route;
+        let expiry_route = route.clone();
+        let expiry = tokio::spawn(async move {
+            gateway.watch_lease_expiry(&expiry_route).await;
+        });
+        if !self.attach_expiry_abort(&route, expiry.abort_handle()) {
+            expiry.abort();
+        }
+        true
+    }
+
+    fn viable_daemon_stt(&self) -> Option<Arc<dyn crate::speech::SttEngine>> {
+        self.runtime
+            .voice_engines
+            .load()
+            .stt
+            .as_ref()
+            .filter(|engine| engine.health().is_viable())
+            .map(Arc::clone)
+    }
+
+    async fn acquire_lease(
+        self: &Arc<Self>,
         device_id: &str,
         generation: u64,
         request_id: &str,
@@ -852,39 +1154,34 @@ impl BodyGateway {
         if request_id.is_empty() || request_id.len() > 64 || stream_id == 0 {
             return Err("invalid_capture_request");
         }
+        let preempted = {
+            let mut state = self.lock_state();
+            match state.bodies.get_mut(device_id) {
+                Some(body) if body.generation == generation => body.preempted_route = None,
+                Some(_) => return Err("stale_connection_generation"),
+                None => return Err("body_not_connected"),
+            }
+            if state.adapter.is_none() && self.viable_daemon_stt().is_none() {
+                return Err("speech_engine_unavailable");
+            }
+            state.preempt_for(trigger)?
+        };
+        if let Some((route, release)) = preempted {
+            self.complete_release(route, release, "explicit_capture_preempted", true)
+                .await;
+        }
+        let daemon_stt = self.viable_daemon_stt();
         let mut state = self.lock_state();
-        let daemon_stt = self
-            .runtime
-            .voice_engines
-            .load()
-            .stt
-            .as_ref()
-            .filter(|engine| engine.health().is_viable())
-            .map(Arc::clone);
+        if state.lease.is_some() {
+            return Err("another_endpoint_owns_voice_lease");
+        }
+        let body_session_id = match state.bodies.get(device_id) {
+            Some(body) if body.generation == generation => body.session_id,
+            Some(_) => return Err("stale_connection_generation"),
+            None => return Err("body_not_connected"),
+        };
         if state.adapter.is_none() && daemon_stt.is_none() {
             return Err("speech_engine_unavailable");
-        }
-        if let Some(existing) = state.lease.as_ref() {
-            let can_preempt = trigger == "action_button"
-                && existing.trigger == "wake_word"
-                && existing.phase == LeasePhase::Granted;
-            if !can_preempt {
-                return Err("another_endpoint_owns_voice_lease");
-            }
-            if let Some(mut preempted) = state.lease.take() {
-                if let Some(abort) = preempted.expiry_abort.take() {
-                    abort.abort();
-                }
-                if let Some(abort) = preempted.turn_abort.take() {
-                    abort.abort();
-                }
-            }
-        }
-        let Some(body) = state.bodies.get(device_id) else {
-            return Err("body_not_connected");
-        };
-        if body.generation != generation {
-            return Err("stale_connection_generation");
         }
         let admission = self
             .runtime
@@ -896,7 +1193,7 @@ impl BodyGateway {
         let route = RouteDescriptor {
             device_id: device_id.to_owned(),
             connection_generation: generation,
-            body_session_id: body.session_id,
+            body_session_id,
             lease_id: Uuid::new_v4(),
             turn_id: new_turn_id(),
             capture_stream_id: stream_id,
@@ -930,7 +1227,7 @@ impl BodyGateway {
         })
     }
 
-    pub(crate) fn attach_expiry_abort(
+    fn attach_expiry_abort(
         &self,
         route: &RouteDescriptor,
         abort: tokio::task::AbortHandle,
@@ -1829,8 +2126,18 @@ impl BodyGateway {
         }) else {
             return;
         };
+        self.complete_release(route.clone(), release, reason, notify_adapter)
+            .await;
+    }
+
+    async fn complete_release(
+        self: &Arc<Self>,
+        route: RouteDescriptor,
+        release: LeaseReleaseContext,
+        reason: &'static str,
+        notify_adapter: bool,
+    ) {
         let gateway = Arc::clone(self);
-        let route = route.clone();
         let task = tokio::spawn(async move {
             gateway
                 .finish_release(route, release, reason, notify_adapter)
@@ -1839,6 +2146,66 @@ impl BodyGateway {
         if let Err(error) = task.await {
             tracing::error!(%error,"body.release_failed");
         }
+    }
+
+    pub(crate) async fn refuse_preempted_capture(
+        &self,
+        device_id: &str,
+        generation: u64,
+        control: &RoutedStreamControl,
+        respond: bool,
+    ) -> bool {
+        let refusal = {
+            let state = self.lock_state();
+            let Some(route) = state
+                .preempted_route(device_id, generation, control.stream_id)
+                .filter(|route| {
+                    route.lease_id == control.lease_id && route.turn_id == control.turn_id
+                })
+                .cloned()
+            else {
+                return false;
+            };
+            state
+                .bodies
+                .get(device_id)
+                .map(|body| (route, body.sender.clone(), Arc::clone(&body.send_gate)))
+        };
+        let Some((route, sender, send_gate)) = refusal else {
+            return false;
+        };
+        tracing::debug!(
+            device_id,
+            lease_id = %route.lease_id,
+            turn_id = %route.turn_id,
+            "body.preempted_capture_refused"
+        );
+        if !respond {
+            return true;
+        }
+        let _send_guard = send_gate.lock().await;
+        send_json(
+            &sender,
+            &serde_json::json!({
+                "type": "turn.state",
+                "protocol_major": PROTOCOL_MAJOR,
+                "lease_id": route.lease_id,
+                "turn_id": route.turn_id,
+                "state": "aborted",
+            }),
+        )
+        .await
+    }
+
+    pub(crate) fn is_preempted_capture_stream(
+        &self,
+        device_id: &str,
+        generation: u64,
+        stream_id: u32,
+    ) -> bool {
+        self.lock_state()
+            .preempted_route(device_id, generation, stream_id)
+            .is_some()
     }
 
     async fn finish_release(
@@ -2131,6 +2498,33 @@ impl BodyGateway {
     }
 }
 
+#[cfg(test)]
+impl BodyGateway {
+    pub(super) async fn for_tests(root: &std::path::Path) -> Arc<Self> {
+        let pool = crate::db::test_helpers::in_memory_pool().await;
+        let session = RuntimeSession::for_tests(root, pool.clone()).await;
+        let requests = crate::runtime::message_requests::MessageRequests::new(
+            pool,
+            Arc::clone(&session),
+            Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            Arc::clone(&session.runs),
+            Arc::new(tokio::sync::RwLock::new(())),
+        );
+        Self::new(
+            1,
+            true,
+            BodyRuntime {
+                requests,
+                config: Arc::new(ArcSwap::from_pointee(Config::default())),
+                runtime_session: session,
+                voice_engines: Arc::new(ArcSwap::from_pointee(VoiceEnginesSnapshot::default())),
+                voice_sink: Arc::new(VoiceSink::new()),
+            },
+            None,
+        )
+    }
+}
+
 fn bounded_caption(text: &str) -> String {
     let mut output = String::new();
     for character in text.trim().chars() {
@@ -2178,7 +2572,7 @@ mod tests {
             send_gate: Arc::new(AsyncMutex::new(())),
             disconnect: CancellationToken::new(),
             last_seen: Instant::now(),
-            offered_build: None,
+            preempted_route: None,
         };
 
         assert!(should_replace_body(Some(&connection)));
@@ -2248,6 +2642,198 @@ mod tests {
         ));
         assert_eq!(expected, Some(0));
         assert!(accept_capture_sequence(&mut expected, 0, 0));
+    }
+
+    fn report<T: serde::de::DeserializeOwned>(json: &str) -> T {
+        serde_json::from_str(json).expect("firmware report")
+    }
+
+    fn health(lifecycle: &str, turn: &str) -> BodyHealthReport {
+        report(&format!(
+            r#"{{"type":"health.report","protocol_major":1,"uptime_s":30,"lifecycle":"{lifecycle}","turn":"{turn}","microphone_muted":false,"app_version":"0.9.0","build_number":100,"running_slot":0}}"#
+        ))
+    }
+
+    fn battery(percent: u8, charging: bool) -> BodyBatteryState {
+        report(&format!(
+            r#"{{"type":"battery.state","protocol_major":1,"raw_adc":2100,"percent":{percent},"charging":{charging}}}"#
+        ))
+    }
+
+    fn update_state(phase: &str, reason: Option<&str>) -> UpdateStateReport {
+        let reason = reason.map_or_else(String::new, |reason| format!(r#","reason":"{reason}""#));
+        report(&format!(
+            r#"{{"type":"update.state","protocol_major":1,"phase":"{phase}","progress_percent":0{reason}}}"#
+        ))
+    }
+
+    fn offer_after_health(
+        offers: &mut UpdateOffers,
+        generation: u64,
+        health: &BodyHealthReport,
+        now: Instant,
+    ) -> OfferDecision {
+        offers.observe_health("body-1", health);
+        offers.classify("body-1", generation, 200, health.build_number, now)
+    }
+
+    #[test]
+    fn a_low_battery_refusal_is_offered_again_once_the_body_charges() {
+        let start = Instant::now();
+        let at = |seconds| start + Duration::from_secs(seconds);
+        let idle = health("online", "idle");
+        let mut offers = UpdateOffers::default();
+
+        assert_eq!(
+            offer_after_health(&mut offers, 7, &idle, at(0)),
+            OfferDecision::Send
+        );
+        assert_eq!(
+            offer_after_health(&mut offers, 7, &idle, at(1)),
+            OfferDecision::AlreadyOffered
+        );
+        offers.record_state(
+            "body-1",
+            7,
+            &update_state("failed", Some("low_battery")),
+            at(1),
+        );
+        offers.observe_battery("body-1", &battery(20, false));
+        assert_eq!(
+            offer_after_health(&mut offers, 7, &idle, at(11)),
+            OfferDecision::RetryLater
+        );
+        offers.observe_battery("body-1", &battery(21, true));
+        assert_eq!(
+            offer_after_health(&mut offers, 7, &idle, at(21)),
+            OfferDecision::Send
+        );
+        offers.record_state("body-1", 7, &update_state("accepted", None), at(22));
+        assert_eq!(
+            offer_after_health(&mut offers, 7, &idle, at(3_600)),
+            OfferDecision::Suppressed
+        );
+    }
+
+    #[test]
+    fn a_busy_refusal_is_offered_again_once_the_body_is_idle() {
+        let start = Instant::now();
+        let at = |seconds| start + Duration::from_secs(seconds);
+        let mut offers = UpdateOffers::default();
+
+        assert_eq!(
+            offer_after_health(&mut offers, 7, &health("online", "idle"), at(0)),
+            OfferDecision::Send
+        );
+        offers.record_state("body-1", 7, &update_state("failed", Some("busy")), at(0));
+        assert_eq!(
+            offer_after_health(&mut offers, 7, &health("online", "thinking"), at(5)),
+            OfferDecision::RetryLater
+        );
+        assert_eq!(
+            offer_after_health(&mut offers, 7, &health("updating", "idle"), at(10)),
+            OfferDecision::RetryLater
+        );
+        assert_eq!(
+            offer_after_health(&mut offers, 7, &health("online", "idle"), at(15)),
+            OfferDecision::Send
+        );
+    }
+
+    #[test]
+    fn transient_refusals_back_off_within_a_bound() {
+        let start = Instant::now();
+        let mut offers = UpdateOffers::default();
+        let unknown = report::<BodyHealthReport>(r#"{"build_number":100}"#);
+        let mut now = start;
+        let mut waits = Vec::new();
+        assert_eq!(
+            offer_after_health(&mut offers, 7, &unknown, now),
+            OfferDecision::Send
+        );
+        for _ in 0..8 {
+            offers.record_state(
+                "body-1",
+                7,
+                &update_state("failed", Some("battery_unknown")),
+                now,
+            );
+            let refused_at = now;
+            while offer_after_health(&mut offers, 7, &unknown, now) == OfferDecision::RetryLater {
+                now += Duration::from_secs(10);
+            }
+            waits.push(now.duration_since(refused_at).as_secs());
+        }
+        assert_eq!(waits, [30, 60, 120, 240, 480, 900, 900, 900]);
+
+        offers.record_state(
+            "body-1",
+            7,
+            &update_state("failed", Some("battery_unknown")),
+            now,
+        );
+        offers.observe_battery("body-1", &battery(80, false));
+        assert_eq!(
+            offer_after_health(&mut offers, 7, &unknown, now + Duration::from_secs(5)),
+            OfferDecision::Send
+        );
+    }
+
+    #[test]
+    fn permanent_update_failures_stay_suppressed_across_reconnections() {
+        let start = Instant::now();
+        let idle = health("online", "idle");
+        let mut offers = UpdateOffers::default();
+        assert_eq!(
+            offer_after_health(&mut offers, 7, &idle, start),
+            OfferDecision::Send
+        );
+        offers.record_state(
+            "body-1",
+            7,
+            &update_state("failed", Some("install_failed")),
+            start,
+        );
+        assert_eq!(
+            offer_after_health(&mut offers, 9, &idle, start),
+            OfferDecision::Suppressed
+        );
+
+        let mut rejected = UpdateOffers::default();
+        assert_eq!(
+            offer_after_health(&mut rejected, 7, &idle, start),
+            OfferDecision::Send
+        );
+        assert_eq!(
+            offer_after_health(&mut rejected, 8, &idle, start),
+            OfferDecision::Suppressed
+        );
+        assert_eq!(
+            offer_after_health(&mut rejected, 9, &idle, start),
+            OfferDecision::Suppressed
+        );
+
+        let mut undelivered = UpdateOffers::default();
+        assert_eq!(
+            offer_after_health(&mut undelivered, 7, &idle, start),
+            OfferDecision::Send
+        );
+        undelivered.delivery_failed("body-1", 7);
+        assert_eq!(
+            offer_after_health(&mut undelivered, 7, &idle, start),
+            OfferDecision::Send
+        );
+
+        let current = report::<BodyHealthReport>(r#"{"build_number":200}"#);
+        assert_eq!(
+            offer_after_health(&mut offers, 9, &current, start),
+            OfferDecision::NotNewer
+        );
+        let booting = report::<BodyHealthReport>("{}");
+        assert_eq!(
+            offer_after_health(&mut offers, 9, &booting, start),
+            OfferDecision::NoHealthYet
+        );
     }
 
     #[test]

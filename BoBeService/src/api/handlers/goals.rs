@@ -53,7 +53,6 @@ impl From<&GoalDoc> for GoalResponse {
 #[derive(Debug, Serialize)]
 pub(crate) struct GoalListResponse {
     pub(crate) goals: Vec<GoalResponse>,
-    pub(crate) count: usize,
     pub(crate) active_count: usize,
 }
 
@@ -116,7 +115,6 @@ pub(crate) async fn list_goals(
         .filter(|g| g.status == GoalStatus::Active)
         .count();
     Ok(Json(GoalListResponse {
-        count: goals.len(),
         active_count,
         goals: goals.iter().map(GoalResponse::from).collect(),
     }))

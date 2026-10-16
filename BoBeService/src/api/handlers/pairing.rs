@@ -12,7 +12,9 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::api::handlers::hello::{SurfaceCapabilities, SurfaceKind};
-use crate::api::pairing::pairing_unavailable;
+use crate::api::pairing::{
+    FinishAttempt, Finished, PairingReservation, SealedEnrollment, pairing_unavailable,
+};
 use crate::api::scope::ScopeProfile;
 use crate::app_state::AppState;
 use crate::db::endpoint_repo::EndpointUpsert;
@@ -74,6 +76,15 @@ pub(crate) struct PairingCompleteResponse {
     enrollment: String,
 }
 
+impl From<SealedEnrollment> for PairingCompleteResponse {
+    fn from(sealed: SealedEnrollment) -> Self {
+        Self {
+            nonce: encode(&sealed.nonce),
+            enrollment: encode(&sealed.ciphertext),
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct EnrollmentResponse {
     endpoint_id: String,
@@ -101,7 +112,6 @@ pub(crate) async fn begin(
         .auth
         .pairing
         .invitation_profile()
-        .await
         .ok_or_else(pairing_unavailable)?;
     let mut server_nonce = [0_u8; 32];
     rand::RngExt::fill(&mut rand::rng(), &mut server_nonce);
@@ -117,8 +127,7 @@ pub(crate) async fn begin(
     let result = state
         .auth
         .pairing
-        .begin(profile, &opaque_request, &context, peer.ip())
-        .await?;
+        .begin(profile, &opaque_request, &context, peer.ip())?;
     Ok(Json(PairingBeginResponse {
         exchange_id: result.exchange_id,
         response: encode(&result.response),
@@ -144,8 +153,7 @@ pub(crate) async fn complete(
     let profile = state
         .auth
         .pairing
-        .invitation_profile()
-        .await
+        .completion_profile(request.exchange_id)
         .ok_or_else(pairing_unavailable)?;
     let context = pairing_context(
         &state.infra.identity,
@@ -156,94 +164,97 @@ pub(crate) async fn complete(
         &server_nonce,
     )?;
     let finalization = decode(&request.finalization)?;
-    let reservation = state
-        .auth
-        .pairing
-        .finish(request.exchange_id, profile, &finalization, &context)
+    let nonce = decode_fixed::<12>(&request.nonce)?;
+    let enrollment = decode(&request.enrollment)?;
+    let reservation = match state.auth.pairing.finish(&FinishAttempt {
+        exchange_id: request.exchange_id,
+        profile,
+        finalization: &finalization,
+        context: &context,
+        nonce: &nonce,
+        enrollment: &enrollment,
+    })? {
+        Finished::Delivered(sealed) => return Ok(Json(sealed.into())),
+        Finished::Reserved(reservation) => reservation,
+    };
+    let sealed = enroll(&state, &reservation, peer, &context, nonce, &enrollment).await?;
+    reservation.deliver(sealed.clone());
+    Ok(Json(sealed.into()))
+}
+
+async fn enroll(
+    state: &AppState,
+    reservation: &PairingReservation,
+    peer: std::net::SocketAddr,
+    context: &[u8],
+    nonce: [u8; 12],
+    encrypted_enrollment: &[u8],
+) -> Result<SealedEnrollment, AppError> {
+    let cipher = enrollment_cipher(&reservation.session_key)?;
+    let enrollment = cipher
+        .decrypt(
+            &Nonce::from(nonce),
+            Payload {
+                msg: encrypted_enrollment,
+                aad: context,
+            },
+        )
+        .map_err(|_| pairing_unavailable())?;
+    let enrollment: EnrollmentRequest =
+        serde_json::from_slice(&enrollment).map_err(|_| pairing_unavailable())?;
+    let label = if enrollment.label.trim().is_empty() {
+        reservation.label.clone()
+    } else {
+        enrollment.label
+    };
+    let scopes = reservation.profile.scopes();
+    let source = peer.ip().to_string();
+    let issued = state
+        .body
+        .trust
+        .enroll_endpoint_with_bearer(
+            &EndpointUpsert {
+                id: enrollment.endpoint_id,
+                kind: reservation.profile.endpoint_kind().into(),
+                label,
+                room: None,
+                certificate_sha256: None,
+                protocol_min: enrollment.protocol_min,
+                protocol_max: enrollment.protocol_max,
+                capabilities_json: enrolled_capabilities(
+                    reservation.profile,
+                    enrollment.capabilities,
+                )?,
+            },
+            scopes,
+            state.infra.identity.runtime_authority_epoch,
+            "pairing",
+            Some(&source),
+        )
         .await?;
-    let reservation_id = reservation.id();
-    let result = async {
-        let cipher = enrollment_cipher(&reservation.session_key)?;
-        let nonce = Nonce::from(decode_fixed::<12>(&request.nonce)?);
-        let encrypted_enrollment = decode(&request.enrollment)?;
-        let enrollment = cipher
-            .decrypt(
-                &nonce,
-                Payload {
-                    msg: &encrypted_enrollment,
-                    aad: &context,
-                },
-            )
-            .map_err(|_| pairing_unavailable())?;
-        let enrollment: EnrollmentRequest =
-            serde_json::from_slice(&enrollment).map_err(|_| pairing_unavailable())?;
-        let label = if enrollment.label.trim().is_empty() {
-            reservation.label
-        } else {
-            enrollment.label
-        };
-        let scopes = reservation.profile.scopes();
-        let source = peer.ip().to_string();
-        let issued = state
-            .body
-            .trust
-            .enroll_endpoint_with_bearer(
-                &EndpointUpsert {
-                    id: enrollment.endpoint_id,
-                    kind: reservation.profile.endpoint_kind().into(),
-                    label,
-                    room: None,
-                    certificate_sha256: None,
-                    protocol_min: enrollment.protocol_min,
-                    protocol_max: enrollment.protocol_max,
-                    capabilities_json: enrolled_capabilities(
-                        reservation.profile,
-                        enrollment.capabilities,
-                    )?,
-                },
-                scopes,
-                state.infra.identity.runtime_authority_epoch,
-                "pairing",
-                Some(&source),
-            )
-            .await?;
-        state.disconnect_credentials(&issued.superseded_credential_ids);
-        let response = EnrollmentResponse {
-            endpoint_id: issued.endpoint_id,
-            credential: issued.token,
-            granted_scopes: scopes.iter().map(|scope| scope.as_str()).collect(),
-            runtime_authority_id: state.infra.identity.runtime_authority_id,
-            runtime_authority_epoch: state.infra.identity.runtime_authority_epoch,
-        };
-        let mut response_nonce = [0_u8; 12];
-        rand::RngExt::fill(&mut rand::rng(), &mut response_nonce);
-        let encrypted = cipher
-            .encrypt(
-                &Nonce::from(response_nonce),
-                Payload {
-                    msg: &serde_json::to_vec(&response)?,
-                    aad: &context,
-                },
-            )
-            .map_err(|_| AppError::Internal("encrypt pairing result".into()))?;
-        Ok::<_, AppError>(PairingCompleteResponse {
-            nonce: encode(&response_nonce),
-            enrollment: encode(&encrypted),
-        })
-    }
-    .await;
-    match result {
-        Ok(response) => {
-            if !state.auth.pairing.consume(reservation_id).await {
-                return Err(AppError::Internal("pairing reservation disappeared".into()));
-            }
-            Ok(Json(response))
-        }
-        Err(error) => {
-            state.auth.pairing.release(reservation_id).await;
-            Err(error)
-        }
-    }
+    state.disconnect_credentials(&issued.superseded_credential_ids);
+    let response = EnrollmentResponse {
+        endpoint_id: issued.endpoint_id,
+        credential: issued.token,
+        granted_scopes: scopes.iter().map(|scope| scope.as_str()).collect(),
+        runtime_authority_id: state.infra.identity.runtime_authority_id,
+        runtime_authority_epoch: state.infra.identity.runtime_authority_epoch,
+    };
+    let mut response_nonce = [0_u8; 12];
+    rand::RngExt::fill(&mut rand::rng(), &mut response_nonce);
+    let ciphertext = cipher
+        .encrypt(
+            &Nonce::from(response_nonce),
+            Payload {
+                msg: &serde_json::to_vec(&response)?,
+                aad: context,
+            },
+        )
+        .map_err(|_| AppError::Internal("encrypt pairing result".into()))?;
+    Ok(SealedEnrollment {
+        nonce: response_nonce,
+        ciphertext,
+    })
 }
 
 fn canonical_pairing_origin(raw: &str) -> Result<CanonicalPairingOrigin, AppError> {
@@ -404,7 +415,7 @@ pub(crate) async fn invitation(
         ScopeProfile::MacApp => None,
         ScopeProfile::Phone => Some(phone_link(server).await?),
     };
-    let created = pairing.create_invitation(profile, label).await?;
+    let created = pairing.create_invitation(profile, label)?;
     Ok(PairingInvitation {
         phone: link.map(|link| PhoneInvitation {
             link: link.url(&created.code),
@@ -660,10 +671,7 @@ mod tests {
             invitation(&pairing, &loopback, ScopeProfile::Phone, "iPhone").await,
             Err(AppError::NotNetworked(_))
         ));
-        assert_eq!(
-            pairing.invitation_profile().await,
-            Some(ScopeProfile::Phone)
-        );
+        assert_eq!(pairing.invitation_profile(), Some(ScopeProfile::Phone));
         let mac = serde_json::to_value(
             invitation(&pairing, &loopback, ScopeProfile::MacApp, "Mac")
                 .await

@@ -21,6 +21,16 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 type Reply = Result<Value, String>;
 type PendingReplies = HashMap<i64, oneshot::Sender<Reply>>;
 
+fn mcp_reload_deadline(config: &McpRuntimeConfig) -> Duration {
+    let slowest_start = config
+        .servers
+        .values()
+        .map(|server| Duration::from_millis(u64::from(server.timeout_ms)))
+        .max()
+        .unwrap_or_default();
+    CONTROL_TIMEOUT + slowest_start * 2
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RuntimeFiles {
     pub(crate) node: PathBuf,
@@ -357,21 +367,53 @@ impl Host {
         self.connection().await?.call(method, params, timeout).await
     }
 
-    pub(super) async fn reload(&self, mcp: Option<McpRuntimeConfig>) -> Result<(), AppError> {
-        let directories = {
-            let mut options = self.options.lock().await;
-            if let Some(config) = &mcp {
-                options.mcp.clone_from(config);
-            }
-            options.skill_directories.clone()
-        };
+    pub(super) async fn reload(
+        self: &Arc<Self>,
+        mcp: Option<McpRuntimeConfig>,
+    ) -> Result<(), AppError> {
+        let host = Arc::clone(self);
+        tokio::spawn(async move { host.apply_reload(mcp).await })
+            .await
+            .map_err(|error| AppError::Internal(format!("pi reload stopped: {error}")))?
+    }
+
+    async fn apply_reload(&self, mcp: Option<McpRuntimeConfig>) -> Result<(), AppError> {
         let connection = self.process.lock().await.clone();
+        let mut options = self.options.lock().await;
         if let Some(connection) = connection.filter(|value| value.alive.load(Ordering::Acquire)) {
-            let mut params = json!({"skill_directories": directories});
-            if let Some(mcp) = mcp {
-                params["mcp"] = serde_json::to_value(mcp)?;
+            let mut params = json!({"skill_directories": options.skill_directories});
+            let deadline = match &mcp {
+                Some(config) => {
+                    params["mcp"] = serde_json::to_value(config)?;
+                    mcp_reload_deadline(config)
+                }
+                None => CONTROL_TIMEOUT,
+            };
+            let request = connection
+                .begin("reload", params, false, RunScope::default())
+                .await?;
+            let reply = tokio::time::timeout(deadline, request.reply).await;
+            connection.finish(request.id);
+            match reply {
+                Ok(Ok(Ok(_))) => {}
+                Ok(Ok(Err(error))) => return Err(AppError::Internal(error)),
+                Ok(Err(_)) => {
+                    return Err(AppError::ServiceUnavailable(
+                        "pi worker response was lost".into(),
+                    ));
+                }
+                Err(_) => {
+                    if mcp.is_some()
+                        && let Err(error) = connection.stop_and_wait().await
+                    {
+                        tracing::error!(%error, "pi.reload_stop_failed");
+                    }
+                    return Err(AppError::Internal("pi reload exceeded its deadline".into()));
+                }
             }
-            connection.call("reload", params, CONTROL_TIMEOUT).await?;
+        }
+        if let Some(config) = mcp {
+            options.mcp = config;
         }
         Ok(())
     }
@@ -1339,6 +1381,122 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn mcp_options_change_only_after_the_worker_confirms_the_reload() {
+        let root = std::env::temp_dir().join(format!("bobe-pi-reload-{}", uuid::Uuid::new_v4()));
+        let paths = crate::util::paths::DataPaths::resolve(
+            &root,
+            &format!("sqlite:{}", root.join("db").display()),
+        )
+        .unwrap()
+        .prepare_root()
+        .unwrap();
+        let skills = SkillStore::prepare(&paths).await.unwrap();
+        let memory = crate::provider::MemoryFile::new(root.join("memory.md"));
+        let goals = Arc::new(crate::services::goals::goals_service::GoalsService::new(
+            crate::services::goals::file_store::GoalFileStore::new(root.join("goals")),
+        ));
+        let tools = DomainTools::new(memory, goals, Arc::clone(&skills), true, true);
+        let entry = root.join("reload-fixture.mjs");
+        tokio::fs::write(
+            &entry,
+            br#"
+import readline from "node:readline";
+const send = value => process.stdout.write(JSON.stringify(value) + "\n");
+readline.createInterface({ input: process.stdin }).on("line", line => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    send({ id: message.id, result: { protocol_version: 1, harness: "pi" } });
+  } else if (message.method === "reload" && message.params.mcp?.servers?.broken) {
+    send({ id: message.id, error: { message: "MCP reload was rolled back: broken did not start" } });
+  } else if (message.method === "reload") {
+    send({ id: message.id, result: {} });
+  } else if (message.method === "shutdown") {
+    process.stdout.write(JSON.stringify({ id: message.id, result: {} }) + "\n", () => process.exit(0));
+  } else {
+    send({ id: message.id, error: { message: "unknown method" } });
+  }
+});
+"#,
+        )
+        .await
+        .unwrap();
+        let files = RuntimeFiles {
+            node: RuntimeFiles::resolve()
+                .expect("pi tests require the built worker")
+                .node,
+            entry,
+        };
+        let host = Host::new(
+            InitializeParams {
+                protocol_version: 1,
+                data_root: root.clone(),
+                workspace: root.clone(),
+                skill_directories: Vec::new(),
+                profiles: json!({}),
+                routes: crate::config::Config::default().routes,
+                tools: Vec::new(),
+                capabilities: crate::provider::domain_tools::Capabilities {
+                    memory: false,
+                    goals: false,
+                },
+                mcp: McpRuntimeConfig::default(),
+                enabled_tools: std::collections::BTreeSet::default(),
+                execution: WorkerExecution::from(&crate::config::ExecutionLimits::default()),
+                workload_budgets: std::collections::BTreeMap::default(),
+            },
+            DomainBridge {
+                execution: crate::config::ExecutionLimits::default(),
+                tools,
+                skills,
+                conversations: Arc::new(crate::db::SqliteConversationRepo::new(
+                    crate::db::test_helpers::in_memory_pool().await,
+                )),
+                jobs: crate::db::agent_job_repo::AgentJobRepo::new(
+                    crate::db::test_helpers::in_memory_pool().await,
+                ),
+                background_route: crate::config::Config::default().routes.goals,
+                background_enabled: true,
+            },
+        );
+        {
+            let mut owned = host.process.lock().await;
+            host.start_connection(&mut owned, &files).await.unwrap();
+        }
+        let servers = |name: &str| McpRuntimeConfig {
+            servers: std::collections::BTreeMap::from([(
+                name.to_owned(),
+                crate::provider::McpServerSpec {
+                    command: "server".into(),
+                    args: Vec::new(),
+                    env: HashMap::new(),
+                    timeout_ms: 1_000,
+                    excluded_tools: Vec::new(),
+                },
+            )]),
+        };
+
+        let error = host.reload(Some(servers("broken"))).await.unwrap_err();
+
+        assert!(error.to_string().contains("rolled back"), "{error}");
+        assert!(host.options.lock().await.mcp.servers.is_empty());
+        host.reload(Some(servers("working"))).await.unwrap();
+        assert!(
+            host.options
+                .lock()
+                .await
+                .mcp
+                .servers
+                .contains_key("working")
+        );
+        assert_eq!(
+            mcp_reload_deadline(&servers("working")),
+            CONTROL_TIMEOUT + Duration::from_secs(2)
+        );
+        host.close().await.unwrap();
+        tokio::fs::remove_dir_all(root).await.unwrap();
     }
 
     #[tokio::test]

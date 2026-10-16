@@ -195,9 +195,6 @@ impl OllamaInstallService {
         }
 
         if let Some(binary_path) = binary_path.as_deref() {
-            self.binary_manager
-                .validate_ollama_binary(binary_path)
-                .await?;
             self.ollama_manager
                 .ensure_daemon_running(binary_path)
                 .await?;

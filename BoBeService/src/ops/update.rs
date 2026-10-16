@@ -80,15 +80,221 @@ pub(crate) fn current_platform() -> &'static str {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum UpdatePhase {
+    Staging,
+    Stopping,
+    BackupVerified,
+    Activated,
+    Committed,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct UpdateJournal {
-    pub(crate) phase: String,
+    pub(crate) phase: UpdatePhase,
     pub(crate) previous: PathBuf,
     pub(crate) previous_version: String,
     pub(crate) candidate: String,
     pub(crate) backup: Option<PathBuf>,
     pub(crate) authority_id: Option<uuid::Uuid>,
     pub(crate) managed_service: bool,
+}
+
+pub(crate) const READY_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(1);
+const READY_PROBE: std::time::Duration = std::time::Duration::from_secs(10);
+
+pub(crate) trait UpdateHost {
+    async fn stop_service(&self) -> Result<(), AppError>;
+    async fn install_service(&self, version_root: &Path) -> Result<(), AppError>;
+    async fn ready(
+        &self,
+        authority_id: Option<uuid::Uuid>,
+        version: &str,
+        timeout: std::time::Duration,
+    ) -> bool;
+    async fn restore_backup(&self, backup: &Path) -> Result<(), AppError>;
+    async fn preserve_data(&self) -> Result<PathBuf, AppError>;
+}
+
+pub(crate) struct SystemUpdateHost<'a> {
+    pub(crate) service_paths: &'a crate::ops::service::ServicePaths,
+    pub(crate) paths: &'a crate::util::paths::DataPaths,
+    pub(crate) config_file: &'a Path,
+    pub(crate) target: crate::ops::status::OpsTarget,
+}
+
+impl UpdateHost for SystemUpdateHost<'_> {
+    async fn stop_service(&self) -> Result<(), AppError> {
+        crate::ops::service::stop(self.service_paths).await
+    }
+
+    async fn install_service(&self, version_root: &Path) -> Result<(), AppError> {
+        let executable = version_root.join("bin/bobe");
+        let agent = crate::agent::RuntimeFiles::installed(&executable);
+        crate::ops::service::install(&executable, agent.as_ref(), self.service_paths).await
+    }
+
+    async fn ready(
+        &self,
+        authority_id: Option<uuid::Uuid>,
+        version: &str,
+        timeout: std::time::Duration,
+    ) -> bool {
+        let (exit, _) = crate::ops::status::wait_ready_for(
+            &self.target,
+            timeout,
+            std::time::Duration::from_millis(500),
+            crate::ops::status::ReadinessLevel::Process,
+            authority_id,
+            None,
+            Some(version),
+        )
+        .await;
+        exit == crate::ops::exit::ExitCode::Success
+    }
+
+    async fn restore_backup(&self, backup: &Path) -> Result<(), AppError> {
+        let locks = crate::util::runtime_lock::RuntimeLocks::acquire_after_service_stop(
+            self.paths,
+            std::time::Duration::from_secs(15),
+        )
+        .await?;
+        crate::ops::backup::restore(
+            backup,
+            self.paths,
+            self.config_file,
+            &crate::bootstrap::database::SUPPORTED_SCHEMA_VERSIONS,
+        )
+        .await?;
+        drop(locks);
+        Ok(())
+    }
+
+    async fn preserve_data(&self) -> Result<PathBuf, AppError> {
+        let locks = crate::util::runtime_lock::RuntimeLocks::acquire_after_service_stop(
+            self.paths,
+            std::time::Duration::from_secs(15),
+        )
+        .await?;
+        crate::ops::backup::reconcile_restore_journals(self.paths, self.config_file).await?;
+        let backup = crate::ops::backup::create_offline(self.paths, self.config_file).await?;
+        drop(locks);
+        Ok(backup)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Recovered {
+    Nothing,
+    Finalized,
+    RolledBack { preserved: PathBuf },
+    Abandoned,
+}
+
+pub(crate) async fn recover(
+    journal_path: &Path,
+    versions_root: &Path,
+    host: &impl UpdateHost,
+) -> Result<Recovered, AppError> {
+    let Some(journal) = recover_staging_journal(journal_path, versions_root).await? else {
+        return Ok(Recovered::Nothing);
+    };
+    if journal.phase == UpdatePhase::Committed {
+        clear_journal(journal_path).await?;
+        return Ok(Recovered::Finalized);
+    }
+    if !is_current(versions_root, &journal.candidate) {
+        abandon(journal_path, versions_root, &journal, host).await?;
+        return Ok(Recovered::Abandoned);
+    }
+    if !journal.managed_service || candidate_ready(versions_root, &journal, host).await {
+        commit(journal_path, &journal).await?;
+        return Ok(Recovered::Finalized);
+    }
+    host.stop_service().await?;
+    let preserved = host.preserve_data().await?;
+    roll_back(journal_path, versions_root, &journal, host).await?;
+    Ok(Recovered::RolledBack { preserved })
+}
+
+pub(crate) async fn commit(journal_path: &Path, journal: &UpdateJournal) -> Result<(), AppError> {
+    write_journal(
+        journal_path,
+        &UpdateJournal {
+            phase: UpdatePhase::Committed,
+            ..journal.clone()
+        },
+    )
+    .await?;
+    clear_journal(journal_path).await
+}
+
+pub(crate) async fn roll_back(
+    journal_path: &Path,
+    versions_root: &Path,
+    journal: &UpdateJournal,
+    host: &impl UpdateHost,
+) -> Result<(), AppError> {
+    host.stop_service().await?;
+    if let Some(backup) = &journal.backup {
+        host.restore_backup(backup).await?;
+    }
+    abandon(journal_path, versions_root, journal, host).await
+}
+
+pub(crate) async fn abandon(
+    journal_path: &Path,
+    versions_root: &Path,
+    journal: &UpdateJournal,
+    host: &impl UpdateHost,
+) -> Result<(), AppError> {
+    rollback(versions_root, &journal.previous)?;
+    if journal.managed_service {
+        host.install_service(&versions_root.join(&journal.previous))
+            .await?;
+        if !host
+            .ready(
+                journal.authority_id,
+                &journal.previous_version,
+                READY_TIMEOUT,
+            )
+            .await
+        {
+            return Err(AppError::Internal(
+                "previous service did not become ready after rollback".into(),
+            ));
+        }
+    }
+    discard_candidate(versions_root, &journal.candidate).await?;
+    clear_journal(journal_path).await
+}
+
+async fn candidate_ready(
+    versions_root: &Path,
+    journal: &UpdateJournal,
+    host: &impl UpdateHost,
+) -> bool {
+    if host
+        .ready(journal.authority_id, &journal.candidate, READY_PROBE)
+        .await
+    {
+        return true;
+    }
+    if let Err(error) = host
+        .install_service(&versions_root.join(&journal.candidate))
+        .await
+    {
+        tracing::warn!(%error, candidate = %journal.candidate, "update.candidate_restart_failed");
+        return false;
+    }
+    host.ready(journal.authority_id, &journal.candidate, READY_TIMEOUT)
+        .await
+}
+
+fn is_current(versions_root: &Path, candidate: &str) -> bool {
+    std::fs::read_link(versions_root.join("current"))
+        .is_ok_and(|target| target == Path::new(candidate))
 }
 
 pub(crate) async fn write_journal(path: &Path, journal: &UpdateJournal) -> Result<(), AppError> {
@@ -127,7 +333,7 @@ pub(crate) async fn recover_staging_journal(
     let journal = read_journal(journal_path).await?;
     if let Some(journal) = journal
         .as_ref()
-        .filter(|journal| journal.phase == "staging")
+        .filter(|journal| journal.phase == UpdatePhase::Staging)
     {
         discard_candidate(versions_root, &journal.candidate).await?;
         clear_journal(journal_path).await?;
@@ -489,7 +695,7 @@ mod tests {
         write_journal(
             &journal_path,
             &UpdateJournal {
-                phase: "staging".into(),
+                phase: UpdatePhase::Staging,
                 previous: PathBuf::from("previous-1.0.0"),
                 previous_version: "1.0.0".into(),
                 candidate: "2.0.0".into(),
@@ -520,7 +726,7 @@ mod tests {
         write_journal(
             &journal_path,
             &UpdateJournal {
-                phase: "backup_verified".into(),
+                phase: UpdatePhase::BackupVerified,
                 previous: PathBuf::from("previous-1.0.0"),
                 previous_version: "1.0.0".into(),
                 candidate: "2.0.0".into(),
@@ -537,9 +743,285 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        assert_eq!(remaining.phase, "backup_verified");
+        assert_eq!(remaining.phase, UpdatePhase::BackupVerified);
         assert!(journal_path.exists());
         tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
+    struct FakeHost {
+        ready: std::collections::HashMap<String, Vec<bool>>,
+        calls: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl FakeHost {
+        fn new(ready: &[(&str, &[bool])]) -> Self {
+            Self {
+                ready: ready
+                    .iter()
+                    .map(|(version, answers)| ((*version).to_owned(), answers.to_vec()))
+                    .collect(),
+                calls: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.lock().unwrap().clone()
+        }
+
+        fn record(&self, call: String) -> usize {
+            let mut calls = self.calls.lock().unwrap();
+            calls.push(call.clone());
+            calls.iter().filter(|recorded| **recorded == call).count()
+        }
+    }
+
+    impl UpdateHost for FakeHost {
+        async fn stop_service(&self) -> Result<(), AppError> {
+            self.record("stop".into());
+            Ok(())
+        }
+
+        async fn install_service(&self, version_root: &Path) -> Result<(), AppError> {
+            self.record(format!(
+                "install {}",
+                version_root.file_name().unwrap().to_string_lossy()
+            ));
+            Ok(())
+        }
+
+        async fn ready(
+            &self,
+            _authority_id: Option<uuid::Uuid>,
+            version: &str,
+            _timeout: std::time::Duration,
+        ) -> bool {
+            let attempt = self.record(format!("ready {version}"));
+            self.ready
+                .get(version)
+                .and_then(|answers| answers.get(attempt - 1).or(answers.last()))
+                .copied()
+                .unwrap_or(false)
+        }
+
+        async fn restore_backup(&self, backup: &Path) -> Result<(), AppError> {
+            self.record(format!("restore {}", backup.display()));
+            Ok(())
+        }
+
+        async fn preserve_data(&self) -> Result<PathBuf, AppError> {
+            self.record("preserve".into());
+            Ok(PathBuf::from("backup-of-live-data"))
+        }
+    }
+
+    fn installed_version(versions: &Path, name: &str) {
+        let root = versions.join(name);
+        for file in [
+            "bin/bobe",
+            "compatibility.json",
+            "bin/node",
+            "bin/agent/dist/main.js",
+            "bin/agent/package.json",
+            "bin/agent/assets/chat.md",
+            "bin/agent/bin/rg",
+            "bin/agent/bin/fd",
+            "bin/agent/node_modules/@earendil-works/pi-coding-agent/package.json",
+        ] {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, name).unwrap();
+        }
+    }
+
+    async fn update_fixture(
+        phase: UpdatePhase,
+        current: &str,
+        managed_service: bool,
+    ) -> (PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("bobe-update-{}", uuid::Uuid::new_v4()));
+        let versions = root.join("versions");
+        installed_version(&versions, "previous-1.0.0");
+        installed_version(&versions, "2.0.0");
+        activate_link(&versions, current).unwrap();
+        let journal_path = versions.join("update-journal.json");
+        write_journal(
+            &journal_path,
+            &UpdateJournal {
+                phase,
+                previous: PathBuf::from("previous-1.0.0"),
+                previous_version: "1.0.0".into(),
+                candidate: "2.0.0".into(),
+                backup: Some(root.join("backup-before-update")),
+                authority_id: Some(uuid::Uuid::nil()),
+                managed_service,
+            },
+        )
+        .await
+        .unwrap();
+        (root, versions, journal_path)
+    }
+
+    fn current(versions: &Path) -> PathBuf {
+        std::fs::read_link(versions.join("current")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_committed_update_is_finalized_without_restoring_data() {
+        let (root, versions, journal) = update_fixture(UpdatePhase::Committed, "2.0.0", true).await;
+        let host = FakeHost::new(&[]);
+
+        let recovered = recover(&journal, &versions, &host).await.unwrap();
+
+        assert_eq!(recovered, Recovered::Finalized);
+        assert!(host.calls().is_empty());
+        assert!(!journal.exists());
+        assert_eq!(current(&versions), PathBuf::from("2.0.0"));
+        assert!(versions.join("2.0.0/bin/bobe").is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_ready_candidate_killed_before_commit_is_finalized_without_restoring_data() {
+        let (root, versions, journal) = update_fixture(UpdatePhase::Activated, "2.0.0", true).await;
+        let host = FakeHost::new(&[("2.0.0", &[true])]);
+
+        let recovered = recover(&journal, &versions, &host).await.unwrap();
+
+        assert_eq!(recovered, Recovered::Finalized);
+        assert_eq!(host.calls(), ["ready 2.0.0"]);
+        assert!(!journal.exists());
+        assert_eq!(current(&versions), PathBuf::from("2.0.0"));
+        assert!(versions.join("2.0.0/bin/bobe").is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_stopped_candidate_is_restarted_and_committed_when_it_becomes_ready() {
+        let (root, versions, journal) = update_fixture(UpdatePhase::Activated, "2.0.0", true).await;
+        let host = FakeHost::new(&[("2.0.0", &[false, true])]);
+
+        let recovered = recover(&journal, &versions, &host).await.unwrap();
+
+        assert_eq!(recovered, Recovered::Finalized);
+        assert_eq!(
+            host.calls(),
+            ["ready 2.0.0", "install 2.0.0", "ready 2.0.0"]
+        );
+        assert!(!journal.exists());
+        assert_eq!(current(&versions), PathBuf::from("2.0.0"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_unmanaged_activation_is_its_own_commit() {
+        for phase in [UpdatePhase::BackupVerified, UpdatePhase::Activated] {
+            let (root, versions, journal) = update_fixture(phase, "2.0.0", false).await;
+            let host = FakeHost::new(&[]);
+
+            let recovered = recover(&journal, &versions, &host).await.unwrap();
+
+            assert_eq!(recovered, Recovered::Finalized, "{phase:?}");
+            assert!(host.calls().is_empty());
+            assert!(!journal.exists());
+            assert_eq!(current(&versions), PathBuf::from("2.0.0"));
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_candidate_that_never_becomes_ready_is_rolled_back_to_its_backup() {
+        let (root, versions, journal) = update_fixture(UpdatePhase::Activated, "2.0.0", true).await;
+        let host = FakeHost::new(&[("2.0.0", &[false]), ("1.0.0", &[true])]);
+
+        let recovered = recover(&journal, &versions, &host).await.unwrap();
+
+        assert_eq!(
+            recovered,
+            Recovered::RolledBack {
+                preserved: PathBuf::from("backup-of-live-data")
+            }
+        );
+        assert_eq!(
+            host.calls(),
+            [
+                "ready 2.0.0".to_owned(),
+                "install 2.0.0".to_owned(),
+                "ready 2.0.0".to_owned(),
+                "stop".to_owned(),
+                "preserve".to_owned(),
+                "stop".to_owned(),
+                format!("restore {}", root.join("backup-before-update").display()),
+                "install previous-1.0.0".to_owned(),
+                "ready 1.0.0".to_owned(),
+            ]
+        );
+        assert!(!journal.exists());
+        assert_eq!(current(&versions), PathBuf::from("previous-1.0.0"));
+        assert!(!versions.join("2.0.0").exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_update_interrupted_before_activation_never_restores_its_backup() {
+        for phase in [UpdatePhase::Stopping, UpdatePhase::BackupVerified] {
+            let (root, versions, journal) = update_fixture(phase, "previous-1.0.0", true).await;
+            let host = FakeHost::new(&[("1.0.0", &[true])]);
+
+            let recovered = recover(&journal, &versions, &host).await.unwrap();
+
+            assert_eq!(recovered, Recovered::Abandoned, "{phase:?}");
+            assert_eq!(host.calls(), ["install previous-1.0.0", "ready 1.0.0"]);
+            assert!(!journal.exists());
+            assert_eq!(current(&versions), PathBuf::from("previous-1.0.0"));
+            assert!(!versions.join("2.0.0").exists());
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_released_journal_never_reaches_recovery_again() {
+        let (root, versions, journal) = update_fixture(UpdatePhase::Activated, "2.0.0", true).await;
+        let activated = read_journal(&journal).await.unwrap().unwrap();
+        write_journal(
+            &journal,
+            &UpdateJournal {
+                phase: UpdatePhase::Committed,
+                ..activated
+            },
+        )
+        .await
+        .unwrap();
+        let committed = std::fs::read_to_string(&journal).unwrap();
+        assert!(committed.contains("\"committed\""));
+
+        let host = FakeHost::new(&[]);
+        assert_eq!(
+            recover(&journal, &versions, &host).await.unwrap(),
+            Recovered::Finalized
+        );
+        assert_eq!(
+            recover(&journal, &versions, &host).await.unwrap(),
+            Recovered::Nothing
+        );
+        assert!(host.calls().is_empty());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn journals_written_by_the_previous_release_still_parse() {
+        for phase in ["staging", "stopping", "backup_verified", "activated"] {
+            let journal: UpdateJournal = serde_json::from_value(serde_json::json!({
+                "phase": phase,
+                "previous": "previous-0.9.0",
+                "previous_version": "0.9.0",
+                "candidate": "0.9.1",
+                "backup": null,
+                "authority_id": null,
+                "managed_service": true,
+            }))
+            .unwrap();
+            assert_eq!(serde_json::to_value(journal.phase).unwrap(), phase);
+        }
     }
 
     #[tokio::test]

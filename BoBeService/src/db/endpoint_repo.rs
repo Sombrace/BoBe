@@ -73,28 +73,6 @@ impl EndpointRepo {
         )
     }
 
-    pub(crate) async fn record_authenticated_hello(
-        &self,
-        id: &str,
-        capabilities_json: &str,
-    ) -> Result<bool, AppError> {
-        serde_json::from_str::<serde_json::Value>(capabilities_json)
-            .map_err(|error| AppError::Config(format!("invalid endpoint capabilities: {error}")))?;
-        let mut transaction = self.pool.begin().await?;
-        let result = sqlx::query(
-            "UPDATE endpoints
-             SET observed_capabilities_json = ?2,
-                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-             WHERE id = ?1 AND revoked_at IS NULL",
-        )
-        .bind(id)
-        .bind(capabilities_json)
-        .execute(&mut *transaction)
-        .await?;
-        transaction.commit().await?;
-        Ok(result.rows_affected() == 1)
-    }
-
     pub(crate) async fn update_observed_capabilities(
         &self,
         id: &str,
@@ -258,6 +236,32 @@ mod tests {
         let stored = repo.active_by_id("sensor").await.unwrap().unwrap();
         assert_eq!(stored.capabilities_json, r#"{"sensors":true}"#);
         assert_eq!(stored.observed_capabilities_json, r#"{"text_input":true}"#);
+    }
+
+    #[tokio::test]
+    async fn capabilities_are_recorded_only_for_active_endpoints() {
+        let pool = crate::db::test_helpers::in_memory_pool().await;
+        let repo = EndpointRepo::new(pool.clone());
+        repo.upsert(&endpoint("sensor", 7)).await.unwrap();
+        assert!(
+            repo.update_observed_capabilities("sensor", "{}")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !repo
+                .update_observed_capabilities("missing", "{}")
+                .await
+                .unwrap()
+        );
+        let trust = crate::db::device_trust_repo::DeviceTrustRepo::new(pool);
+        assert!(trust.revoke_endpoint("sensor", "test").await.unwrap());
+        assert!(
+            !repo
+                .update_observed_capabilities("sensor", "{}")
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]

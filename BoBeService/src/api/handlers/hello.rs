@@ -25,7 +25,6 @@ pub(crate) enum SurfaceKind {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CapabilityState {
     Ready,
-    Degraded,
     Unsupported,
 }
 
@@ -34,13 +33,6 @@ pub(crate) enum CapabilityState {
 pub(crate) enum DeploymentMode {
     Loopback,
     Networked,
-}
-
-#[derive(Clone, Copy, Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum AuthMode {
-    EndpointCredential,
-    OwnerToken,
 }
 
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -91,20 +83,13 @@ pub(crate) struct HelloRequest {
 pub(crate) struct HelloResponse {
     runtime_authority_id: Uuid,
     runtime_authority_epoch: i64,
-    runtime_incarnation_id: Uuid,
     daemon_version: &'static str,
-    schema_version: i64,
-    started_at: chrono::DateTime<chrono::Utc>,
-    protocol_min: u32,
-    protocol_max: u32,
     negotiated_protocol: u32,
     deployment_mode: DeploymentMode,
     initialization_state: crate::db::runtime_initialization_repo::InitializationState,
     readiness: AttachReadiness,
     capabilities: RuntimeCapabilities,
     granted_scopes: Vec<Scope>,
-    auth_mode: AuthMode,
-    events: EventsContract,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,19 +109,7 @@ impl From<Readiness> for AttachReadiness {
 
 #[derive(Debug, Serialize)]
 struct RuntimeCapabilities {
-    agent: CapabilityState,
     stt: CapabilityState,
-    tts: CapabilityState,
-    capture: CapabilityState,
-    body: CapabilityState,
-    mcp: CapabilityState,
-    events: CapabilityState,
-}
-
-#[derive(Debug, Serialize)]
-struct EventsContract {
-    subscription: &'static str,
-    cursor_start: Option<u64>,
 }
 
 pub(crate) async fn hello(
@@ -165,7 +138,7 @@ pub(crate) async fn hello(
         if !state
             .body
             .endpoints
-            .record_authenticated_hello(endpoint_id, &capabilities)
+            .update_observed_capabilities(endpoint_id, &capabilities)
             .await?
         {
             return Err(AppError::Unauthorized(
@@ -189,72 +162,28 @@ pub(crate) async fn hello(
     );
 
     let readiness = Readiness::check(&state.infra).await;
-    let config = state.config();
-    let identity = &state.infra.identity;
-    let deployment_mode = if config.server.is_networked() {
+    let deployment_mode = if state.config().server.is_networked() {
         DeploymentMode::Networked
     } else {
         DeploymentMode::Loopback
     };
-    let auth_mode = match principal.kind {
-        PrincipalKind::Endpoint => AuthMode::EndpointCredential,
-        PrincipalKind::Owner | PrincipalKind::Adapter => AuthMode::OwnerToken,
-    };
-    let engines = state.voice.voice_engines.load();
-    let stt = if engines.supports_daemon_stt() {
+    let stt = if state.voice.voice_engines.load().supports_daemon_stt() {
         CapabilityState::Ready
     } else {
         CapabilityState::Unsupported
     };
-    let tts = if engines.is_complete() {
-        CapabilityState::Ready
-    } else {
-        CapabilityState::Unsupported
-    };
-    let body = if !config.body.enabled {
-        CapabilityState::Unsupported
-    } else if state.body.gateway.is_failed() {
-        CapabilityState::Degraded
-    } else {
-        CapabilityState::Ready
-    };
+    let identity = &state.infra.identity;
 
     Ok(Json(HelloResponse {
         runtime_authority_id: identity.runtime_authority_id,
         runtime_authority_epoch: identity.runtime_authority_epoch,
-        runtime_incarnation_id: identity.runtime_incarnation_id,
         daemon_version: identity.daemon_version,
-        schema_version: identity.schema_version,
-        started_at: identity.started_at,
-        protocol_min: crate::constants::attach::PROTOCOL_MIN,
-        protocol_max: crate::constants::attach::PROTOCOL_MAX,
         negotiated_protocol: negotiated,
         deployment_mode,
         initialization_state: readiness.initialization_state,
         readiness: AttachReadiness::from(readiness),
-        capabilities: RuntimeCapabilities {
-            agent: CapabilityState::Ready,
-            stt,
-            tts,
-            capture: if cfg!(target_os = "macos") && config.capture.enabled {
-                CapabilityState::Ready
-            } else {
-                CapabilityState::Unsupported
-            },
-            body,
-            mcp: if config.mcp.enabled {
-                CapabilityState::Ready
-            } else {
-                CapabilityState::Unsupported
-            },
-            events: CapabilityState::Ready,
-        },
+        capabilities: RuntimeCapabilities { stt },
         granted_scopes,
-        auth_mode,
-        events: EventsContract {
-            subscription: "resumable_broadcast",
-            cursor_start: state.infra.event_queue.latest_event_id(),
-        },
     }))
 }
 
@@ -393,6 +322,51 @@ mod tests {
                 "state": "not_ready",
                 "blocking_reasons": ["database_unavailable"],
             })
+        );
+    }
+
+    #[test]
+    fn the_attach_reply_carries_only_what_surfaces_read() {
+        use crate::db::runtime_initialization_repo::InitializationState;
+
+        let reply = serde_json::to_value(HelloResponse {
+            runtime_authority_id: Uuid::from_u128(1),
+            runtime_authority_epoch: 2,
+            daemon_version: "0.9.1",
+            negotiated_protocol: 1,
+            deployment_mode: DeploymentMode::Loopback,
+            initialization_state: InitializationState::Ready,
+            readiness: AttachReadiness::from(Readiness::evaluate(true, InitializationState::Ready)),
+            capabilities: RuntimeCapabilities {
+                stt: CapabilityState::Unsupported,
+            },
+            granted_scopes: Vec::new(),
+        })
+        .unwrap();
+        let mut fields: Vec<&str> = reply
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort_unstable();
+        assert_eq!(
+            fields,
+            [
+                "capabilities",
+                "daemon_version",
+                "deployment_mode",
+                "granted_scopes",
+                "initialization_state",
+                "negotiated_protocol",
+                "readiness",
+                "runtime_authority_epoch",
+                "runtime_authority_id",
+            ]
+        );
+        assert_eq!(
+            reply["capabilities"],
+            serde_json::json!({"stt": "unsupported"})
         );
     }
 

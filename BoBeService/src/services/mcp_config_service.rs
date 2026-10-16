@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
@@ -11,13 +11,21 @@ use crate::agent::PiRuntime;
 use crate::config::Config;
 use crate::error::AppError;
 use crate::mcp::config::{self as mcp_config, McpConfigFile, McpParsedServer, McpServerEntry};
+use crate::provider::McpRuntimeConfig;
 use crate::secrets::SecretStore;
 
-pub(crate) struct McpConfigDeps<'a> {
-    pub(crate) config: &'a ArcSwap<Config>,
-    pub(crate) mcp_config_lock: &'a Mutex<()>,
-    pub(crate) workers: &'a Arc<PiRuntime>,
-    pub(crate) secret_store: &'a Arc<dyn SecretStore>,
+#[derive(Clone)]
+pub(crate) struct McpConfigDeps {
+    pub(crate) config: Arc<ArcSwap<Config>>,
+    pub(crate) mcp_config_lock: Arc<Mutex<()>>,
+    pub(crate) workers: Arc<PiRuntime>,
+    pub(crate) secret_store: Arc<dyn SecretStore>,
+}
+
+struct PendingSecret {
+    key: String,
+    account: String,
+    value: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -85,12 +93,12 @@ pub(crate) struct McpConfigResetResponse {
 }
 
 pub(crate) async fn get_document(
-    deps: &McpConfigDeps<'_>,
+    deps: &McpConfigDeps,
 ) -> Result<McpConfigDocumentResponse, AppError> {
     let (_path, file) = load_mcp_file(deps)?;
     let raw_json = redacted_json(&file)?;
 
-    let servers = build_runtime_summaries(deps.workers, &file).await?;
+    let servers = build_runtime_summaries(&deps.workers, &file).await?;
     let count = servers.len();
     let connected_count = servers.iter().filter(|s| s.connected).count();
 
@@ -103,13 +111,13 @@ pub(crate) async fn get_document(
 }
 
 pub(crate) fn validate_document(
-    deps: &McpConfigDeps<'_>,
+    deps: &McpConfigDeps,
     body: &McpConfigMutationRequest,
 ) -> Result<McpConfigValidateResponse, AppError> {
     let (blocked_cmds, dangerous_keys) = blocked_and_dangerous(deps);
 
     let validation = parse_document(&body.raw_json, &blocked_cmds, &dangerous_keys)
-        .and_then(|(file, _)| normalize_secrets(file, &body.secret_keys, None));
+        .map(|(file, _)| normalize_secrets(file, &body.secret_keys).0);
     match validation {
         Ok(normalized) => Ok(McpConfigValidateResponse {
             valid: true,
@@ -134,32 +142,29 @@ fn invalid_document_response(error: AppError) -> Result<McpConfigValidateRespons
 }
 
 pub(crate) async fn save_document(
-    deps: &McpConfigDeps<'_>,
+    deps: &McpConfigDeps,
     body: McpConfigMutationRequest,
 ) -> Result<McpConfigSaveResponse, AppError> {
     let (blocked_cmds, dangerous_keys) = blocked_and_dangerous(deps);
     let (file, servers) = parse_document(&body.raw_json, &blocked_cmds, &dangerous_keys)?;
-
-    let guard = deps.mcp_config_lock.lock().await;
-    let file = normalize_secrets(file, &body.secret_keys, Some(deps.secret_store.as_ref()))?;
-    let path = resolve_config_path(deps)?;
-    let previous = mcp_config::load_mcp_config_file(&path).ok();
-
-    mcp_config::save_mcp_config_file(&path, &file)?;
-
-    if let Some(ref prev) = previous {
-        cleanup_removed_secret_refs(deps.secret_store.as_ref(), prev, &file);
-    }
-
+    let (file, secrets) = normalize_secrets(file, &body.secret_keys);
     let runtime = if deps.config.load().mcp.enabled {
         mcp_config::to_runtime_mcp_config(servers)
     } else {
-        crate::provider::McpRuntimeConfig::default()
+        McpRuntimeConfig::default()
     };
-    deps.workers.apply_mcp_config(runtime).await?;
-    drop(guard);
+    apply_document(deps, file.clone(), secrets, runtime).await?;
 
-    let servers = build_runtime_summaries(deps.workers, &file).await?;
+    let servers = match build_runtime_summaries(&deps.workers, &file).await {
+        Ok(servers) => servers,
+        Err(error) => {
+            warn!(%error, "mcp_config.saved_without_live_status");
+            sorted_entries(&file)
+                .into_iter()
+                .map(|(name, entry)| build_server_summary(name, entry, None, Vec::new()))
+                .collect()
+        }
+    };
     let count = servers.len();
     let connected_count = servers.iter().filter(|s| s.connected).count();
 
@@ -173,30 +178,141 @@ pub(crate) async fn save_document(
 }
 
 pub(crate) async fn reset_document(
-    deps: &McpConfigDeps<'_>,
+    deps: &McpConfigDeps,
 ) -> Result<McpConfigResetResponse, AppError> {
-    let _guard = deps.mcp_config_lock.lock().await;
-    let path = resolve_config_path(deps)?;
-    let previous = mcp_config::load_mcp_config_file(&path).ok();
-
     let empty = McpConfigFile {
         mcp_servers: HashMap::new(),
     };
-    mcp_config::save_mcp_config_file(&path, &empty)?;
-
-    if let Some(ref prev) = previous {
-        cleanup_removed_secret_refs(deps.secret_store.as_ref(), prev, &empty);
-    }
-
-    deps.workers
-        .apply_mcp_config(crate::provider::McpRuntimeConfig::default())
-        .await?;
+    apply_document(deps, empty.clone(), Vec::new(), McpRuntimeConfig::default()).await?;
 
     Ok(McpConfigResetResponse {
         message: "MCP config reset".into(),
         raw_json: redacted_json(&empty)?,
         count: 0,
     })
+}
+
+async fn apply_document(
+    deps: &McpConfigDeps,
+    file: McpConfigFile,
+    secrets: Vec<PendingSecret>,
+    runtime: McpRuntimeConfig,
+) -> Result<(), AppError> {
+    let deps = deps.clone();
+    tokio::spawn(async move {
+        let _guard = deps.mcp_config_lock.lock().await;
+        let path = resolve_config_path(&deps)?;
+        let workers = Arc::clone(&deps.workers);
+        replace_document(
+            &path,
+            deps.secret_store.as_ref(),
+            &file,
+            &secrets,
+            async move { workers.apply_mcp_config(runtime).await },
+        )
+        .await
+    })
+    .await
+    .map_err(|error| AppError::Internal(format!("MCP configuration update stopped: {error}")))?
+}
+
+async fn replace_document(
+    path: &Path,
+    secret_store: &dyn SecretStore,
+    next: &McpConfigFile,
+    secrets: &[PendingSecret],
+    reload: impl Future<Output = Result<(), AppError>>,
+) -> Result<(), AppError> {
+    let previous_bytes = read_document(path)?;
+    let previous = previous_bytes
+        .as_deref()
+        .and_then(|bytes| serde_json::from_slice::<McpConfigFile>(bytes).ok());
+    let mut replaced = Vec::with_capacity(secrets.len());
+    let outcome = match stage_document(path, secret_store, next, secrets, &mut replaced) {
+        Ok(()) => reload.await,
+        Err(error) => Err(error),
+    };
+    if let Err(error) = outcome {
+        let restored = restore_document(path, previous_bytes.as_deref(), secret_store, &replaced);
+        return Err(match restored {
+            Ok(()) => error,
+            Err(failures) => AppError::Internal(format!(
+                "{error}; restoring the previous MCP configuration also failed: {failures}"
+            )),
+        });
+    }
+    if let Some(previous) = previous {
+        cleanup_removed_secret_refs(secret_store, &previous, next);
+    }
+    Ok(())
+}
+
+fn stage_document(
+    path: &Path,
+    secret_store: &dyn SecretStore,
+    next: &McpConfigFile,
+    secrets: &[PendingSecret],
+    replaced: &mut Vec<(String, Option<String>)>,
+) -> Result<(), AppError> {
+    for secret in secrets {
+        replaced.push((secret.account.clone(), secret_store.read(&secret.account)));
+        secret_store
+            .store(&secret.account, &secret.value)
+            .map_err(|error| {
+                AppError::Config(format!(
+                    "Failed to store MCP secret '{}': {error}",
+                    secret.key
+                ))
+            })?;
+    }
+    mcp_config::save_mcp_config_file(path, next)
+}
+
+fn restore_document(
+    path: &Path,
+    previous: Option<&[u8]>,
+    secret_store: &dyn SecretStore,
+    replaced: &[(String, Option<String>)],
+) -> Result<(), String> {
+    let mut failures = Vec::new();
+    let document = match previous {
+        Some(bytes) => crate::util::durable_fs::atomic_write_sync_mode(path, bytes, 0o600),
+        None => std::fs::remove_file(path).or_else(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                Ok(())
+            } else {
+                Err(AppError::Io(error))
+            }
+        }),
+    };
+    if let Err(error) = document {
+        failures.push(format!("{}: {error}", path.display()));
+    }
+    for (account, value) in replaced.iter().rev() {
+        if secret_store.read(account) == *value {
+            continue;
+        }
+        let restored = match value {
+            Some(value) => secret_store.store(account, value),
+            None => secret_store.delete(account),
+        };
+        if let Err(error) = restored {
+            failures.push(format!("MCP secret {account}: {error}"));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+fn read_document(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(AppError::Io(error)),
+    }
 }
 
 fn parse_document(
@@ -236,21 +352,21 @@ fn parse_document(
 fn normalize_secrets(
     mut file: McpConfigFile,
     secret_keys: &HashMap<String, Vec<String>>,
-    secret_store: Option<&dyn SecretStore>,
-) -> Result<McpConfigFile, AppError> {
+) -> (McpConfigFile, Vec<PendingSecret>) {
+    let mut secrets = Vec::new();
     for (server_name, entry) in &mut file.mcp_servers {
-        let explicit = secret_keys.get(server_name).cloned().unwrap_or_default();
-        entry.env = build_env_with_refs(server_name, &entry.env, &explicit, secret_store)?;
+        let explicit = secret_keys.get(server_name).map_or(&[][..], Vec::as_slice);
+        entry.env = build_env_with_refs(server_name, &entry.env, explicit, &mut secrets);
     }
-    Ok(file)
+    (file, secrets)
 }
 
 fn build_env_with_refs(
     server_name: &str,
     env: &HashMap<String, String>,
     explicit_secret_keys: &[String],
-    secret_store: Option<&dyn SecretStore>,
-) -> Result<HashMap<String, String>, AppError> {
+    secrets: &mut Vec<PendingSecret>,
+) -> HashMap<String, String> {
     let explicit: HashSet<&str> = explicit_secret_keys.iter().map(String::as_str).collect();
     let mut out = HashMap::with_capacity(env.len());
 
@@ -266,26 +382,31 @@ fn build_env_with_refs(
 
         if explicit.contains(key.as_str()) || mcp_config::should_treat_as_secret_key(key) {
             let account = mcp_config::secret_account(server_name, key);
-            if let Some(store) = secret_store {
-                store.store(&account, value).map_err(|e| {
-                    AppError::Config(format!("Failed to store MCP secret '{key}': {e}"))
-                })?;
-            }
             out.insert(key.clone(), mcp_config::secret_ref(&account));
+            secrets.push(PendingSecret {
+                key: key.clone(),
+                account,
+                value: value.clone(),
+            });
         } else {
             out.insert(key.clone(), value.clone());
         }
     }
 
-    Ok(out)
+    out
+}
+
+fn sorted_entries(file: &McpConfigFile) -> Vec<(&String, &McpServerEntry)> {
+    let mut entries: Vec<(&String, &McpServerEntry)> = file.mcp_servers.iter().collect();
+    entries.sort_by_key(|(name, _)| *name);
+    entries
 }
 
 async fn build_runtime_summaries(
     workers: &Arc<PiRuntime>,
     file: &McpConfigFile,
 ) -> Result<Vec<McpServerSummary>, AppError> {
-    let mut entries: Vec<(&String, &McpServerEntry)> = file.mcp_servers.iter().collect();
-    entries.sort_by_key(|(name, _)| *name);
+    let entries = sorted_entries(file);
 
     let live_map: HashMap<String, crate::provider::McpServerStatus> = workers
         .live_mcp_servers()
@@ -347,13 +468,13 @@ fn build_server_summary(
     }
 }
 
-fn load_mcp_file(deps: &McpConfigDeps<'_>) -> Result<(PathBuf, McpConfigFile), AppError> {
+fn load_mcp_file(deps: &McpConfigDeps) -> Result<(PathBuf, McpConfigFile), AppError> {
     let path = resolve_config_path(deps)?;
     let file = mcp_config::load_mcp_config_file(&path)?;
     Ok((path, file))
 }
 
-fn resolve_config_path(deps: &McpConfigDeps<'_>) -> Result<PathBuf, AppError> {
+fn resolve_config_path(deps: &McpConfigDeps) -> Result<PathBuf, AppError> {
     let cfg = deps.config.load();
     mcp_config::ensure_mcp_config_exists(
         std::path::Path::new(&cfg.data_dir),
@@ -361,7 +482,7 @@ fn resolve_config_path(deps: &McpConfigDeps<'_>) -> Result<PathBuf, AppError> {
     )
 }
 
-fn blocked_and_dangerous(deps: &McpConfigDeps<'_>) -> (Vec<String>, Vec<String>) {
+fn blocked_and_dangerous(deps: &McpConfigDeps) -> (Vec<String>, Vec<String>) {
     let cfg = deps.config.load();
     (
         cfg.mcp_blocked_commands_vec().to_vec(),
@@ -454,6 +575,143 @@ mod tests {
             .expect("disabled servers are not resolved");
         assert_eq!(file.mcp_servers.len(), 1);
         assert!(servers.is_empty());
+    }
+
+    struct Fixture {
+        root: PathBuf,
+        path: PathBuf,
+        previous: String,
+        kept: String,
+        added: String,
+        secrets: crate::secrets::memory::MemorySecretStore,
+        next: McpConfigFile,
+        pending: Vec<PendingSecret>,
+    }
+
+    fn fixture(writes_before_failure: usize) -> Fixture {
+        let root = std::env::temp_dir().join(format!("bobe-mcp-commit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("mcp.json");
+        let kept = mcp_config::secret_account("kept", "API_TOKEN");
+        let previous = format!(
+            r#"{{"mcpServers":{{
+            "kept":{{"command":"server","env":{{"API_TOKEN":"bobe-secret://{kept}"}}}},
+            "removed":{{"command":"server","env":{{"API_TOKEN":"bobe-secret://acct-removed"}}}}
+        }}}}"#
+        );
+        std::fs::write(&path, &previous).unwrap();
+        let (next, pending) = normalize_secrets(
+            serde_json::from_str(
+                r#"{"mcpServers":{"kept":{"command":"server","env":{"API_TOKEN":"new-kept","NEW_TOKEN":"brand-new"}}}}"#,
+            )
+            .unwrap(),
+            &HashMap::new(),
+        );
+        let secrets = crate::secrets::memory::MemorySecretStore::holding([
+            (kept.as_str(), "old-kept"),
+            ("acct-removed", "old-removed"),
+        ])
+        .failing_after(writes_before_failure);
+        Fixture {
+            root,
+            path,
+            previous,
+            added: mcp_config::secret_account("kept", "NEW_TOKEN"),
+            kept,
+            secrets,
+            next,
+            pending,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_worker_reload_restores_the_previous_document_and_secrets() {
+        let fixture = fixture(usize::MAX);
+
+        let error = replace_document(
+            &fixture.path,
+            &fixture.secrets,
+            &fixture.next,
+            &fixture.pending,
+            async {
+                Err(AppError::Internal(
+                    "MCP reload was rolled back: server failed".into(),
+                ))
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("rolled back"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(&fixture.path).unwrap(),
+            fixture.previous
+        );
+        assert_eq!(
+            fixture.secrets.read(&fixture.kept).as_deref(),
+            Some("old-kept")
+        );
+        assert_eq!(fixture.secrets.read(&fixture.added), None);
+        assert_eq!(
+            fixture.secrets.read("acct-removed").as_deref(),
+            Some("old-removed")
+        );
+        std::fs::remove_dir_all(&fixture.root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_failed_restore_is_reported_with_the_reload_failure() {
+        let fixture = fixture(2);
+
+        let error = replace_document(
+            &fixture.path,
+            &fixture.secrets,
+            &fixture.next,
+            &fixture.pending,
+            async { Err(AppError::Internal("MCP reload was rolled back".into())) },
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("rolled back"), "{error}");
+        assert!(error.contains("injected secret store failure"), "{error}");
+        assert_eq!(
+            std::fs::read_to_string(&fixture.path).unwrap(),
+            fixture.previous
+        );
+        std::fs::remove_dir_all(&fixture.root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_confirmed_reload_commits_the_document_and_retires_removed_secrets() {
+        let fixture = fixture(usize::MAX);
+
+        replace_document(
+            &fixture.path,
+            &fixture.secrets,
+            &fixture.next,
+            &fixture.pending,
+            async { Ok(()) },
+        )
+        .await
+        .unwrap();
+
+        let saved = mcp_config::load_mcp_config_file(&fixture.path).unwrap();
+        assert_eq!(
+            saved.mcp_servers.keys().collect::<Vec<_>>(),
+            [&"kept".to_owned()]
+        );
+        assert_eq!(
+            fixture.secrets.read(&fixture.kept).as_deref(),
+            Some("new-kept")
+        );
+        assert_eq!(
+            fixture.secrets.read(&fixture.added).as_deref(),
+            Some("brand-new")
+        );
+        assert_eq!(fixture.secrets.read("acct-removed"), None);
+        std::fs::remove_dir_all(&fixture.root).unwrap();
     }
 
     #[test]

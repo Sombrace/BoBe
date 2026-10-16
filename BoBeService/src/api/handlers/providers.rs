@@ -199,7 +199,6 @@ pub(crate) async fn activate(
         .profiles
         .get(&id)
         .and_then(|profile| profile.credential.clone());
-    let account = crate::provider::credential_account(&id);
     let new_api_key = request
         .api_key
         .as_deref()
@@ -277,43 +276,17 @@ pub(crate) async fn activate(
         consolidate: route(selected.consolidate),
     };
     providers.remember_routes(&routes)?;
-    let previous_key = state.infra.headless_secret_store.read(&account);
-    if let Some(api_key) = new_api_key {
-        state
-            .infra
-            .headless_secret_store
-            .store(&account, api_key)
-            .map_err(|error| {
-                AppError::Config(format!("failed to store provider credential: {error}"))
-            })?;
-    }
-    if let Err(error) = crate::config::provider_persistence::persist(
-        state.infra.config_root.as_path(),
-        &providers,
-        &routes,
-    ) {
-        if new_api_key.is_some() {
-            match previous_key {
-                Some(previous) => {
-                    drop(state.infra.headless_secret_store.store(&account, &previous));
-                }
-                None => drop(state.infra.headless_secret_store.delete(&account)),
-            }
-        }
-        return Err(error);
-    }
     let changed = providers != config.providers || routes != config.routes;
-    let mut updated = (**config).clone();
-    updated.providers = providers;
-    updated.routes = routes;
+    let change = new_api_key.map_or(CredentialChange::Keep, CredentialChange::Store);
+    let committed = commit(&state, &config, &id, change, providers, routes);
     drop(config);
-    state.infra.config.store(Arc::new(updated));
-    if new_api_key.is_some() {
+    if committed.secret_changed {
         state
             .infra
             .provider_restart_pending
             .store(true, std::sync::atomic::Ordering::Release);
     }
+    committed.result?;
     Ok(Json(ProviderMutationResponse {
         updated: changed || new_api_key.is_some(),
         restart_required: restart_required(&state),
@@ -364,41 +337,14 @@ pub(crate) async fn remove(
     let profile = providers.profiles.remove(&id).ok_or_else(|| {
         AppError::NotFound(format!("provider profile '{}' was not found", id.as_str()))
     })?;
-    let previous_key = profile.credential.as_ref().and_then(|_| {
-        state
-            .infra
-            .headless_secret_store
-            .read(&crate::provider::credential_account(&id))
-    });
-    if profile.credential.is_some() {
-        state
-            .infra
-            .headless_secret_store
-            .delete(&crate::provider::credential_account(&id))
-            .map_err(|error| {
-                AppError::Config(format!("failed to delete provider credential: {error}"))
-            })?;
-    }
-    if let Err(error) = crate::config::provider_persistence::persist(
-        state.infra.config_root.as_path(),
-        &providers,
-        &routes,
-    ) {
-        if let Some(previous) = previous_key {
-            drop(
-                state
-                    .infra
-                    .headless_secret_store
-                    .store(&crate::provider::credential_account(&id), &previous),
-            );
-        }
-        return Err(error);
-    }
-    let mut updated = (**config).clone();
-    updated.providers = providers;
-    updated.routes = routes;
+    let change = if profile.credential.is_some() {
+        CredentialChange::Delete
+    } else {
+        CredentialChange::Keep
+    };
+    let committed = commit(&state, &config, &id, change, providers, routes);
     drop(config);
-    state.infra.config.store(Arc::new(updated));
+    committed.result?;
     Ok(Json(ProviderMutationResponse {
         updated: true,
         restart_required: restart_required(&state),
@@ -430,38 +376,23 @@ pub(crate) async fn set_credential(
         ));
     }
     profile.validate_api_key(api_key)?;
-    let account = crate::provider::credential_account(&id);
-    let previous_key = state.infra.headless_secret_store.read(&account);
-    state
-        .infra
-        .headless_secret_store
-        .store(&account, api_key)
-        .map_err(|error| {
-            AppError::Config(format!("failed to store provider credential: {error}"))
-        })?;
-    profile.credential = Some(format!("bobe-secret://{account}"));
-    if let Err(error) = crate::config::provider_persistence::persist(
-        state.infra.config_root.as_path(),
-        &providers,
-        &routes,
-    ) {
-        match previous_key {
-            Some(previous) => {
-                drop(state.infra.headless_secret_store.store(&account, &previous));
-            }
-            None => drop(state.infra.headless_secret_store.delete(&account)),
-        }
-        return Err(error);
-    }
-    let mut updated = (**config).clone();
-    updated.providers = providers;
-    updated.routes = routes;
+    profile.credential = Some(crate::provider::credential_reference(&id));
+    let committed = commit(
+        &state,
+        &config,
+        &id,
+        CredentialChange::Store(api_key),
+        providers,
+        routes,
+    );
     drop(config);
-    state.infra.config.store(Arc::new(updated));
-    state
-        .infra
-        .provider_restart_pending
-        .store(true, std::sync::atomic::Ordering::Release);
+    if committed.secret_changed {
+        state
+            .infra
+            .provider_restart_pending
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+    committed.result?;
     Ok(Json(ProviderMutationResponse {
         updated: true,
         restart_required: restart_required(&state),
@@ -485,35 +416,23 @@ pub(crate) async fn clear_credential(
             "this profile uses subscription login, not an API key".into(),
         ));
     }
-    let account = crate::provider::credential_account(&id);
-    let previous_key = state.infra.headless_secret_store.read(&account);
-    state
-        .infra
-        .headless_secret_store
-        .delete(&account)
-        .map_err(|error| {
-            AppError::Config(format!("failed to delete provider credential: {error}"))
-        })?;
     profile.credential = None;
-    if let Err(error) = crate::config::provider_persistence::persist(
-        state.infra.config_root.as_path(),
-        &providers,
-        &routes,
-    ) {
-        if let Some(previous) = previous_key {
-            drop(state.infra.headless_secret_store.store(&account, &previous));
-        }
-        return Err(error);
-    }
-    let mut updated = (**config).clone();
-    updated.providers = providers;
-    updated.routes = routes;
+    let committed = commit(
+        &state,
+        &config,
+        &id,
+        CredentialChange::Delete,
+        providers,
+        routes,
+    );
     drop(config);
-    state.infra.config.store(Arc::new(updated));
-    state
-        .infra
-        .provider_restart_pending
-        .store(true, std::sync::atomic::Ordering::Release);
+    if committed.secret_changed {
+        state
+            .infra
+            .provider_restart_pending
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+    committed.result?;
     Ok(Json(ProviderMutationResponse {
         updated: true,
         restart_required: restart_required(&state),
@@ -591,6 +510,131 @@ pub(crate) async fn patch_routes(
     }))
 }
 
+#[derive(Clone, Copy)]
+enum CredentialChange<'a> {
+    Keep,
+    Store(&'a str),
+    Delete,
+}
+
+struct Committed {
+    result: Result<(), AppError>,
+    secret_changed: bool,
+}
+
+struct CommitFailure {
+    error: AppError,
+    config_committed: bool,
+}
+
+fn commit(
+    state: &AppState,
+    config: &crate::config::Config,
+    id: &ProfileId,
+    change: CredentialChange<'_>,
+    providers: crate::provider::ProvidersConfig,
+    routes: ProviderRoutes,
+) -> Committed {
+    let secrets = state.infra.headless_secret_store.as_ref();
+    let account = crate::provider::credential_account(id);
+    let previous = secrets.read(&account);
+    let root = state.infra.config_root.as_path();
+    let outcome = commit_provider_change(
+        secrets,
+        &account,
+        change,
+        || crate::config::provider_persistence::persist(root, &providers, &routes),
+        || crate::config::provider_persistence::persist(root, &config.providers, &config.routes),
+    );
+    let secret_changed = secrets.read(&account) != previous;
+    let config_committed = match &outcome {
+        Ok(()) => true,
+        Err(failure) => failure.config_committed,
+    };
+    if config_committed {
+        let mut updated = config.clone();
+        updated.providers = providers;
+        updated.routes = routes;
+        state.infra.config.store(Arc::new(updated));
+    }
+    Committed {
+        result: outcome.map_err(|failure| failure.error),
+        secret_changed,
+    }
+}
+
+fn commit_provider_change(
+    secrets: &dyn crate::secrets::SecretStore,
+    account: &str,
+    change: CredentialChange<'_>,
+    save_next: impl FnOnce() -> Result<(), AppError>,
+    restore_previous: impl FnOnce() -> Result<(), AppError>,
+) -> Result<(), CommitFailure> {
+    let previous = secrets.read(account);
+    let uncommitted = |error| CommitFailure {
+        error,
+        config_committed: false,
+    };
+    match change {
+        CredentialChange::Keep => save_next().map_err(uncommitted),
+        CredentialChange::Store(api_key) => secrets
+            .store(account, api_key)
+            .map_err(|error| credential_error("store", &error))
+            .and_then(|()| save_next())
+            .map_err(|error| {
+                uncommitted(with_rollback(
+                    error,
+                    restore_secret(secrets, account, previous.as_deref()),
+                ))
+            }),
+        CredentialChange::Delete => {
+            save_next().map_err(uncommitted)?;
+            let Err(error) = secrets.delete(account) else {
+                return Ok(());
+            };
+            let error = credential_error("delete", &error);
+            if let Err(restore) = restore_secret(secrets, account, previous.as_deref()) {
+                return Err(CommitFailure {
+                    error: with_rollback(error, Err(restore)),
+                    config_committed: true,
+                });
+            }
+            let restored = restore_previous();
+            Err(CommitFailure {
+                config_committed: restored.is_err(),
+                error: with_rollback(error, restored),
+            })
+        }
+    }
+}
+
+fn restore_secret(
+    secrets: &dyn crate::secrets::SecretStore,
+    account: &str,
+    previous: Option<&str>,
+) -> Result<(), crate::secrets::SecretError> {
+    if secrets.read(account).as_deref() == previous {
+        return Ok(());
+    }
+    match previous {
+        Some(value) => secrets.store(account, value),
+        None => secrets.delete(account),
+    }
+}
+
+fn credential_error(action: &str, error: &crate::secrets::SecretError) -> AppError {
+    AppError::Config(format!("failed to {action} provider credential: {error}"))
+}
+
+fn with_rollback(error: AppError, rollback: Result<(), impl std::fmt::Display>) -> AppError {
+    match rollback {
+        Ok(()) => error,
+        Err(rollback) => AppError::Internal(format!(
+            "{error}; restoring the previous provider state also failed: {rollback}"
+        )),
+    }
+}
+
 fn lock_config(state: &AppState) -> Result<std::sync::MutexGuard<'_, ()>, AppError> {
     state
         .infra
@@ -654,5 +698,132 @@ fn profile_response(
         local_runtime: profile.local_runtime,
         credential_present,
         restart_required,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::secrets::SecretStore;
+    use crate::secrets::memory::MemorySecretStore;
+
+    fn disk_full() -> Result<(), AppError> {
+        Err(AppError::Io(std::io::Error::other("disk full")))
+    }
+
+    #[test]
+    fn a_new_key_is_withdrawn_when_the_provider_configuration_cannot_be_saved() {
+        let root =
+            std::env::temp_dir().join(format!("bobe-provider-commit-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("config.toml")).unwrap();
+        let secrets_path = root.join("headless-secrets.json");
+        let secrets = crate::secrets::file::FileSecretStore::at_path(secrets_path.clone()).unwrap();
+        secrets.store("acct", "old-key").unwrap();
+        let config = crate::config::Config::default();
+
+        let failure = commit_provider_change(
+            &secrets,
+            "acct",
+            CredentialChange::Store("new-key"),
+            || {
+                crate::config::provider_persistence::persist(
+                    &root,
+                    &config.providers,
+                    &config.routes,
+                )
+            },
+            || panic!("the previous configuration was never replaced"),
+        )
+        .unwrap_err();
+
+        assert!(!failure.config_committed);
+        assert!(matches!(failure.error, AppError::Io(_)));
+        assert_eq!(secrets.read("acct").as_deref(), Some("old-key"));
+        let reopened = crate::secrets::file::FileSecretStore::at_path(secrets_path).unwrap();
+        assert_eq!(reopened.read("acct").as_deref(), Some("old-key"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_failed_key_rollback_is_reported_with_the_configuration_failure() {
+        let secrets = MemorySecretStore::holding([("acct", "old-key")]).failing_after(1);
+
+        let failure = commit_provider_change(
+            &secrets,
+            "acct",
+            CredentialChange::Store("new-key"),
+            disk_full,
+            || panic!("the previous configuration was never replaced"),
+        )
+        .unwrap_err();
+
+        assert!(!failure.config_committed);
+        let message = failure.error.to_string();
+        assert!(message.contains("disk full"), "{message}");
+        assert!(
+            message.contains("injected secret store failure"),
+            "{message}"
+        );
+        assert_eq!(secrets.read("acct").as_deref(), Some("new-key"));
+    }
+
+    #[test]
+    fn a_key_is_deleted_only_after_the_configuration_stops_using_it() {
+        let secrets = MemorySecretStore::holding([("acct", "old-key")]);
+        let failure = commit_provider_change(
+            &secrets,
+            "acct",
+            CredentialChange::Delete,
+            disk_full,
+            || panic!("nothing was saved"),
+        )
+        .unwrap_err();
+        assert!(!failure.config_committed);
+        assert_eq!(secrets.read("acct").as_deref(), Some("old-key"));
+
+        let restored = std::cell::Cell::new(false);
+        let failing = MemorySecretStore::holding([("acct", "old-key")]).failing_after(0);
+        let failure = commit_provider_change(
+            &failing,
+            "acct",
+            CredentialChange::Delete,
+            || Ok(()),
+            || {
+                restored.set(true);
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(restored.get());
+        assert!(!failure.config_committed);
+        assert_eq!(failing.read("acct").as_deref(), Some("old-key"));
+
+        let failure = commit_provider_change(
+            &MemorySecretStore::holding([("acct", "old-key")]).failing_after(0),
+            "acct",
+            CredentialChange::Delete,
+            || Ok(()),
+            disk_full,
+        )
+        .unwrap_err();
+        assert!(failure.config_committed);
+        let message = failure.error.to_string();
+        assert!(
+            message.contains("injected secret store failure"),
+            "{message}"
+        );
+        assert!(message.contains("disk full"), "{message}");
+
+        assert!(
+            commit_provider_change(
+                &secrets,
+                "acct",
+                CredentialChange::Delete,
+                || Ok(()),
+                || panic!("nothing failed"),
+            )
+            .is_ok()
+        );
+        assert_eq!(secrets.read("acct"), None);
     }
 }
