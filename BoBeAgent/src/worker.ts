@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { VERSION, defineTool } from "@earendil-works/pi-coding-agent";
 import { ModelProfiles } from "./models.js";
 import { Sessions, type SessionBundle } from "./sessions.js";
-import { assertActive, type Redactor } from "./errors.js";
+import { assertActive, failureDetail, type Redactor } from "./errors.js";
 import { authorityPath, privateDirectory } from "./files.js";
 import {
   HARNESS_VERSION, PROTOCOL_VERSION, abortSchema, authSubmitSchema, auxiliarySchema,
@@ -27,11 +27,13 @@ export interface HostConnection {
 interface Activity {
   controller: AbortController;
   completion: Promise<Json>;
+  cleanupFailures: unknown[];
 }
 
 export class WorkerHost implements RpcHandler {
   private readonly processes: ProcessClient;
   private readonly active = new Map<number, Activity>();
+  private readonly unreleased = new Map<number, unknown[]>();
   private lastRequest = 0;
   private initializeAttempted = false;
   private config: Initialize | undefined;
@@ -82,12 +84,15 @@ export class WorkerHost implements RpcHandler {
       if (method === "abort") {
         const { request_id } = validate(abortSchema, params, "abort parameters");
         const activity = this.active.get(request_id);
-        if (!activity) {
-          if (request_id >= id) throw new Error("Unknown execution request id");
-          return {};
+        if (activity) {
+          activity.controller.abort();
+          await Promise.allSettled([activity.completion]);
+        } else if (request_id >= id) {
+          throw new Error("Unknown execution request id");
         }
-        activity.controller.abort();
-        await Promise.allSettled([activity.completion]);
+        const unreleased = this.unreleased.get(request_id);
+        this.unreleased.delete(request_id);
+        if (unreleased) throw new Error(`Execution did not release its resources: ${failureDetail(unreleased)}`);
         return {};
       }
       const config = this.config;
@@ -135,8 +140,7 @@ export class WorkerHost implements RpcHandler {
           const reload = validate(reloadSchema, params, "reload parameters");
           return await this.activity(id, async signal => {
             assertActive(signal);
-            await sessions.reload(reload.mcp, reload.skill_directories);
-            assertActive(signal);
+            await sessions.reload(reload.mcp, reload.skill_directories, signal);
             return {};
           });
         }
@@ -191,6 +195,7 @@ export class WorkerHost implements RpcHandler {
   ): Promise<Json> {
     if (this.active.has(id)) throw new Error("Duplicate worker request id");
     const controller = new AbortController();
+    const cleanupFailures: unknown[] = [];
     const deadline = timeoutMs ?? this.models?.execution.timeout(workload);
     const timeout = deadline === undefined ? undefined : setTimeout(() =>
       controller.abort(new DOMException(`Execution exceeded ${deadline / 1_000} seconds`, "TimeoutError")), deadline);
@@ -202,8 +207,12 @@ export class WorkerHost implements RpcHandler {
     }).finally(() => {
       if (timeout) clearTimeout(timeout);
       this.active.delete(id);
+      if (cleanupFailures.length) {
+        this.unreleased.set(id, cleanupFailures);
+        for (const stale of [...this.unreleased.keys()].slice(0, -64)) this.unreleased.delete(stale);
+      }
     });
-    this.active.set(id, { controller, completion });
+    this.active.set(id, { controller, completion, cleanupFailures });
     return completion;
   }
 
@@ -261,6 +270,7 @@ export class WorkerHost implements RpcHandler {
       ownerInput: (action,args,sourceKey,requestId,signal) => this.connection.call("owner_input", {
         request_id:requestId,name:action,arguments:args,source_key:sourceKey,
       },signal),
+      cleanupFailed: (requestId, error) => { this.active.get(requestId)?.cleanupFailures.push(error); },
     }, this.connection.redactor, this.processes);
     try {
       await this.sessions.main();

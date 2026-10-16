@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { unlink } from "node:fs/promises";
 import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore, OAuthCredential } from "@earendil-works/pi-ai";
 import { Serial, assertActive, type Redactor } from "./errors.js";
-import { atomicPrivateWrite, isMissing, privateRead } from "./files.js";
+import { atomicPrivateWrite, isMissing, privateRead, syncFile } from "./files.js";
 import { isJson, isRecord } from "./protocol.js";
 import { AGENT_LAYOUT } from "./layout.js";
 
@@ -104,8 +104,14 @@ export class AuthorityCredentials implements CredentialStore {
     await scope.serial.run(async () => {
       assertActive(options?.signal);
       if (!scope.oauth) throw new Error("API keys are owned by the daemon");
+      const path = this.path(provider);
       try {
-        await unlink(this.path(provider));
+        await unlink(path);
+      } catch (error) {
+        if (!isMissing(error)) throw error;
+      }
+      try {
+        await syncFile(dirname(path));
       } catch (error) {
         if (!isMissing(error)) throw error;
       }

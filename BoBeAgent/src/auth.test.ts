@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import fsPromises, { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import type { Mode, PathLike } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import type { OAuthCredential } from "@earendil-works/pi-ai";
 import { ModelProfiles } from "./models.js";
+import { AuthorityCredentials } from "./credentials.js";
 import { Redactor } from "./errors.js";
 import { configuration, controlledProvider, deferred, fixture } from "./test-support.js";
 import { type AuthPhase, isRecord } from "./protocol.js";
@@ -90,6 +93,40 @@ test("native model runtime OAuth uses callback input and persists only inside th
   assert.equal(await readFile(join(directory, "device-id"), "utf8"), deviceIdBefore);
   const newSession = await openCanonicalSession(agentDir, paths.workspace);
   assert.notEqual(newSession.getSessionId(), session.getSessionId());
+});
+
+test("signing out makes the removal of the stored OAuth credential durable", async t => {
+  const paths = await fixture(t);
+  const credentials = new AuthorityCredentials(join(paths.root, "agent"), new Redactor());
+  credentials.register("bobe-profile:test", "openai", true);
+  await credentials.modify("bobe-profile:test", async () => ({ ...credential }));
+  const directory = join(paths.root, "agent/auth");
+  const [stored] = (await readdir(directory)).filter(file => file.endsWith(".json"));
+  assert.ok(stored);
+  const operations: string[] = [];
+  const { open, unlink } = fsPromises;
+  t.mock.method(fsPromises, "unlink", async (path: PathLike) => {
+    operations.push(`unlink ${String(path)}`);
+    await unlink(path);
+  });
+  t.mock.method(fsPromises, "open", async (path: PathLike, flags?: string | number, mode?: Mode) => {
+    const handle = await open(path, flags, mode);
+    const sync = handle.sync.bind(handle);
+    handle.sync = async () => {
+      operations.push(`sync ${String(path)}`);
+      await sync();
+    };
+    return handle;
+  });
+  syncBuiltinESMExports();
+  try {
+    await credentials.delete("bobe-profile:test");
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+  assert.deepEqual(operations, [`unlink ${join(directory, stored)}`, `sync ${directory}`]);
+  assert.equal(await credentials.read("bobe-profile:test"), undefined);
 });
 
 test("OAuth cancel rejects an outstanding callback and settles login without a credential", async t => {

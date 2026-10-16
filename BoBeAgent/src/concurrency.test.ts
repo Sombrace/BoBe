@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { configuration, deferred, fixture, host, userText } from "./test-support.js";
 import { PriorityGate } from "./execution.js";
+import { abortableDelay } from "./errors.js";
 
 test("an active channel does not block another channel and remains single-flight itself", async t => {
   const paths = await fixture(t);
@@ -62,6 +63,37 @@ for (const followUp of [false, true]) {
     await assert.rejects(worker.request({ id: 4, method: "steer", params: {
       request_id: 2, text: "must not leak into a later turn", follow_up: followUp,
     } }), /no longer accepting/);
+  });
+}
+
+for (const followUp of [false, true]) {
+  test(`an aborted run discards its unconsumed ${followUp ? "follow-up" : "steering"} before the next turn`, async t => {
+    const paths = await fixture(t);
+    const started = deferred<void>();
+    const contexts: string[] = [];
+    const { worker } = await host(t, configuration(paths), async (context, options) => {
+      contexts.push(JSON.stringify(context.messages));
+      if (userText(context) === "interrupted task") {
+        started.resolve();
+        await abortableDelay(30_000, options?.signal);
+      }
+      return { text: "next result" };
+    });
+    const running = worker.request({ id: 2, method: "chat", params: {
+      text: "interrupted task", channel: "text", context: "",
+    } });
+    const rejected = assert.rejects(running);
+    await started.promise;
+    assert.deepEqual(await worker.request({ id: 3, method: "steer", params: {
+      request_id: 2, text: "stale direction", follow_up: followUp,
+    } }), { queued: true });
+    await worker.request({ id: 4, method: "abort", params: { request_id: 2 } });
+    await rejected;
+    const earlier = contexts.length;
+    await worker.request({ id: 5, method: "chat", params: { text: "next task", channel: "text", context: "" } });
+    const later = contexts.slice(earlier);
+    assert.equal(later.length, 1);
+    assert.equal(later.some(context => context.includes("stale direction")), false);
   });
 }
 

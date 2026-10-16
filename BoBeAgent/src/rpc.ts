@@ -1,6 +1,6 @@
 import type { Readable, Writable } from "node:stream";
 import { TextDecoder } from "node:util";
-import { Cancelled, Redactor, assertActive } from "./errors.js";
+import { Cancelled, Redactor, WorkerFault, assertActive } from "./errors.js";
 import { MAX_LINE_BYTES, json, object, isRecord, parseEnvelope, type Json, type JsonObject, type Notification, type Request } from "./protocol.js";
 
 interface Pending {
@@ -127,7 +127,10 @@ export class JsonlRpc {
         .then(() => handler.request(envelope))
         .then(
           result => this.enqueue({ id: envelope.id, result: json(result) }),
-          error => this.enqueue({ id: envelope.id, error: { message: this.redactor.message(error) } }),
+          error => {
+            this.enqueue({ id: envelope.id, error: { message: this.redactor.message(error) } });
+            if (error instanceof WorkerFault) this.terminate(error);
+          },
         );
       this.handlers.add(task);
       void task.then(

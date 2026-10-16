@@ -5,6 +5,13 @@ export class Cancelled extends Error {
   }
 }
 
+export class WorkerFault extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "WorkerFault";
+  }
+}
+
 export function assertActive(signal?: AbortSignal): void {
   if (signal?.aborted) {
     if (signal.reason instanceof Error && signal.reason.name === "TimeoutError") throw signal.reason;
@@ -14,6 +21,23 @@ export function assertActive(signal?: AbortSignal): void {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Operation failed";
+}
+
+export function failureDetail(failures: readonly unknown[]): string {
+  const causes = (error: unknown): unknown[] => error instanceof AggregateError ? error.errors.flatMap(causes) : [error];
+  return failures.flatMap(causes).map(errorMessage).join("; ");
+}
+
+export async function settleEach(operations: readonly (() => unknown)[]): Promise<unknown[]> {
+  const failures: unknown[] = [];
+  for (const operation of operations) {
+    try {
+      await operation();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  return failures;
 }
 
 export class Redactor {
