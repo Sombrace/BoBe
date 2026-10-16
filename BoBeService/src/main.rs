@@ -563,15 +563,20 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             managed_bootstrap_stdin,
         } => {
             let config::ServeConfig {
-                loaded:
-                    config::LoadedConfig {
-                        mut config,
-                        paths,
-                        config_file,
-                    },
+                loaded,
                 purged_release_0_2,
                 interrupted_restore,
             } = config::Config::load_for_serve().await?;
+            let paths = loaded.paths.clone().prepare_root()?;
+            let runtime_locks = util::runtime_lock::RuntimeLocks::acquire(&paths)?;
+            let (
+                config::LoadedConfig {
+                    mut config,
+                    config_file,
+                    ..
+                },
+                locked_restore,
+            ) = config::Config::reconcile_locked(loaded, &paths).await?;
             if let Some(host) = host {
                 config.server.host = host;
             }
@@ -581,13 +586,8 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             if let Some(log_level) = log_level {
                 config.logging.level = log_level;
             }
-
-            let paths = paths.prepare_root()?;
             config.data_dir = paths.root().to_string_lossy().into_owned();
             config.database.url = paths.database_url().to_owned();
-            let runtime_locks = util::runtime_lock::RuntimeLocks::acquire(&paths)?;
-            let locked_restore =
-                ops::backup::reconcile_restore_journals(&paths, &config_file).await?;
             if config.server.api_token.expose_secret().is_empty() {
                 config.server.api_token = secrecy::SecretString::from(owner_token::ensure(&paths)?);
             }
@@ -711,12 +711,12 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 emit_report(json, &validation, render_validation(&validation));
                 return Ok(ops::exit::ExitCode::Invalid);
             }
+            let paths = loaded.paths.clone().prepare_root()?;
+            let _locks = util::runtime_lock::RuntimeLocks::acquire(&paths)?;
+            let (loaded, _) = config::Config::reconcile_locked(loaded, &paths).await?;
             let mut config = loaded.config;
-            let paths = loaded.paths.prepare_root()?;
             config.data_dir = paths.root().to_string_lossy().into_owned();
             config.database.url = paths.database_url().to_owned();
-            let _locks = util::runtime_lock::RuntimeLocks::acquire(&paths)?;
-            ops::backup::reconcile_restore_journals(&paths, &loaded.config_file).await?;
             if config.server.api_token.expose_secret().is_empty() {
                 config.server.api_token = secrecy::SecretString::from(owner_token::ensure(&paths)?);
             }
@@ -2002,7 +2002,11 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     }
                     ops::update::Recovered::RolledBack { preserved } => println!(
                         "Rolled back an interrupted update that did not start; data from before the rollback is saved in {}",
-                        preserved.display()
+                        preserved
+                            .iter()
+                            .map(|path| path.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(" and ")
                     ),
                 }
                 let manifest_bytes = std::fs::read(&manifest)?;
@@ -2046,6 +2050,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                         backup: None,
                         authority_id: None,
                         managed_service,
+                        preserved: Vec::new(),
                     },
                 )
                 .await?;
@@ -2067,6 +2072,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                         backup: None,
                         authority_id: None,
                         managed_service,
+                        preserved: Vec::new(),
                     },
                 )
                 .await?;
@@ -2083,7 +2089,15 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     } else {
                         util::runtime_lock::RuntimeLocks::acquire(&paths)?
                     };
-                    ops::backup::reconcile_restore_journals(&paths, &loaded.config_file).await?;
+                    if ops::backup::reconcile_restore_journals(&paths, &loaded.config_file)
+                        .await?
+                        .changed_live_data()
+                    {
+                        return Err(error::AppError::Conflict(
+                            "an interrupted restore was just reconciled; run the update again"
+                                .into(),
+                        ));
+                    }
                     let (pool, identity) = bootstrap::initialize_storage(&paths).await?;
                     pool.close().await;
                     if !update.supports_database_schema(identity.schema_version) {
@@ -2111,6 +2125,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                             backup: Some(backup.clone()),
                             authority_id: Some(identity.runtime_authority_id),
                             managed_service,
+                            preserved: Vec::new(),
                         },
                     )
                     .await?;
@@ -2125,6 +2140,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                         backup: Some(backup),
                         authority_id: Some(identity.runtime_authority_id),
                         managed_service,
+                        preserved: Vec::new(),
                     };
                     ops::update::write_journal(&journal_path, &activated).await?;
                     Ok::<_, error::AppError>(activated)
@@ -2141,6 +2157,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                             backup: None,
                             authority_id: None,
                             managed_service,
+                            preserved: Vec::new(),
                         };
                         return Err(
                             match ops::update::abandon(&journal_path, &versions, &prepared, &host)

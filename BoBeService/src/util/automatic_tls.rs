@@ -19,8 +19,6 @@ use crate::util::text::hex_encode;
 
 const CERTIFICATE_VALIDITY: Duration = Duration::from_hours(397 * 24);
 const RENEWAL_WINDOW: Duration = Duration::from_hours(30 * 24);
-const STAGING_PREFIX: &str = ".tls-";
-const STAGING_SUFFIX: &str = ".partial";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct AutomaticTlsIdentity {
@@ -45,8 +43,6 @@ pub(crate) async fn ensure(
     let certificate_path = paths.automatic_tls_certificate();
     let private_key_path = paths.automatic_tls_private_key();
     let metadata_path = paths.automatic_tls_metadata();
-    discard_unpublished_identity(paths).await?;
-
     if metadata_path.exists() {
         if !(certificate_path.is_file() && private_key_path.is_file() && metadata_path.is_file()) {
             return Err(AppError::Config(
@@ -98,85 +94,37 @@ pub(crate) async fn ensure(
         });
     }
 
-    publish_new_identity(paths, hosts).await
-}
-
-async fn discard_unpublished_identity(paths: &DataPaths) -> Result<(), AppError> {
-    let mut entries = tokio::fs::read_dir(paths.root()).await?;
-    while let Some(entry) = entries.next_entry().await? {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with(STAGING_PREFIX) && name.ends_with(STAGING_SUFFIX) {
-            crate::util::durable_fs::durable_remove_entry(&entry.path()).await?;
-        }
-    }
-    if paths.automatic_tls_metadata().exists() {
-        return Ok(());
-    }
-    for unpublished in [
-        paths.automatic_tls_certificate(),
-        paths.automatic_tls_private_key(),
-    ] {
-        if crate::util::durable_fs::durable_remove_file(&unpublished).await? {
-            tracing::warn!(path = %unpublished.display(), "automatic_tls.unpublished_identity_discarded");
-        }
-    }
-    match tokio::fs::remove_dir(paths.tls_dir()).await {
-        Ok(()) => crate::util::durable_fs::sync_directory(paths.root()).await,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(AppError::Config(format!(
-            "automatic TLS directory {} holds unexpected files: {error}",
-            paths.tls_dir().display()
-        ))),
-    }
-}
-
-async fn publish_new_identity(
-    paths: &DataPaths,
-    hosts: Vec<String>,
-) -> Result<AutomaticTlsIdentity, AppError> {
+    crate::util::durable_fs::durable_remove_entry(&paths.tls_dir()).await?;
+    prepare_tls_directory(paths).await?;
     let key_pair = KeyPair::generate()
         .map_err(|error| AppError::Internal(format!("generate TLS key: {error}")))?;
     let certificate_pem =
         issue_certificate(&key_pair, &hosts, SystemTime::now(), CERTIFICATE_VALIDITY)?;
     let identity = AutomaticTlsIdentity {
-        certificate_path: paths.automatic_tls_certificate(),
-        private_key_path: paths.automatic_tls_private_key(),
         spki_sha256: spki_sha256_from_certificate_pem(certificate_pem.as_bytes())?,
+        certificate_path,
+        private_key_path,
         hosts,
         generated_at: Utc::now(),
     };
-    let staging = paths.root().join(format!(
-        "{STAGING_PREFIX}{}{STAGING_SUFFIX}",
-        uuid::Uuid::new_v4().simple()
-    ));
-    let staged = async {
-        create_private_directory(&staging).await?;
-        for (name, bytes) in [
-            (
-                crate::util::paths::AUTOMATIC_TLS_PRIVATE_KEY_FILE,
-                key_pair.serialize_pem().into_bytes(),
-            ),
-            (
-                crate::util::paths::AUTOMATIC_TLS_CERTIFICATE_FILE,
-                certificate_pem.into_bytes(),
-            ),
-            (
-                crate::util::paths::AUTOMATIC_TLS_METADATA_FILE,
-                serde_json::to_vec_pretty(&identity)?,
-            ),
-        ] {
-            crate::util::durable_fs::atomic_write_mode(&staging.join(name), &bytes, 0o600).await?;
-        }
-        crate::util::durable_fs::sync_directory(&staging).await?;
-        tokio::fs::rename(&staging, paths.tls_dir()).await?;
-        crate::util::durable_fs::sync_directory(paths.root()).await
-    }
-    .await;
-    if let Err(error) = staged {
-        drop(crate::util::durable_fs::durable_remove_dir_all(&staging).await);
-        return Err(error);
-    }
+    crate::util::durable_fs::atomic_write_mode(
+        &identity.private_key_path,
+        key_pair.serialize_pem().as_bytes(),
+        0o600,
+    )
+    .await?;
+    crate::util::durable_fs::atomic_write_mode(
+        &identity.certificate_path,
+        certificate_pem.as_bytes(),
+        0o600,
+    )
+    .await?;
+    crate::util::durable_fs::atomic_write_mode(
+        &metadata_path,
+        &serde_json::to_vec_pretty(&identity)?,
+        0o600,
+    )
+    .await?;
     Ok(identity)
 }
 
@@ -261,18 +209,6 @@ async fn prepare_tls_directory(paths: &DataPaths) -> Result<(), AppError> {
     }
     #[cfg(not(unix))]
     tokio::fs::create_dir_all(paths.tls_dir()).await?;
-    Ok(())
-}
-
-async fn create_private_directory(path: &std::path::Path) -> Result<(), AppError> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-        std::fs::DirBuilder::new().mode(0o700).create(path)?;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
-    }
-    #[cfg(not(unix))]
-    tokio::fs::create_dir(path).await?;
     Ok(())
 }
 
@@ -460,17 +396,6 @@ mod tests {
             spki_sha256_from_certificate_pem(&certificate).unwrap(),
             identity.spki_sha256
         );
-        let leftovers = std::fs::read_dir(paths.root())
-            .unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(STAGING_PREFIX)
-            })
-            .count();
-        assert_eq!(leftovers, 0);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -496,36 +421,7 @@ mod tests {
         )
         .unwrap();
         type Interruption = fn(&DataPaths, &KeyPair, &str);
-        let interruptions: [(&str, Interruption); 6] = [
-            ("staging directory created", |paths, _, _| {
-                std::fs::create_dir(paths.root().join(".tls-interrupted.partial")).unwrap();
-            }),
-            ("staged key written", |paths, key, _| {
-                let staging = paths.root().join(".tls-interrupted.partial");
-                std::fs::create_dir(&staging).unwrap();
-                std::fs::write(
-                    staging.join(crate::util::paths::AUTOMATIC_TLS_PRIVATE_KEY_FILE),
-                    key.serialize_pem(),
-                )
-                .unwrap();
-            }),
-            ("staged identity complete", |paths, key, certificate| {
-                let staging = paths.root().join(".tls-interrupted.partial");
-                std::fs::create_dir(&staging).unwrap();
-                for (name, bytes) in [
-                    (
-                        crate::util::paths::AUTOMATIC_TLS_PRIVATE_KEY_FILE,
-                        key.serialize_pem(),
-                    ),
-                    (
-                        crate::util::paths::AUTOMATIC_TLS_CERTIFICATE_FILE,
-                        certificate.to_owned(),
-                    ),
-                    (crate::util::paths::AUTOMATIC_TLS_METADATA_FILE, "{}".into()),
-                ] {
-                    std::fs::write(staging.join(name), bytes).unwrap();
-                }
-            }),
+        let interruptions: [(&str, Interruption); 3] = [
             ("empty identity directory", |paths, _, _| {
                 std::fs::create_dir(paths.tls_dir()).unwrap();
             }),

@@ -139,51 +139,16 @@ pub(crate) async fn update_settings(
         }));
     }
 
-    let result = if body.mcp_enabled.is_some() {
-        super::config_admin::update_with_mcp(&state, changes).await?
-    } else {
-        tokio::task::block_in_place(|| state.infra.config_manager.update(&changes))?
-    };
-    let current_config = (**state.config()).clone();
-    let body_theme_changed = result
-        .applied_fields
-        .iter()
-        .any(|field| field == "body.theme");
-    let body_theme_delivered = if body_theme_changed {
-        Some(
-            state
-                .body
-                .gateway
-                .apply_theme(current_config.body.theme)
-                .await,
-        )
-    } else {
-        None
-    };
-
-    if result.applied_fields.iter().any(|field| {
-        matches!(
-            field.as_str(),
-            "capture.enabled" | "capture.interval_seconds"
-        )
-    }) {
-        state.runtime.runtime_session.wake_capture();
-    }
-    if result.applied_fields.iter().any(|field| {
-        matches!(
-            field.as_str(),
-            "checkin.enabled" | "checkin.times" | "checkin.jitter_minutes"
-        )
-    }) {
-        state.runtime.runtime_session.reconfigure_checkins().await;
-    }
-
+    let committed =
+        super::config_admin::commit(&state, super::config_admin::ConfigChange::Update(changes))
+            .await?;
+    let result = committed.result;
     let total = result.applied_fields.len() + result.restart_required_fields.len();
     Ok(Json(SettingsUpdateResponse {
         message: format!("Updated {total} setting(s)"),
         restart_required_fields: result.restart_required_fields,
         persist_failed: result.persist_failed,
-        body_theme_delivered,
+        body_theme_delivered: committed.body_theme_delivered,
     }))
 }
 

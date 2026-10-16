@@ -196,7 +196,7 @@ async fn ensure_executable(executable: &Path) -> Result<(), AppError> {
 
 trait ServiceManager {
     async fn check_definition(&self, definition: &Path) -> Result<(), AppError>;
-    async fn active(&self) -> Result<bool, AppError>;
+    async fn running(&self) -> Result<bool, AppError>;
     async fn stop(&self) -> Result<(), AppError>;
     async fn reload(&self) -> Result<(), AppError>;
     async fn start(&self, paths: &ServicePaths) -> Result<(), AppError>;
@@ -209,24 +209,8 @@ impl ServiceManager for SystemServiceManager {
         check_definition(definition).await
     }
 
-    async fn active(&self) -> Result<bool, AppError> {
-        #[cfg(target_os = "macos")]
-        {
-            let uid = user_id().await?;
-            ensure_launchd_gui_domain(&uid).await?;
-            return command_succeeds(
-                "/bin/launchctl",
-                &["print", &format!("gui/{uid}/{LAUNCHD_LABEL}")],
-            )
-            .await;
-        }
-        #[cfg(all(unix, not(target_os = "macos")))]
-        return Ok(
-            command_succeeds("systemctl", &["--user", "is-enabled", SYSTEMD_UNIT]).await?
-                || command_succeeds("systemctl", &["--user", "is-active", SYSTEMD_UNIT]).await?,
-        );
-        #[cfg(not(unix))]
-        unreachable!()
+    async fn running(&self) -> Result<bool, AppError> {
+        service_running().await
     }
 
     async fn stop(&self) -> Result<(), AppError> {
@@ -240,6 +224,46 @@ impl ServiceManager for SystemServiceManager {
     async fn start(&self, paths: &ServicePaths) -> Result<(), AppError> {
         start(paths).await
     }
+}
+
+async fn service_running() -> Result<bool, AppError> {
+    #[cfg(target_os = "macos")]
+    {
+        let uid = user_id().await?;
+        ensure_launchd_gui_domain(&uid).await?;
+        let output = tokio::process::Command::new("/bin/launchctl")
+            .args(["print", &format!("gui/{uid}/{LAUNCHD_LABEL}")])
+            .output()
+            .await?;
+        if output.status.success() {
+            Ok(launchd_reports_running(&String::from_utf8_lossy(
+                &output.stdout,
+            )))
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if query_reports_absent(QueryKind::LaunchdJob, "", &stderr) {
+                Ok(false)
+            } else {
+                Err(AppError::Internal(format!(
+                    "launchctl query failed: {}",
+                    stderr.trim()
+                )))
+            }
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        command_succeeds("systemctl", &["--user", "is-active", SYSTEMD_UNIT]).await
+    }
+    #[cfg(not(unix))]
+    unreachable!()
+}
+
+#[cfg(any(test, target_os = "macos"))]
+fn launchd_reports_running(description: &str) -> bool {
+    description
+        .lines()
+        .any(|line| line.trim() == "state = running")
 }
 
 async fn check_definition(definition: &Path) -> Result<(), AppError> {
@@ -282,12 +306,12 @@ async fn replace_definition(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(error) => return Err(error.into()),
         };
-        let was_active = manager.active().await?;
+        let was_running = manager.running().await?;
         manager.stop().await?;
-        Ok::<_, AppError>((previous, was_active))
+        Ok::<_, AppError>((previous, was_running))
     }
     .await;
-    let (previous, was_active) = match prepared {
+    let (previous, was_running) = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
             drop(crate::util::durable_fs::durable_remove_file(&staged).await);
@@ -316,7 +340,7 @@ async fn replace_definition(
             }
         }
         manager.reload().await?;
-        if previous.is_some() && was_active {
+        if previous.is_some() && was_running {
             manager.start(paths).await?;
         }
         Ok::<(), AppError>(())
@@ -785,15 +809,15 @@ mod tests {
     struct FakeManager {
         fail: Option<&'static str>,
         calls: std::sync::Mutex<Vec<&'static str>>,
-        active: bool,
+        running: bool,
     }
 
     impl FakeManager {
-        fn new(fail: Option<&'static str>, active: bool) -> Self {
+        fn new(fail: Option<&'static str>, running: bool) -> Self {
             Self {
                 fail,
                 calls: std::sync::Mutex::new(Vec::new()),
-                active,
+                running,
             }
         }
 
@@ -817,8 +841,8 @@ mod tests {
             self.call("check")
         }
 
-        async fn active(&self) -> Result<bool, AppError> {
-            self.call("active").map(|()| self.active)
+        async fn running(&self) -> Result<bool, AppError> {
+            self.call("running").map(|()| self.running)
         }
 
         async fn stop(&self) -> Result<(), AppError> {
@@ -865,7 +889,7 @@ mod tests {
 
         assert_eq!(
             manager.calls(),
-            ["check", "active", "stop", "reload", "start"]
+            ["check", "running", "stop", "reload", "start"]
         );
         assert_eq!(std::fs::read(&service_paths.definition).unwrap(), b"next");
         assert_eq!(staged_leftovers(&service_paths), 0);
@@ -874,7 +898,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_reinstall_that_fails_before_stopping_leaves_the_previous_service_untouched() {
-        for failure in ["check", "active", "stop"] {
+        for failure in ["check", "running", "stop"] {
             let (root, service_paths) = reinstall_fixture(Some("previous"));
             let manager = FakeManager::new(Some(failure), true);
 
@@ -935,10 +959,20 @@ mod tests {
         assert_eq!(
             manager.calls(),
             [
-                "check", "active", "stop", "reload", "start", "stop", "reload"
+                "check", "running", "stop", "reload", "start", "stop", "reload"
             ]
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn only_a_running_launchd_job_counts_as_running() {
+        assert!(launchd_reports_running(
+            "gui/501/com.bobe.daemon = {\n\tactive count = 1\n\tstate = running\n\tjob state = running\n}"
+        ));
+        assert!(!launchd_reports_running(
+            "gui/501/com.bobe.daemon = {\n\tstate = not running\n\t\tstate = active\n}"
+        ));
     }
 
     #[tokio::test]
@@ -957,7 +991,7 @@ mod tests {
         assert_eq!(
             manager.calls(),
             [
-                "check", "active", "stop", "reload", "start", "stop", "reload"
+                "check", "running", "stop", "reload", "start", "stop", "reload"
             ]
         );
         std::fs::remove_dir_all(root).unwrap();

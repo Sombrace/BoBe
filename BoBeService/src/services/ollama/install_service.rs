@@ -188,7 +188,8 @@ impl OllamaInstallService {
                 .ok();
             None
         };
-        runtime_pump.abort();
+        drop(runtime_tx);
+        drop(runtime_pump.await);
 
         if *cancel_rx.borrow() {
             return Err(AppError::Canceled("Install canceled".into()));

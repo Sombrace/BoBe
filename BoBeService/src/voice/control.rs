@@ -229,6 +229,13 @@ async fn handle_transcript_partial(
     }
 }
 
+fn abort_acknowledgement(session_id: &str) -> ServerMessage {
+    ServerMessage::State {
+        phase: VoicePhase::Listening,
+        turn_id: session_id.to_owned(),
+    }
+}
+
 pub(crate) async fn handle_control_action(
     action: ControlAction,
     ctx: &VoiceContext,
@@ -239,10 +246,9 @@ pub(crate) async fn handle_control_action(
         ControlAction::Abort => {
             info!("voice.control.abort");
             if let Some(s) = session.as_mut() {
-                if !abort_active_turn(s, ctx, 0, "control_abort").await {
-                    send_state(output, VoicePhase::Listening, &s.session_id).await;
-                }
+                abort_active_turn(s, ctx, 0, "control_abort").await;
                 s.last_partial_text.clear();
+                send_json(output, &abort_acknowledgement(&s.session_id)).await;
             }
         }
         ControlAction::Mute => {
@@ -268,5 +274,18 @@ pub(crate) async fn handle_control_action(
                 info!(session = %s.session_id, "voice.control.unmute");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::abort_acknowledgement;
+
+    #[test]
+    fn every_abort_is_acknowledged_by_the_session_listening_again() {
+        assert_eq!(
+            serde_json::to_value(abort_acknowledgement("voice-1700000000")).unwrap(),
+            serde_json::json!({"type": "state", "phase": "listening", "turn_id": "voice-1700000000"})
+        );
     }
 }

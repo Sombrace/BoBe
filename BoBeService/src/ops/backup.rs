@@ -540,11 +540,18 @@ impl<F: FnMut(RestorePoint) -> bool> Checkpoints<F> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Reconciled {
     Absent,
     Completed,
     RolledBack,
+    Discarded { kept: Vec<PathBuf> },
+}
+
+impl Reconciled {
+    pub(crate) fn changed_live_data(&self) -> bool {
+        matches!(self, Self::Completed | Self::RolledBack)
+    }
 }
 
 const RESTORE_JOURNAL: &str = "restore-journal.json";
@@ -642,7 +649,6 @@ async fn restore_interruptible(
                 .map(|replacement| RestoreTarget {
                     path: replacement.target.clone(),
                     had_target: replacement.had_target,
-                    staged: Some(replacement.staged.is_some()),
                 })
                 .collect(),
         }),
@@ -658,25 +664,13 @@ async fn restore_interruptible(
         match install_replacement(replacement, &transaction_id, &mut checkpoints).await {
             Ok(()) => {}
             Err(StepError::Interrupted) => return Err(StepError::Interrupted.into()),
-            Err(StepError::Failed(error)) => {
-                return match reconcile_journal(&journal_path, None).await {
-                    Ok(Reconciled::Completed) => Ok(RestoreOutcome {
-                        manifest,
-                        restored_authority_epoch: restored_epoch,
-                        cleanup_pending: false,
-                    }),
-                    Ok(_) => Err(AppError::Internal(format!(
-                        "restore failed and was rolled back: {error}"
-                    ))),
-                    Err(rollback) => Err(AppError::Internal(format!(
-                        "restore failed: {error}; rollback failed: {rollback}"
-                    ))),
-                };
-            }
+            Err(StepError::Failed(error)) => return Err(abort_restore(&journal_path, error).await),
         }
     }
     journal.phase = "installed".into();
-    write_restore_journal(&journal_path, &journal).await?;
+    if let Err(error) = write_restore_journal(&journal_path, &journal).await {
+        return Err(abort_restore(&journal_path, error).await);
+    }
     checkpoints.reach(RestorePoint::Committed)?;
     let cleanup = async {
         for target in journal.layout.iter().flat_map(|layout| &layout.targets) {
@@ -740,8 +734,6 @@ struct RestoreLayout {
 struct RestoreTarget {
     path: PathBuf,
     had_target: bool,
-    #[serde(default)]
-    staged: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -1087,89 +1079,83 @@ struct LegacyLayout<'a> {
     database: &'a Path,
 }
 
+async fn abort_restore(journal_path: &Path, error: AppError) -> AppError {
+    match reconcile_journal(journal_path, None).await {
+        Ok(Reconciled::RolledBack) => {
+            AppError::Internal(format!("restore failed and was rolled back: {error}"))
+        }
+        Ok(_) => AppError::Internal(format!(
+            "restore was committed but could not be confirmed: {error}"
+        )),
+        Err(rollback) => AppError::Internal(format!(
+            "restore failed: {error}; rollback failed: {rollback}; BoBe rolls it back the next time it starts"
+        )),
+    }
+}
+
 async fn reconcile_journal(
     journal_path: &Path,
     legacy: Option<&LegacyLayout<'_>>,
 ) -> Result<Reconciled, AppError> {
-    let Some(mut journal) = read_restore_journal(journal_path).await? else {
+    let Some(journal) = read_restore_journal(journal_path).await? else {
         return Ok(Reconciled::Absent);
     };
-    let layout = match (journal.layout.clone(), legacy) {
-        (Some(layout), _) => layout,
-        (None, Some(legacy)) => {
-            let targets = restore_targets(legacy.paths, legacy.config_file, legacy.database);
-            if journal.had_targets.len() != targets.len() {
-                return Err(AppError::Conflict(
-                    "restore journal does not match the current artifact inventory".into(),
-                ));
-            }
-            let always_staged = [legacy.database.to_path_buf(), legacy.paths.agent_dir()];
-            RestoreLayout {
-                data_root: legacy.paths.root().to_path_buf(),
-                database_url: legacy.paths.database_url().to_owned(),
-                stage_root: legacy
-                    .paths
-                    .root()
-                    .join(format!(".restore-{}", journal.transaction_id)),
-                targets: targets
-                    .into_iter()
-                    .zip(journal.had_targets.iter().copied())
-                    .map(|(path, had_target)| RestoreTarget {
-                        staged: always_staged.contains(&path).then_some(true),
-                        path,
-                        had_target,
-                    })
-                    .collect(),
-            }
-        }
-        (None, None) => return Ok(Reconciled::Absent),
+    let Some(layout) = journal.layout.as_ref() else {
+        return match legacy {
+            Some(legacy) => discard_legacy_journal(journal_path, &journal, legacy).await,
+            None => Ok(Reconciled::Absent),
+        };
     };
-    let transaction_id = journal.transaction_id.clone();
-    let finish = journal.phase == "installed" || fully_installed(&layout, &transaction_id)?;
-    if finish {
-        if journal.phase != "installed" {
-            journal.phase = "installed".into();
-            write_restore_journal(journal_path, &journal).await?;
+    let transaction_id = journal.transaction_id.as_str();
+    let committed = journal.phase == "installed";
+    for target in layout.targets.iter().rev() {
+        let old = replacement_path(&target.path, "old", transaction_id)?;
+        if committed {
+            remove_entry(&old).await?;
+        } else if entry_exists(&old) {
+            remove_entry(&target.path).await?;
+            tokio::fs::rename(&old, &target.path).await?;
+            sync_parent(&target.path).await?;
+        } else if !target.had_target {
+            remove_entry(&target.path).await?;
         }
-        for target in &layout.targets {
-            remove_entry(&replacement_path(&target.path, "old", &transaction_id)?).await?;
-            remove_entry(&replacement_path(&target.path, "new", &transaction_id)?).await?;
-        }
-    } else {
-        for target in layout.targets.iter().rev() {
-            let old = replacement_path(&target.path, "old", &transaction_id)?;
-            if entry_exists(&old) {
-                remove_entry(&target.path).await?;
-                tokio::fs::rename(&old, &target.path).await?;
-                sync_parent(&target.path).await?;
-            } else if !target.had_target {
-                remove_entry(&target.path).await?;
-            }
-            remove_entry(&replacement_path(&target.path, "new", &transaction_id)?).await?;
-        }
+        remove_entry(&replacement_path(&target.path, "new", transaction_id)?).await?;
     }
     crate::util::durable_fs::durable_remove_dir_all(&layout.stage_root).await?;
     crate::util::durable_fs::durable_remove_file(journal_path).await?;
-    Ok(if finish {
+    Ok(if committed {
         Reconciled::Completed
     } else {
         Reconciled::RolledBack
     })
 }
 
-fn fully_installed(layout: &RestoreLayout, transaction_id: &str) -> Result<bool, AppError> {
-    for target in &layout.targets {
-        let moved_aside = !target.had_target
-            || entry_exists(&replacement_path(&target.path, "old", transaction_id)?);
-        let staged_pending = entry_exists(&replacement_path(&target.path, "new", transaction_id)?);
-        let placed = target
-            .staged
-            .is_none_or(|staged| entry_exists(&target.path) == staged);
-        if !moved_aside || staged_pending || !placed {
-            return Ok(false);
+async fn discard_legacy_journal(
+    journal_path: &Path,
+    journal: &RestoreJournal,
+    legacy: &LegacyLayout<'_>,
+) -> Result<Reconciled, AppError> {
+    let transaction_id = journal.transaction_id.as_str();
+    let mut kept = Vec::new();
+    for target in restore_targets(legacy.paths, legacy.config_file, legacy.database) {
+        remove_entry(&replacement_path(&target, "new", transaction_id)?).await?;
+        let old = replacement_path(&target, "old", transaction_id)?;
+        if entry_exists(&old) {
+            kept.push(old);
         }
     }
-    Ok(true)
+    crate::util::durable_fs::durable_remove_dir_all(
+        &legacy
+            .paths
+            .root()
+            .join(format!(".restore-{transaction_id}")),
+    )
+    .await?;
+    crate::util::durable_fs::durable_remove_file(journal_path).await?;
+    if !kept.is_empty() {
+        tracing::warn!(?kept, "backup.stale_restore_copies_kept");
+    }
+    Ok(Reconciled::Discarded { kept })
 }
 
 fn entry_exists(path: &Path) -> bool {
@@ -1957,119 +1943,91 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_interrupted_legacy_restore_recovers_the_old_database() {
-        let root = std::env::temp_dir().join(format!("bobe-restore-test-{}", uuid::Uuid::new_v4()));
-        let data = root.join("data");
-        let database = data.join("bobe.sqlite3");
-        let config = root.join("config/config.toml");
-        tokio::fs::create_dir_all(&data).await.unwrap();
-        tokio::fs::create_dir_all(config.parent().unwrap())
+    async fn an_old_format_restore_journal_is_cleared_without_touching_live_files() {
+        for phase in ["installing", "installed"] {
+            let root =
+                std::env::temp_dir().join(format!("bobe-restore-test-{}", uuid::Uuid::new_v4()));
+            let data = root.join("data");
+            let database = data.join("bobe.sqlite3");
+            let config = data.join("config.toml");
+            let paths = DataPaths::resolve(&data, &format!("sqlite:{}", database.display()))
+                .unwrap()
+                .prepare_root()
+                .unwrap();
+            let live = [
+                (
+                    database.clone(),
+                    b"database-written-after-the-failed-restore".as_slice(),
+                ),
+                (database_sidecar(&database, "-wal"), b"wal".as_slice()),
+                (config.clone(), b"[voice]\nenabled = true\n".as_slice()),
+                (data.join("memory.md"), b"memory written later".as_slice()),
+                (data.join("headless-secrets.json"), b"{}".as_slice()),
+                (data.join("tls/server-cert.pem"), b"certificate".as_slice()),
+            ];
+            for (path, bytes) in &live {
+                tokio::fs::create_dir_all(path.parent().unwrap())
+                    .await
+                    .unwrap();
+                tokio::fs::write(path, bytes).await.unwrap();
+            }
+            let transaction_id = "stale";
+            let old_config = replacement_path(&config, "old", transaction_id).unwrap();
+            tokio::fs::write(&old_config, b"config before the restore")
+                .await
+                .unwrap();
+            let new_database = replacement_path(&database, "new", transaction_id).unwrap();
+            let new_goals = replacement_path(&data.join("goals"), "new", transaction_id).unwrap();
+            tokio::fs::write(&new_database, b"backup database")
+                .await
+                .unwrap();
+            tokio::fs::create_dir_all(new_goals.join("nested"))
+                .await
+                .unwrap();
+            let stage = data.join(format!(".restore-{transaction_id}"));
+            tokio::fs::create_dir_all(stage.join("data")).await.unwrap();
+            let journal_path = data.join(RESTORE_JOURNAL);
+            write_restore_journal(
+                &journal_path,
+                &RestoreJournal {
+                    transaction_id: transaction_id.into(),
+                    phase: phase.into(),
+                    had_targets: vec![true; 3],
+                    layout: None,
+                },
+            )
             .await
             .unwrap();
-        tokio::fs::write(&database, b"old-database").await.unwrap();
-        tokio::fs::write(&config, b"old-config").await.unwrap();
-        let paths = DataPaths::resolve(&data, &format!("sqlite:{}", database.display()))
-            .unwrap()
-            .prepare_root()
-            .unwrap();
-        let transaction_id = "crash";
-        let old_database = replacement_path(&database, "old", transaction_id).unwrap();
-        let old_config = replacement_path(&config, "old", transaction_id).unwrap();
-        tokio::fs::rename(&database, &old_database).await.unwrap();
-        tokio::fs::rename(&config, &old_config).await.unwrap();
-        let journal_path = data.join("restore-journal.json");
-        let targets = restore_targets(&paths, &config, &database);
-        let mut had_targets = vec![false; targets.len()];
-        had_targets[targets
-            .iter()
-            .position(|target| target == &database)
-            .unwrap()] = true;
-        had_targets[targets.iter().position(|target| target == &config).unwrap()] = true;
-        write_restore_journal(
-            &journal_path,
-            &RestoreJournal {
-                transaction_id: transaction_id.into(),
-                phase: "installing".into(),
-                had_targets,
-                layout: None,
-            },
-        )
-        .await
-        .unwrap();
 
-        reconcile_journal(
-            &journal_path,
-            Some(&LegacyLayout {
-                paths: &paths,
-                config_file: &config,
-                database: &database,
-            }),
-        )
-        .await
-        .unwrap();
+            assert_eq!(
+                reconcile_interrupted_restore(&data).await.unwrap(),
+                Reconciled::Absent
+            );
+            assert!(journal_path.exists());
+            let reconciled = reconcile_restore_journals(&paths, &config).await.unwrap();
 
-        assert_eq!(tokio::fs::read(&database).await.unwrap(), b"old-database");
-        assert_eq!(tokio::fs::read(&config).await.unwrap(), b"old-config");
-        assert!(!old_database.exists());
-        assert!(!old_config.exists());
-        assert!(!journal_path.exists());
-        tokio::fs::remove_dir_all(root).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn a_completed_legacy_restore_keeps_the_new_target_and_cleans_the_old() {
-        let root = std::env::temp_dir().join(format!("bobe-restore-test-{}", uuid::Uuid::new_v4()));
-        let data = root.join("data");
-        let database = data.join("bobe.sqlite3");
-        let config = root.join("config/config.toml");
-        tokio::fs::create_dir_all(&data).await.unwrap();
-        tokio::fs::create_dir_all(config.parent().unwrap())
-            .await
-            .unwrap();
-        tokio::fs::write(&database, b"new-database").await.unwrap();
-        let paths = DataPaths::resolve(&data, &format!("sqlite:{}", database.display()))
-            .unwrap()
-            .prepare_root()
-            .unwrap();
-        let transaction_id = "committed";
-        let old_database = replacement_path(&database, "old", transaction_id).unwrap();
-        tokio::fs::write(&old_database, b"old-database")
-            .await
-            .unwrap();
-        let journal_path = data.join("restore-journal.json");
-        let targets = restore_targets(&paths, &config, &database);
-        let mut had_targets = vec![false; targets.len()];
-        had_targets[targets
-            .iter()
-            .position(|target| target == &database)
-            .unwrap()] = true;
-        write_restore_journal(
-            &journal_path,
-            &RestoreJournal {
-                transaction_id: transaction_id.into(),
-                phase: "installed".into(),
-                had_targets,
-                layout: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        reconcile_journal(
-            &journal_path,
-            Some(&LegacyLayout {
-                paths: &paths,
-                config_file: &config,
-                database: &database,
-            }),
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(tokio::fs::read(&database).await.unwrap(), b"new-database");
-        assert!(!old_database.exists());
-        assert!(!journal_path.exists());
-        tokio::fs::remove_dir_all(root).await.unwrap();
+            assert_eq!(
+                reconciled,
+                Reconciled::Discarded {
+                    kept: vec![old_config.clone()]
+                },
+                "{phase}"
+            );
+            assert!(!reconciled.changed_live_data());
+            for (path, bytes) in &live {
+                assert_eq!(tokio::fs::read(path).await.unwrap(), *bytes, "{phase}");
+            }
+            assert_eq!(
+                tokio::fs::read(&old_config).await.unwrap(),
+                b"config before the restore"
+            );
+            assert!(!new_database.exists());
+            assert!(!new_goals.exists());
+            assert!(!stage.exists());
+            assert!(!journal_path.exists());
+            assert!(!restore_journal_pending(&paths));
+            tokio::fs::remove_dir_all(root).await.unwrap();
+        }
     }
 
     struct RestoreFixture {
@@ -2240,11 +2198,15 @@ mod tests {
         .unwrap();
         let restored = tracked_state(&reference).await;
         tokio::fs::remove_dir_all(&reference.root).await.unwrap();
-        let last_swap = points
+        let committed = points
             .iter()
-            .rposition(|point| matches!(point, RestorePoint::MovedAside | RestorePoint::Installed))
+            .position(|point| *point == RestorePoint::Committed)
             .unwrap();
-        assert!(points.len() > last_swap + 2);
+        assert!(matches!(
+            points[committed - 1],
+            RestorePoint::Installed | RestorePoint::MovedAside
+        ));
+        assert!(points.len() > committed + 1);
 
         for interrupted_at in 0..points.len() {
             let fixture = restore_fixture().await;
@@ -2274,7 +2236,7 @@ mod tests {
                 .unwrap();
 
             let state = tracked_state(&fixture).await;
-            if interrupted_at >= last_swap {
+            if interrupted_at >= committed {
                 let mut expected = restored.clone();
                 let database = expected.pop().unwrap();
                 let mut actual = state.clone();

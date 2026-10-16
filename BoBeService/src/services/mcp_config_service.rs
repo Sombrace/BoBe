@@ -14,6 +14,11 @@ use crate::mcp::config::{self as mcp_config, McpConfigFile, McpParsedServer, Mcp
 use crate::provider::McpRuntimeConfig;
 use crate::secrets::SecretStore;
 
+pub(crate) const RELOAD_DEADLINE: std::time::Duration = std::time::Duration::from_secs(90);
+pub(crate) const REQUEST_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(3 * RELOAD_DEADLINE.as_secs());
+const EMPTY_DOCUMENT: &str = r#"{"mcpServers":{}}"#;
+
 #[derive(Clone)]
 pub(crate) struct McpConfigDeps {
     pub(crate) config: Arc<ArcSwap<Config>>,
@@ -131,7 +136,7 @@ pub(crate) fn validate_document(
 
 fn invalid_document_response(error: AppError) -> Result<McpConfigValidateResponse, AppError> {
     match error {
-        AppError::Validation(message) | AppError::Mcp(message) => Ok(McpConfigValidateResponse {
+        AppError::Validation(message) => Ok(McpConfigValidateResponse {
             valid: false,
             normalized_json: String::new(),
             server_count: 0,
@@ -145,25 +150,16 @@ pub(crate) async fn save_document(
     deps: &McpConfigDeps,
     body: McpConfigMutationRequest,
 ) -> Result<McpConfigSaveResponse, AppError> {
-    let (blocked_cmds, dangerous_keys) = blocked_and_dangerous(deps);
-    let (file, servers) = parse_document(&body.raw_json, &blocked_cmds, &dangerous_keys)?;
-    let (file, secrets) = normalize_secrets(file, &body.secret_keys);
-    let runtime = if deps.config.load().mcp.enabled {
-        mcp_config::to_runtime_mcp_config(servers)
-    } else {
-        McpRuntimeConfig::default()
-    };
-    apply_document(deps, file.clone(), secrets, runtime).await?;
-
-    let servers = match build_runtime_summaries(&deps.workers, &file).await {
-        Ok(servers) => servers,
-        Err(error) => {
-            warn!(%error, "mcp_config.saved_without_live_status");
-            sorted_entries(&file)
-                .into_iter()
-                .map(|(name, entry)| build_server_summary(name, entry, None, Vec::new()))
-                .collect()
-        }
+    let file = commit_document(deps, body).await?;
+    let servers = match tokio::time::timeout(
+        RELOAD_DEADLINE,
+        build_runtime_summaries(&deps.workers, &file),
+    )
+    .await
+    {
+        Ok(Ok(servers)) => servers,
+        Ok(Err(error)) => offline_summaries(&file, &error),
+        Err(elapsed) => offline_summaries(&file, &elapsed),
     };
     let count = servers.len();
     let connected_count = servers.iter().filter(|s| s.connected).count();
@@ -180,10 +176,14 @@ pub(crate) async fn save_document(
 pub(crate) async fn reset_document(
     deps: &McpConfigDeps,
 ) -> Result<McpConfigResetResponse, AppError> {
-    let empty = McpConfigFile {
-        mcp_servers: HashMap::new(),
-    };
-    apply_document(deps, empty.clone(), Vec::new(), McpRuntimeConfig::default()).await?;
+    let empty = commit_document(
+        deps,
+        McpConfigMutationRequest {
+            raw_json: EMPTY_DOCUMENT.into(),
+            secret_keys: HashMap::new(),
+        },
+    )
+    .await?;
 
     Ok(McpConfigResetResponse {
         message: "MCP config reset".into(),
@@ -192,28 +192,55 @@ pub(crate) async fn reset_document(
     })
 }
 
-async fn apply_document(
+async fn commit_document(
     deps: &McpConfigDeps,
-    file: McpConfigFile,
-    secrets: Vec<PendingSecret>,
-    runtime: McpRuntimeConfig,
-) -> Result<(), AppError> {
+    body: McpConfigMutationRequest,
+) -> Result<McpConfigFile, AppError> {
     let deps = deps.clone();
     tokio::spawn(async move {
-        let _guard = deps.mcp_config_lock.lock().await;
-        let path = resolve_config_path(&deps)?;
         let workers = Arc::clone(&deps.workers);
-        replace_document(
-            &path,
+        save_locked(
+            &deps.mcp_config_lock,
+            &deps.config,
             deps.secret_store.as_ref(),
-            &file,
-            &secrets,
-            async move { workers.apply_mcp_config(runtime).await },
+            &body,
+            move |runtime| async move { workers.apply_mcp_config(runtime).await },
         )
         .await
     })
     .await
     .map_err(|error| AppError::Internal(format!("MCP configuration update stopped: {error}")))?
+}
+
+async fn save_locked<F>(
+    lock: &Mutex<()>,
+    config: &ArcSwap<Config>,
+    secret_store: &dyn SecretStore,
+    body: &McpConfigMutationRequest,
+    reload: impl FnOnce(McpRuntimeConfig) -> F,
+) -> Result<McpConfigFile, AppError>
+where
+    F: Future<Output = Result<(), AppError>>,
+{
+    let _guard = lock.lock().await;
+    let current = config.load_full();
+    let (file, servers) = parse_document(
+        &body.raw_json,
+        current.mcp_blocked_commands_vec(),
+        current.mcp_dangerous_env_keys_vec(),
+    )?;
+    let (file, secrets) = normalize_secrets(file, &body.secret_keys);
+    let runtime = if current.mcp.enabled {
+        mcp_config::to_runtime_mcp_config(servers)
+    } else {
+        McpRuntimeConfig::default()
+    };
+    let path = mcp_config::ensure_mcp_config_exists(
+        Path::new(&current.data_dir),
+        current.mcp.config_file.as_deref(),
+    )?;
+    replace_document(&path, secret_store, &file, &secrets, reload(runtime)).await?;
+    Ok(file)
 }
 
 async fn replace_document(
@@ -396,6 +423,17 @@ fn build_env_with_refs(
     out
 }
 
+fn offline_summaries(
+    file: &McpConfigFile,
+    reason: &dyn std::fmt::Display,
+) -> Vec<McpServerSummary> {
+    warn!(%reason, "mcp_config.saved_without_live_status");
+    sorted_entries(file)
+        .into_iter()
+        .map(|(name, entry)| build_server_summary(name, entry, None, Vec::new()))
+        .collect()
+}
+
 fn sorted_entries(file: &McpConfigFile) -> Vec<(&String, &McpServerEntry)> {
     let mut entries: Vec<(&String, &McpServerEntry)> = file.mcp_servers.iter().collect();
     entries.sort_by_key(|(name, _)| *name);
@@ -537,7 +575,7 @@ mod tests {
 
     #[test]
     fn validate_only_reports_mcp_policy_errors_as_invalid_documents() {
-        let response = invalid_document_response(AppError::Mcp("blocked command".into()))
+        let response = invalid_document_response(AppError::Validation("blocked command".into()))
             .expect("validation response");
         assert!(!response.valid);
         assert_eq!(response.errors, ["blocked command"]);
@@ -714,10 +752,60 @@ mod tests {
         std::fs::remove_dir_all(&fixture.root).unwrap();
     }
 
+    #[tokio::test]
+    async fn a_save_queued_behind_an_mcp_switch_applies_the_switched_state() {
+        let root = std::env::temp_dir().join(format!("bobe-mcp-switch-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut initial = Config::default();
+        initial.data_dir = root.to_string_lossy().into_owned();
+        initial.mcp.enabled = true;
+        let config = Arc::new(ArcSwap::from_pointee(initial));
+        let lock = Arc::new(Mutex::new(()));
+        let reloaded = Arc::new(std::sync::Mutex::new(None));
+        let switch = Arc::clone(&lock).lock_owned().await;
+        let save = tokio::spawn({
+            let (lock, config, reloaded) = (
+                Arc::clone(&lock),
+                Arc::clone(&config),
+                Arc::clone(&reloaded),
+            );
+            async move {
+                let body = McpConfigMutationRequest {
+                    raw_json: r#"{"mcpServers":{"tools":{"command":"server"}}}"#.into(),
+                    secret_keys: HashMap::new(),
+                };
+                save_locked(
+                    &lock,
+                    &config,
+                    &crate::secrets::memory::MemorySecretStore::holding([]),
+                    &body,
+                    move |runtime| {
+                        *reloaded.lock().unwrap() = Some(runtime.servers.len());
+                        async { Ok(()) }
+                    },
+                )
+                .await
+            }
+        });
+        for _ in 0..3 {
+            tokio::task::yield_now().await;
+        }
+        let mut disabled = (*config.load_full()).clone();
+        disabled.mcp.enabled = false;
+        config.store(Arc::new(disabled));
+        drop(switch);
+
+        let saved = save.await.unwrap().unwrap();
+
+        assert_eq!(saved.mcp_servers.len(), 1);
+        assert_eq!(*reloaded.lock().unwrap(), Some(0));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn a_resolved_blocked_command_is_rejected_before_saving() {
         let raw = r#"{"mcpServers":{"test":{"command":"${BOBE_TEST_COMMAND:-rm}"}}}"#;
         let error = parse_document(raw, &[], &[]).expect_err("blocked after resolution");
-        assert!(matches!(error, AppError::Mcp(_)));
+        assert!(matches!(error, AppError::Validation(_)));
     }
 }

@@ -120,10 +120,10 @@ pub(crate) async fn abort_active_turn(
     ctx: &VoiceContext,
     keep_ms: u64,
     reason: &'static str,
-) -> bool {
+) {
     let Some(AbortedTurn { turn, overlap }) = s.abort_turn() else {
         debug!(reason, "voice.abort_no_active_turn");
-        return false;
+        return;
     };
     info!(
         turn_id = %turn.turn_id,
@@ -164,7 +164,6 @@ pub(crate) async fn abort_active_turn(
     )
     .await;
     send_state(&ctx.output, VoicePhase::Listening, &turn_id).await;
-    true
 }
 
 pub(crate) fn pending_interruption(s: &VoiceSession, text: &str) -> Option<u64> {

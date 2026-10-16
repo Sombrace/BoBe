@@ -245,21 +245,7 @@ impl OpsTarget {
         method: reqwest::Method,
         path: &str,
     ) -> Result<reqwest::RequestBuilder, crate::error::AppError> {
-        let timeout = if path == "/agent/context/compact" {
-            Duration::from_secs(320)
-        } else if path == "/initialization" {
-            Duration::from_secs(95)
-        } else if path == "/agent/context"
-            || path.starts_with("/agent/jobs")
-            || path == "/agent/tools"
-            || path.starts_with("/auth/")
-            || path.starts_with("/models")
-        {
-            Duration::from_secs(35)
-        } else {
-            Duration::from_secs(5)
-        };
-        self.request_builder_with_timeout(method, path, Some(timeout))
+        self.request_builder_with_timeout(method, path, Some(read_timeout_for(path)))
     }
 
     pub(crate) async fn diagnose_provider(
@@ -331,6 +317,32 @@ impl OpsTarget {
             request = request.bearer_auth(self.token.expose_secret());
         }
         Ok(request)
+    }
+}
+
+const CONFIGURATION_READ_TIMEOUT: Duration =
+    Duration::from_secs(crate::services::mcp_config_service::REQUEST_TIMEOUT.as_secs() + 10);
+
+fn read_timeout_for(path: &str) -> Duration {
+    if path == "/agent/context/compact" {
+        Duration::from_secs(320)
+    } else if path == "/config"
+        || path.starts_with("/config/")
+        || path == "/settings"
+        || path == "/tools/mcp/config"
+    {
+        CONFIGURATION_READ_TIMEOUT
+    } else if path == "/initialization" {
+        Duration::from_secs(95)
+    } else if path == "/agent/context"
+        || path.starts_with("/agent/jobs")
+        || path == "/agent/tools"
+        || path.starts_with("/auth/")
+        || path.starts_with("/models")
+    {
+        Duration::from_secs(35)
+    } else {
+        Duration::from_secs(5)
     }
 }
 
@@ -508,6 +520,36 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn configuration_requests_outlast_the_daemon_wait_for_an_mcp_reload() {
+        let daemon_limit = crate::services::mcp_config_service::REQUEST_TIMEOUT;
+        for path in [
+            "/config",
+            "/config/mcp.enabled",
+            "/settings",
+            "/tools/mcp/config",
+        ] {
+            assert!(read_timeout_for(path) > daemon_limit, "{path}");
+            assert!(
+                read_timeout_for(path) <= daemon_limit + Duration::from_secs(30),
+                "{path}"
+            );
+        }
+        for (path, seconds) in [
+            ("/configuration", 5),
+            ("/status", 5),
+            ("/initialization", 95),
+            ("/agent/tools", 35),
+            ("/agent/context/compact", 320),
+        ] {
+            assert_eq!(
+                read_timeout_for(path),
+                Duration::from_secs(seconds),
+                "{path}"
+            );
+        }
+    }
 
     #[test]
     fn process_readiness_includes_setup_but_operational_readiness_does_not() {

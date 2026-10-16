@@ -28,7 +28,7 @@ fn mcp_reload_deadline(config: &McpRuntimeConfig) -> Duration {
         .map(|server| Duration::from_millis(u64::from(server.timeout_ms)))
         .max()
         .unwrap_or_default();
-    CONTROL_TIMEOUT + slowest_start * 2
+    (CONTROL_TIMEOUT + slowest_start * 2).min(crate::services::mcp_config_service::RELOAD_DEADLINE)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1494,6 +1494,18 @@ readline.createInterface({ input: process.stdin }).on("line", line => {
         assert_eq!(
             mcp_reload_deadline(&servers("working")),
             CONTROL_TIMEOUT + Duration::from_secs(2)
+        );
+        let mut slow = servers("slow");
+        for server in slow.servers.values_mut() {
+            server.timeout_ms = 600_000;
+        }
+        assert_eq!(
+            mcp_reload_deadline(&slow),
+            crate::services::mcp_config_service::RELOAD_DEADLINE
+        );
+        assert_eq!(
+            mcp_reload_deadline(&McpRuntimeConfig::default()),
+            CONTROL_TIMEOUT
         );
         host.close().await.unwrap();
         tokio::fs::remove_dir_all(root).await.unwrap();

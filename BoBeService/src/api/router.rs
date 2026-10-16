@@ -121,6 +121,34 @@ pub(crate) fn build_router(
             std::time::Duration::from_secs(315),
         ));
 
+    let configuration = Router::new()
+        .route(
+            "/config",
+            axum::routing::patch(handlers::config_admin::update),
+        )
+        .route(
+            "/config/{key}",
+            axum::routing::delete(handlers::config_admin::unset),
+        )
+        .route(
+            "/settings",
+            get(handlers::settings::get_settings).patch(handlers::settings::update_settings),
+        )
+        .route(
+            "/tools/mcp/config",
+            get(handlers::tools_mcp::get_mcp_config)
+                .put(handlers::tools_mcp::save_mcp_config)
+                .delete(handlers::tools_mcp::reset_mcp_config),
+        )
+        .layer(axum_middleware::from_fn_with_state(
+            Arc::clone(&state),
+            personal_data_exclusion,
+        ))
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::GATEWAY_TIMEOUT,
+            crate::services::mcp_config_service::REQUEST_TIMEOUT,
+        ));
+
     let short_lived = Router::new()
         .route("/owner-input", get(handlers::owner_input::list))
         .route("/owner-input/{id}", get(handlers::owner_input::get))
@@ -173,14 +201,6 @@ pub(crate) fn build_router(
         .route("/health", get(handlers::health::health_check))
         .route("/readyz", get(handlers::health::readiness))
         .route("/status", get(handlers::health::get_status))
-        .route(
-            "/config",
-            axum::routing::patch(handlers::config_admin::update),
-        )
-        .route(
-            "/config/{key}",
-            axum::routing::delete(handlers::config_admin::unset),
-        )
         .route(
             "/conversation/current",
             get(handlers::conversation::current_conversation),
@@ -303,10 +323,6 @@ pub(crate) fn build_router(
             "/user-profiles/{profile_id}/disable",
             post(handlers::documents::disable::<UserProfiles>),
         )
-        .route(
-            "/settings",
-            get(handlers::settings::get_settings).patch(handlers::settings::update_settings),
-        )
         .route("/skills", get(handlers::skills::list))
         .route("/skills/reload", post(handlers::skills::reload))
         .route("/skills/{id}", get(handlers::skills::read))
@@ -345,12 +361,6 @@ pub(crate) fn build_router(
             post(handlers::local_runtime::cancel_install),
         )
         .route(
-            "/tools/mcp/config",
-            get(handlers::tools_mcp::get_mcp_config)
-                .put(handlers::tools_mcp::save_mcp_config)
-                .delete(handlers::tools_mcp::reset_mcp_config),
-        )
-        .route(
             "/tools/mcp/config/validate",
             post(handlers::tools_mcp::validate_mcp_config),
         )
@@ -382,6 +392,7 @@ pub(crate) fn build_router(
 
     local_enrollment.merge(pairing).merge(
         short_lived
+            .merge(configuration)
             .merge(privacy)
             .merge(diagnostics)
             .merge(agent_context)

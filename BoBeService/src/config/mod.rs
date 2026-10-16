@@ -149,6 +149,27 @@ impl Config {
         Self::load_operational()
     }
 
+    pub(crate) async fn reconcile_locked(
+        loaded: LoadedConfig,
+        paths: &crate::util::paths::DataPaths,
+    ) -> Result<(LoadedConfig, crate::ops::backup::Reconciled), crate::error::AppError> {
+        let reconciled =
+            crate::ops::backup::reconcile_restore_journals(paths, &loaded.config_file).await?;
+        if !reconciled.changed_live_data() {
+            return Ok((loaded, reconciled));
+        }
+        let reloaded = Self::load_operational()?;
+        let reloaded_paths = reloaded.paths.clone().prepare_root()?;
+        if reloaded_paths.root() != paths.root()
+            || reloaded_paths.database_url() != paths.database_url()
+        {
+            return Err(crate::error::AppError::Conflict(
+                "the reconciled configuration resolves a different BoBe data root".into(),
+            ));
+        }
+        Ok((reloaded, reconciled))
+    }
+
     pub(crate) async fn load_for_serve() -> Result<ServeConfig, crate::error::AppError> {
         let bootstrap_data_dir = crate::util::paths::bobe_data_dir()?;
         let interrupted_restore =

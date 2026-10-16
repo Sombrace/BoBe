@@ -24,24 +24,24 @@ pub(crate) struct ConfigUpdateResponse {
     restart_required_fields: Vec<String>,
 }
 
+pub(super) enum ConfigChange {
+    Update(HashMap<String, serde_json::Value>),
+    Unset(String),
+}
+
+pub(super) struct Committed {
+    pub(super) result: UpdateResult,
+    pub(super) body_theme_delivered: Option<bool>,
+}
+
 pub(crate) async fn unset(
     State(state): State<Arc<AppState>>,
     Path(key): Path<String>,
 ) -> Result<Json<ConfigUpdateResponse>, AppError> {
-    let result = if key == MCP_ENABLED {
-        unset_mcp_enabled(&state).await?
-    } else {
-        state.infra.config_manager.unset(&key)?
-    };
-    if key.starts_with("capture.") {
-        state.runtime.runtime_session.wake_capture();
-    }
-    if key.starts_with("checkin.") {
-        state.runtime.runtime_session.reconfigure_checkins().await;
-    }
+    let committed = commit(&state, ConfigChange::Unset(key)).await?;
     Ok(Json(ConfigUpdateResponse {
-        applied_fields: result.applied_fields,
-        restart_required_fields: result.restart_required_fields,
+        applied_fields: committed.result.applied_fields,
+        restart_required_fields: committed.result.restart_required_fields,
     }))
 }
 
@@ -58,90 +58,130 @@ pub(crate) async fn update(
             "unknown configuration key: {key}"
         )));
     }
-    let capture_changed = request
-        .changes
-        .keys()
-        .any(|key| key.starts_with("capture."));
-    let checkin_changed = request
-        .changes
-        .keys()
-        .any(|key| key.starts_with("checkin."));
-    let result = if request.changes.contains_key(MCP_ENABLED) {
-        update_with_mcp(&state, request.changes).await?
-    } else {
-        state.infra.config_manager.update(&request.changes)?
-    };
-    if result.persist_failed {
+    let committed = commit(&state, ConfigChange::Update(request.changes)).await?;
+    if committed.result.persist_failed {
         return Err(AppError::Io(std::io::Error::other(
             "failed to persist configuration",
         )));
     }
-    if capture_changed {
-        state.runtime.runtime_session.wake_capture();
-    }
-    if checkin_changed {
-        state.runtime.runtime_session.reconfigure_checkins().await;
-    }
     Ok(Json(ConfigUpdateResponse {
-        applied_fields: result.applied_fields,
-        restart_required_fields: result.restart_required_fields,
+        applied_fields: committed.result.applied_fields,
+        restart_required_fields: committed.result.restart_required_fields,
     }))
 }
 
-pub(super) async fn update_with_mcp(
+pub(super) async fn commit(
     state: &Arc<AppState>,
-    changes: HashMap<String, serde_json::Value>,
-) -> Result<UpdateResult, AppError> {
-    let state = Arc::clone(state);
-    tokio::spawn(async move {
-        let _mcp_guard = state.infra.mcp_config_lock.lock().await;
-        let manager = &state.infra.config_manager;
-        let workers = &state.runtime.workers;
-        let changes = &changes;
-        let Some(enabled) = changes
-            .get(MCP_ENABLED)
-            .and_then(serde_json::Value::as_bool)
-        else {
-            return tokio::task::block_in_place(|| manager.update(changes));
-        };
-        let current = state.infra.config.load_full();
-        let mut next = (*current).clone();
-        next.mcp.enabled = enabled;
-        reload_then_commit(
-            move |runtime| workers.apply_mcp_config(runtime),
-            load_mcp_servers(&current),
-            load_mcp_servers(&next),
-            move || tokio::task::block_in_place(|| manager.update(changes)),
-            |result| !result.persist_failed,
-        )
-        .await
-    })
+    change: ConfigChange,
+) -> Result<Committed, AppError> {
+    let applying = Arc::clone(state);
+    let following = Arc::clone(state);
+    commit_in_background(
+        async move { apply_change(&applying, change).await },
+        move |result| async move {
+            let body_theme_delivered = apply_follow_ups(&following, &result).await;
+            Committed {
+                result,
+                body_theme_delivered,
+            }
+        },
+    )
     .await
-    .map_err(|error| AppError::Internal(format!("configuration update stopped: {error}")))?
 }
 
-async fn unset_mcp_enabled(state: &Arc<AppState>) -> Result<UpdateResult, AppError> {
-    let state = Arc::clone(state);
-    tokio::spawn(async move {
-        let _mcp_guard = state.infra.mcp_config_lock.lock().await;
-        let manager = &state.infra.config_manager;
-        let workers = &state.runtime.workers;
-        let config = &state.infra.config;
-        let previous = config.load().mcp.enabled;
-        commit_then_reload(
-            move || manager.unset(MCP_ENABLED),
-            move || workers.apply_mcp_config(load_mcp_servers(&config.load_full())),
-            move || {
-                if config.load().mcp.enabled == previous {
-                    return Ok(());
-                }
-                restore_mcp_enabled(manager, previous)
-            },
-        )
+async fn commit_in_background<T, R, Following>(
+    committing: impl Future<Output = Result<T, AppError>> + Send + 'static,
+    follow_up: impl FnOnce(T) -> Following + Send + 'static,
+) -> Result<R, AppError>
+where
+    T: Send + 'static,
+    R: Send + 'static,
+    Following: Future<Output = R> + Send,
+{
+    tokio::spawn(async move { Ok::<R, AppError>(follow_up(committing.await?).await) })
         .await
-    })
+        .map_err(|error| AppError::Internal(format!("configuration update stopped: {error}")))?
+}
+
+async fn apply_change(state: &AppState, change: ConfigChange) -> Result<UpdateResult, AppError> {
+    let manager = &state.infra.config_manager;
+    match change {
+        ConfigChange::Update(changes) => {
+            match changes
+                .get(MCP_ENABLED)
+                .and_then(serde_json::Value::as_bool)
+            {
+                Some(enabled) => update_with_mcp(state, &changes, enabled).await,
+                None => tokio::task::block_in_place(|| manager.update(&changes)),
+            }
+        }
+        ConfigChange::Unset(key) if key == MCP_ENABLED => unset_mcp_enabled(state).await,
+        ConfigChange::Unset(key) => tokio::task::block_in_place(|| manager.unset(&key)),
+    }
+}
+
+async fn apply_follow_ups(state: &AppState, result: &UpdateResult) -> Option<bool> {
+    let applied = |prefix: &str| {
+        result
+            .applied_fields
+            .iter()
+            .any(|field| field.starts_with(prefix))
+    };
+    if applied("capture.") {
+        state.runtime.runtime_session.wake_capture();
+    }
+    if applied("checkin.") {
+        state.runtime.runtime_session.reconfigure_checkins().await;
+    }
+    if !result
+        .applied_fields
+        .iter()
+        .any(|field| field == "body.theme")
+    {
+        return None;
+    }
+    let theme = state.config().body.theme;
+    Some(state.body.gateway.apply_theme(theme).await)
+}
+
+async fn update_with_mcp(
+    state: &AppState,
+    changes: &HashMap<String, serde_json::Value>,
+    enabled: bool,
+) -> Result<UpdateResult, AppError> {
+    let _mcp_guard = state.infra.mcp_config_lock.lock().await;
+    let manager = &state.infra.config_manager;
+    let workers = &state.runtime.workers;
+    let current = state.infra.config.load_full();
+    let mut next = (*current).clone();
+    next.mcp.enabled = enabled;
+    reload_then_commit(
+        move |runtime| workers.apply_mcp_config(runtime),
+        load_mcp_servers(&current),
+        load_mcp_servers(&next),
+        move || tokio::task::block_in_place(|| manager.update(changes)),
+        |result| !result.persist_failed,
+    )
     .await
-    .map_err(|error| AppError::Internal(format!("configuration update stopped: {error}")))?
+}
+
+async fn unset_mcp_enabled(state: &AppState) -> Result<UpdateResult, AppError> {
+    let _mcp_guard = state.infra.mcp_config_lock.lock().await;
+    let manager = &state.infra.config_manager;
+    let workers = &state.runtime.workers;
+    let config = &state.infra.config;
+    let previous = config.load().mcp.enabled;
+    commit_then_reload(
+        move || tokio::task::block_in_place(|| manager.unset(MCP_ENABLED)),
+        move || workers.apply_mcp_config(load_mcp_servers(&config.load_full())),
+        move || {
+            if config.load().mcp.enabled == previous {
+                return Ok(());
+            }
+            tokio::task::block_in_place(|| restore_mcp_enabled(manager, previous))
+        },
+    )
+    .await
 }
 
 fn restore_mcp_enabled(
@@ -238,6 +278,71 @@ mod tests {
             restart_required_fields: Vec::new(),
             persist_failed,
         }
+    }
+
+    #[tokio::test]
+    async fn follow_ups_run_once_a_change_commits_even_if_the_request_is_gone() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let committing = Arc::new(tokio::sync::Notify::new());
+        let followed = Arc::new(AtomicBool::new(false));
+        let request = commit_in_background(
+            {
+                let committing = Arc::clone(&committing);
+                async move {
+                    committing.notified().await;
+                    Ok(saved(false))
+                }
+            },
+            {
+                let followed = Arc::clone(&followed);
+                move |result: UpdateResult| async move {
+                    followed.store(true, Ordering::SeqCst);
+                    result
+                }
+            },
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), request)
+                .await
+                .is_err()
+        );
+        assert!(!followed.load(Ordering::SeqCst));
+
+        committing.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !followed.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn follow_ups_wait_for_a_change_that_commits() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let followed = Arc::new(AtomicBool::new(false));
+        let error = commit_in_background(
+            async {
+                Err::<UpdateResult, _>(AppError::Validation(
+                    "invalid value for checkin.times".into(),
+                ))
+            },
+            {
+                let followed = Arc::clone(&followed);
+                move |result: UpdateResult| async move {
+                    followed.store(true, Ordering::SeqCst);
+                    result
+                }
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, AppError::Validation(_)));
+        assert!(!followed.load(Ordering::SeqCst));
     }
 
     #[tokio::test]

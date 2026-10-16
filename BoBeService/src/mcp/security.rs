@@ -1,8 +1,12 @@
 use std::collections::{HashMap, VecDeque};
-use std::io::BufRead;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use crate::error::AppError;
+
+const MAX_COMMAND_ARGUMENTS: usize = 256;
+const MAX_SHEBANG_BYTES: u64 = 1024;
+const NESTED_ENV: &str = "env cannot start another env in an MCP command";
 
 const DEFAULT_BLOCKED_COMMANDS: &[&str] = &[
     "rm",
@@ -49,14 +53,14 @@ pub(crate) fn validate_mcp_command_with_args(
     args: &[String],
     blocked: &[String],
 ) -> Result<(), AppError> {
-    validate_subprocess_command_spec(command, args, blocked).map_err(AppError::Mcp)
+    validate_subprocess_command_spec(command, args, blocked).map_err(AppError::Validation)
 }
 
 pub(crate) fn validate_mcp_env(
     env: &HashMap<String, String>,
     dangerous_keys: &[String],
 ) -> Result<(), AppError> {
-    validate_subprocess_env(env, dangerous_keys).map_err(AppError::Mcp)
+    validate_subprocess_env(env, dangerous_keys).map_err(AppError::Validation)
 }
 
 fn validate_subprocess_command_spec(
@@ -64,23 +68,35 @@ fn validate_subprocess_command_spec(
     args: &[String],
     blocked: &[String],
 ) -> Result<(), String> {
+    if args.len() > MAX_COMMAND_ARGUMENTS {
+        return Err(format!(
+            "MCP commands accept at most {MAX_COMMAND_ARGUMENTS} arguments"
+        ));
+    }
+    let resolved = validate_executable(command, blocked)?;
+    if !uses_env_wrapper(command, resolved.as_deref()) {
+        return Ok(());
+    }
+    let Some(wrapped_command) = env_wrapped_command(args, EnvArguments::Exec)? else {
+        return Ok(());
+    };
+    let wrapped = validate_executable(&wrapped_command, blocked)?;
+    if uses_env_wrapper(&wrapped_command, wrapped.as_deref()) {
+        return Err(NESTED_ENV.to_owned());
+    }
+    Ok(())
+}
+
+fn validate_executable(command: &str, blocked: &[String]) -> Result<Option<PathBuf>, String> {
     validate_command_target(command, blocked)?;
     let resolved = resolve_command_path(command);
-    if let Some(ref resolved) = resolved {
+    if let Some(resolved) = &resolved {
         validate_command_target(&resolved.to_string_lossy(), blocked)?;
         if let Some(shebang) = read_shebang(resolved) {
             validate_shebang(&shebang, blocked)?;
         }
     }
-
-    if uses_env_wrapper(command, resolved.as_deref())
-        && let Some((wrapped_command, wrapped_args)) =
-            env_wrapped_command(args, EnvArguments::Exec)?
-    {
-        validate_subprocess_command_spec(&wrapped_command, &wrapped_args, blocked)?;
-    }
-
-    Ok(())
+    Ok(resolved)
 }
 
 fn validate_shebang(tokens: &[String], blocked: &[String]) -> Result<(), String> {
@@ -91,14 +107,12 @@ fn validate_shebang(tokens: &[String], blocked: &[String]) -> Result<(), String>
     if command_basename(interpreter) != Some("env") {
         return Ok(());
     }
-    let mut wrapped = env_wrapped_command(args, EnvArguments::Shebang)?;
-    while let Some((command, rest)) = wrapped {
-        validate_command_target(&command, blocked)?;
-        wrapped = if command_basename(&command) == Some("env") {
-            env_wrapped_command(&rest, EnvArguments::Exec)?
-        } else {
-            None
-        };
+    let Some(command) = env_wrapped_command(args, EnvArguments::Shebang)? else {
+        return Ok(());
+    };
+    validate_command_target(&command, blocked)?;
+    if command_basename(&command) == Some("env") {
+        return Err(NESTED_ENV.to_owned());
     }
     Ok(())
 }
@@ -160,14 +174,17 @@ fn resolve_command_path(command: &str) -> Option<PathBuf> {
 }
 
 fn read_shebang(path: &Path) -> Option<Vec<String>> {
-    let file = std::fs::File::open(path).ok()?;
-    let mut reader = std::io::BufReader::new(file);
-    let mut first_line = String::new();
-    if reader.read_line(&mut first_line).ok()? == 0 {
+    if !std::fs::metadata(path).ok()?.is_file() {
         return None;
     }
-
-    let shebang = first_line.strip_prefix("#!")?;
+    let mut head = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(MAX_SHEBANG_BYTES)
+        .read_to_end(&mut head)
+        .ok()?;
+    let first_line = head.split(|byte| *byte == b'\n').next()?;
+    let shebang = std::str::from_utf8(first_line.strip_prefix(b"#!")?).ok()?;
     Some(shebang.split_whitespace().map(str::to_owned).collect())
 }
 
@@ -191,9 +208,7 @@ enum EnvArguments {
     Shebang,
 }
 
-type EnvWrappedCommand = Option<(String, Vec<String>)>;
-
-fn env_wrapped_command(args: &[String], form: EnvArguments) -> Result<EnvWrappedCommand, String> {
+fn env_wrapped_command(args: &[String], form: EnvArguments) -> Result<Option<String>, String> {
     let mut tokens: VecDeque<String> = args.iter().cloned().collect();
     while let Some(token) = tokens.pop_front() {
         if token == "--" || token == "-" {
@@ -248,7 +263,7 @@ fn env_wrapped_command(args: &[String], form: EnvArguments) -> Result<EnvWrapped
             "env would run '{command}', which looks like an option; MCP commands must name an executable"
         ));
     }
-    Ok(Some((command, tokens.into())))
+    Ok(Some(command))
 }
 
 fn take_env_option_value(tokens: &mut VecDeque<String>, option: &str) -> Result<(), String> {
@@ -491,6 +506,43 @@ mod tests {
         for result in allowed {
             assert!(result.is_ok(), "{result:?}");
         }
+    }
+
+    #[test]
+    fn long_and_nested_env_chains_are_refused_without_recursion() {
+        let chain = vec!["env".to_owned(); 20_000];
+        let error = validate_mcp_command_with_args("env", &chain, &[])
+            .expect_err("an oversized argument list is refused");
+        assert!(
+            error.to_string().contains("at most 256 arguments"),
+            "{error}"
+        );
+
+        let chain = vec!["env".to_owned(); MAX_COMMAND_ARGUMENTS];
+        let error =
+            validate_mcp_command_with_args("env", &chain, &[]).expect_err("env cannot start env");
+        assert!(error.to_string().contains("another env"), "{error}");
+        for args in [
+            &["-i", "env", "node"][..],
+            &["FOO=1", "/usr/bin/env", "node"],
+            &["--", "env"],
+        ] {
+            assert!(
+                validate_mcp_command_with_args("env", &env_args(args), &[]).is_err(),
+                "{args:?}"
+            );
+        }
+
+        let mut assignments = vec!["FOO=1".to_owned(); MAX_COMMAND_ARGUMENTS - 1];
+        assignments.push("node".to_owned());
+        assert!(validate_mcp_command_with_args("env", &assignments, &[]).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_regular_files_are_read_for_a_script_interpreter() {
+        assert!(validate_mcp_command_with_args("/dev/zero", &[], &[]).is_ok());
+        assert!(read_shebang(Path::new("/dev/zero")).is_none());
     }
 
     #[test]
