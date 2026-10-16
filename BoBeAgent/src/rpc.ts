@@ -194,7 +194,7 @@ export class JsonlRpc {
     this.callbacks.clear();
   }
 
-  private terminate(error: Error): void {
+  terminate(error: Error): void {
     this.terminalError ??= error;
     this.observeTermination(this.finish());
   }

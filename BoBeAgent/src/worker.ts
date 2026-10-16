@@ -4,7 +4,7 @@ import { Type } from "typebox";
 import { VERSION, defineTool } from "@earendil-works/pi-coding-agent";
 import { ModelProfiles } from "./models.js";
 import { Sessions, type SessionBundle } from "./sessions.js";
-import { assertActive, failureDetail, type Redactor } from "./errors.js";
+import { WorkerFault, assertActive, type Redactor } from "./errors.js";
 import { authorityPath, privateDirectory } from "./files.js";
 import {
   HARNESS_VERSION, PROTOCOL_VERSION, abortSchema, authSubmitSchema, auxiliarySchema,
@@ -22,18 +22,17 @@ export interface HostConnection {
   redactor: Redactor;
   call(method: string, params: JsonObject, signal?: AbortSignal): Promise<Json>;
   notify(notification: Notification): void;
+  terminate?(error: Error): void;
 }
 
 interface Activity {
   controller: AbortController;
   completion: Promise<Json>;
-  cleanupFailures: unknown[];
 }
 
 export class WorkerHost implements RpcHandler {
   private readonly processes: ProcessClient;
   private readonly active = new Map<number, Activity>();
-  private readonly unreleased = new Map<number, unknown[]>();
   private lastRequest = 0;
   private initializeAttempted = false;
   private config: Initialize | undefined;
@@ -84,15 +83,12 @@ export class WorkerHost implements RpcHandler {
       if (method === "abort") {
         const { request_id } = validate(abortSchema, params, "abort parameters");
         const activity = this.active.get(request_id);
-        if (activity) {
-          activity.controller.abort();
-          await Promise.allSettled([activity.completion]);
-        } else if (request_id >= id) {
-          throw new Error("Unknown execution request id");
+        if (!activity) {
+          if (request_id >= id) throw new Error("Unknown execution request id");
+          return {};
         }
-        const unreleased = this.unreleased.get(request_id);
-        this.unreleased.delete(request_id);
-        if (unreleased) throw new Error(`Execution did not release its resources: ${failureDetail(unreleased)}`);
+        activity.controller.abort();
+        await Promise.allSettled([activity.completion]);
         return {};
       }
       const config = this.config;
@@ -195,7 +191,6 @@ export class WorkerHost implements RpcHandler {
   ): Promise<Json> {
     if (this.active.has(id)) throw new Error("Duplicate worker request id");
     const controller = new AbortController();
-    const cleanupFailures: unknown[] = [];
     const deadline = timeoutMs ?? this.models?.execution.timeout(workload);
     const timeout = deadline === undefined ? undefined : setTimeout(() =>
       controller.abort(new DOMException(`Execution exceeded ${deadline / 1_000} seconds`, "TimeoutError")), deadline);
@@ -207,12 +202,8 @@ export class WorkerHost implements RpcHandler {
     }).finally(() => {
       if (timeout) clearTimeout(timeout);
       this.active.delete(id);
-      if (cleanupFailures.length) {
-        this.unreleased.set(id, cleanupFailures);
-        for (const stale of [...this.unreleased.keys()].slice(0, -64)) this.unreleased.delete(stale);
-      }
     });
-    this.active.set(id, { controller, completion, cleanupFailures });
+    this.active.set(id, { controller, completion });
     return completion;
   }
 
@@ -270,7 +261,6 @@ export class WorkerHost implements RpcHandler {
       ownerInput: (action,args,sourceKey,requestId,signal) => this.connection.call("owner_input", {
         request_id:requestId,name:action,arguments:args,source_key:sourceKey,
       },signal),
-      cleanupFailed: (requestId, error) => { this.active.get(requestId)?.cleanupFailures.push(error); },
     }, this.connection.redactor, this.processes);
     try {
       await this.sessions.main();
@@ -279,6 +269,7 @@ export class WorkerHost implements RpcHandler {
       this.idleTimer = setInterval(() => {
         void this.sessions?.retireIdle().catch(error => {
           process.stderr.write(`BoBe idle session cleanup failed: ${this.connection.redactor.message(error)}\n`);
+          if (error instanceof WorkerFault) this.connection.terminate?.(error);
         });
       }, 10_000);
       this.idleTimer.unref();
@@ -331,13 +322,18 @@ export class WorkerHost implements RpcHandler {
       const result = await sessions.run(bundle,
         `${params.job.instructions}\n\nJob kind: ${params.job.kind}\nJob input:\n${JSON.stringify(params.job.input)}`,
         signal, false, true, 8);
-      if (result.failedTools > 0) throw new Error("Structured-result submission failed");
       if (output === undefined) {
         const text = result.text().trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n?```$/i, "$1");
-        output = json(JSON.parse(text) as unknown);
+        try {
+          output = json(JSON.parse(text) as unknown);
+        } catch (error) {
+          if (result.failedTools > 0) throw new Error("Structured-result submission failed");
+          throw error;
+        }
       }
       return { job_id: params.job.job_id, output, error: null };
     } catch (error) {
+      if (error instanceof WorkerFault) throw error;
       assertActive(signal);
       return { job_id: params.job.job_id, output: null, error: this.connection.redactor.message(error) };
     } finally {
@@ -376,6 +372,7 @@ export class WorkerHost implements RpcHandler {
       }
       return { model_execution: modelExecution, streaming, tool_execution: toolExecution, error: null };
     } catch (error) {
+      if (error instanceof WorkerFault) throw error;
       assertActive(signal);
       return {
         model_execution: modelExecution, streaming, tool_execution: toolExecution,

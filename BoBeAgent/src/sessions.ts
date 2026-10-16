@@ -65,7 +65,6 @@ interface SessionCallbacks {
   job(action: string, args: JsonObject, sourceKey: string | undefined, requestId: number, signal?: AbortSignal): Promise<Json>;
   schedule(action: string, args: JsonObject, sourceKey: string, requestId: number, signal?: AbortSignal): Promise<Json>;
   ownerInput(action: string, args: JsonObject, sourceKey: string, requestId: number, signal?: AbortSignal): Promise<Json>;
-  cleanupFailed(requestId: number, error: unknown): void;
 }
 
 interface TurnContext {
@@ -76,6 +75,7 @@ interface TurnContext {
   channel: "voice" | "text";
   depth: number;
   childrenCreated: { count: number };
+  faults: WorkerFault[];
   visibleOutput: boolean;
   deferredInput?: DeferredOwnerInput;
 }
@@ -83,7 +83,7 @@ interface TurnContext {
 export class SessionBundle {
   current: TurnContext = {
     requestId: 0, context: "", memoryContext: "", persona: noPersona, channel: "text", depth: 0,
-    childrenCreated: { count: 0 }, visibleOutput: false,
+    childrenCreated: { count: 0 }, faults: [], visibleOutput: false,
   };
   readonly errors: string[] = [];
   private closePromise: Promise<void> | undefined;
@@ -465,9 +465,7 @@ export class Sessions {
     try {
       await this.connectMcp(staged, signal);
     } finally {
-      await this.release(staged).catch((error: unknown) => {
-        throw new WorkerFault(`MCP verification servers could not be stopped: ${failureDetail([error])}`, { cause: error });
-      });
+      await this.release(staged);
     }
     const previous = this.mcpConfig;
     const bundles = await Promise.all(this.channels.values());
@@ -513,7 +511,8 @@ export class Sessions {
     persona = noPersona,
   ): void {
     bundle.current = {
-      requestId, context, memoryContext, persona, channel, depth: 0, childrenCreated: { count: 0 }, visibleOutput: false,
+      requestId, context, memoryContext, persona, channel, depth: 0, childrenCreated: { count: 0 }, faults: [],
+      visibleOutput: false,
     };
   }
 
@@ -619,11 +618,9 @@ export class Sessions {
         unsubscribe,
         () => flushSession(bundle.session.sessionManager),
       ]);
-      if (failures.length) {
-        const failure = new AggregateError(failures, `Run cleanup failed: ${failureDetail(failures)}`);
-        this.callbacks.cleanupFailed(bundle.current.requestId, failure);
-        throw failure;
-      }
+      if (failures.length) bundle.current.faults.push(new WorkerFault(`Run cleanup failed: ${failureDetail(failures)}`));
+      const [fault] = bundle.current.faults;
+      if (fault) throw fault;
     }
   }
 
@@ -765,6 +762,7 @@ export class Sessions {
         success: true, error: null,
       };
     } catch (error) {
+      if (error instanceof WorkerFault) throw error;
       if (signal?.aborted) throw new Cancelled("Scoped subagent canceled");
       return {
         agent, text: "", output_tokens: 0, success: false,
@@ -780,8 +778,9 @@ export class Sessions {
     try {
       await bundle.close();
     } catch (error) {
-      this.callbacks.cleanupFailed(bundle.current.requestId, error);
-      throw error;
+      const fault = new WorkerFault(`Session cleanup failed: ${failureDetail([error])}`, { cause: error });
+      bundle.current.faults.push(fault);
+      throw fault;
     } finally {
       this.bundles.delete(bundle);
     }

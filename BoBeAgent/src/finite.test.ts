@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getCurrentSystemMessage, type TranscriptContext } from "@earendil-works/pi-ai";
 import { configuration, fixture, host, userText } from "./test-support.js";
-import { isRecord } from "./protocol.js";
+import { isRecord, type Json } from "./protocol.js";
 
 test("auxiliary structured-result tool is a real SDK tool and does not enter the main transcript", async t => {
   const paths = await fixture(t);
@@ -75,6 +75,29 @@ test("auxiliary accepts the result as JSON text, fenced or bare, and reports any
         assert.equal(result.error, null);
         assert.deepEqual(result.output, expected);
       }
+    });
+  }
+});
+
+test("auxiliary keeps a valid submission when another submit call fails", async t => {
+  const value = { activate: true, reason: "The owner asked for this reminder." };
+  const submit = (id: string, args: { [key: string]: Json }) => ({ id, name: "bobe_submit_result", arguments: args });
+  type Reply = { text?: string; tools?: ReturnType<typeof submit>[] };
+  const cases: [string, (results: number) => Reply][] = [
+    ["repeated in one reply", results => results === 0
+      ? { tools: [submit("first", { output: value }), submit("again", { output: value })] } : { text: "" }],
+    ["corrected after a malformed call", results => results === 0 ? { tools: [submit("flat", value)] }
+      : results === 1 ? { tools: [submit("wrapped", { output: value })] } : { text: "" }],
+  ];
+  for (const [name, reply] of cases) {
+    await t.test(name, async t => {
+      const paths = await fixture(t);
+      const { worker } = await host(t, configuration(paths), context =>
+        reply(context.messages.filter(message => message.role === "toolResult").length));
+      assert.deepEqual(await worker.request({
+        id: 2, method: "auxiliary",
+        params: { class: "small", job: { job_id: "job-3", kind: "proactive_activation", instructions: "Decide.", input: {} }, context: "" },
+      }), { job_id: "job-3", output: value, error: null });
     });
   }
 });

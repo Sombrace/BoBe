@@ -3,7 +3,7 @@ import test from "node:test";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { configuration, configureMcp, fixture, host, mcpChat, userText } from "./test-support.js";
-import { abortableDelay } from "./errors.js";
+import { WorkerFault, abortableDelay } from "./errors.js";
 import { isRecord } from "./protocol.js";
 
 async function created(path: string): Promise<void> {
@@ -19,7 +19,7 @@ async function created(path: string): Promise<void> {
   throw new Error(`${path} was not created`);
 }
 
-test("a failed MCP stop fails the abort, still settles the run, and the next turn starts clean", async t => {
+test("a run whose cleanup cannot stop its MCP server is a worker fault and leaves no subscriber behind", async t => {
   const paths = await fixture(t);
   const config = configuration(paths);
   configureMcp(config);
@@ -30,12 +30,12 @@ test("a failed MCP stop fails the abort, still settles the run, and the next tur
     return { tools: [{ id: "mcp-wait", name: "mcp__sample__wait", arguments: { text: "never finish" } }] };
   });
   const running = worker.request({ id: 2, method: "chat", params: mcpChat });
-  const rejected = assert.rejects(running, /cleanup/);
+  const rejected = assert.rejects(running,
+    error => error instanceof WorkerFault && /Run cleanup failed: .*Injected process stop failure/.test(error.message));
   await created(waiting);
   const pid = Number(await readFile(join(paths.workspace, "mcp.pid"), "utf8"));
   processes.failingStops = 1;
-  await assert.rejects(worker.request({ id: 3, method: "abort", params: { request_id: 2 } }),
-    /did not release its resources: .*Injected process stop failure/);
+  assert.deepEqual(await worker.request({ id: 3, method: "abort", params: { request_id: 2 } }), {});
   await rejected;
   await worker.request({ id: 4, method: "chat", params: { ...mcpChat, text: "After failed cleanup" } });
   const deltas = notifications.flatMap(notification =>
@@ -45,26 +45,25 @@ test("a failed MCP stop fails the abort, still settles the run, and the next tur
   assert.throws(() => process.kill(pid, 0), error => isRecord(error) && error.code === "ESRCH");
 });
 
-test("a run whose deadline left an MCP process unreleased fails Rust's follow-up abort once", async t => {
+test("a parent turn that succeeds after a subagent could not stop its MCP server is a worker fault", async t => {
   const paths = await fixture(t);
   const config = configuration(paths);
   configureMcp(config);
-  config.workload_budgets.chat.wall_clock = { secs: 6, nanos: 0 };
-  const { worker, processes } = await host(t, config, () => ({
-    tools: [{ id: "mcp-wait", name: "mcp__sample__wait", arguments: { text: "never finish" } }],
-  }));
-  let id = 1;
-  for (let attempt = 0; ; attempt++) {
-    const status = await worker.request({ id: ++id, method: "mcp_status", params: {} });
-    if (Array.isArray(status) && status.every(server => isRecord(server) && server.connected)) break;
-    if (attempt === 400) throw new Error("MCP fixture did not connect");
-    await abortableDelay(50);
-  }
-  processes.failingStops = 1;
-  const chat = ++id;
-  await assert.rejects(worker.request({ id: chat, method: "chat", params: mcpChat }),
-    /cleanup failed: .*Injected process stop failure/);
-  await assert.rejects(worker.request({ id: ++id, method: "abort", params: { request_id: chat } }),
-    /did not release its resources: .*Injected process stop failure/);
-  assert.deepEqual(await worker.request({ id: ++id, method: "abort", params: { request_id: chat } }), {});
+  const { worker, notifications, processes } = await host(t, config, context => {
+    if (userText(context) === "child task") {
+      processes.failingStops = 100;
+      return { text: "Child finished." };
+    }
+    return context.messages.some(message => message.role === "toolResult" && message.toolName === "subagent")
+      ? { text: "Parent finished." }
+      : { tools: [{ id: "delegate-1", name: "subagent", arguments: { mode: "parallel", tasks: [{ task: "child task" }] } }] };
+  });
+  await assert.rejects(worker.request({ id: 2, method: "chat", params: { ...mcpChat, text: "Delegate" } }),
+    error => error instanceof WorkerFault && /Session cleanup failed: .*Injected process stop failure/.test(error.message));
+  processes.failingStops = 0;
+  const deltas = notifications.flatMap(notification =>
+    notification.method === "event" && notification.params.request_id === 2 ? [notification.params.delta] : []);
+  assert.ok(deltas.some(delta => delta.type === "tool_complete" && delta.name === "subagent" && !delta.success));
+  assert.equal(deltas.filter(delta => delta.type === "message_delta").map(delta => delta.text).join(""), "Parent finished.");
+  assert.equal(deltas.some(delta => delta.type === "done"), false);
 });
