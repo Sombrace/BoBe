@@ -109,6 +109,13 @@ enum Fixture {
         )
     }
 
+    static func conversationEvent(_ type: String, eventId: UInt64) throws -> BrainStreamItem {
+        let payload: [String: Any] = type == "conversation_closed"
+            ? ["conversation_id": "conversation-1", "reason": "inactivity", "turn_count": 4]
+            : ["conversation_id": "conversation-1"]
+        return try self.event(type, messageId: "", eventId: eventId, payload: payload)
+    }
+
     static func event(
         _ type: String,
         messageId: String = "msg_00000000000000000000000000000001",

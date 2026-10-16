@@ -161,7 +161,7 @@ extension VoicePipeline {
     }
 
     private func applyPhase(_ phase: VoicePhaseWire, turnId: String) {
-        guard let next = State(serverPhase: phase) else {
+        guard let next = self.phaseTracker.state(after: phase, turnId: turnId, sessionId: self.sessionId) else {
             logger.info("voice.session_closed_by_daemon")
             self.tearDownConnection(finalState: .idle, sendAbort: false)
             return

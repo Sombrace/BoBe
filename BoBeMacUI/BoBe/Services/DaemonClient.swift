@@ -29,8 +29,11 @@ struct EventStreamCommandOrder {
 }
 
 actor DaemonClient {
+    typealias Transport = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+
     static let shared = DaemonClient()
     static let stableEventStreamUptime: Duration = .seconds(30)
+    static let mcpStartupTimeout: TimeInterval = 285
 
     private let fixedEndpoint: DaemonEndpoint?
     var endpoint: DaemonEndpoint { self.fixedEndpoint ?? DaemonConfig.endpoint }
@@ -38,6 +41,7 @@ actor DaemonClient {
 
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
+    private let transport: Transport?
     let fetchTimeout: TimeInterval = 10
 
     private var sseTask: Task<Void, Never>?
@@ -115,8 +119,9 @@ actor DaemonClient {
         DaemonTransportPolicy.session(for: self.endpoint, purpose: purpose)
     }
 
-    init(endpoint: DaemonEndpoint? = nil) {
+    init(endpoint: DaemonEndpoint? = nil, transport: Transport? = nil) {
         self.fixedEndpoint = endpoint
+        self.transport = transport
         self.decoder = JSONDecoder()
         self.encoder = JSONEncoder()
     }
@@ -327,7 +332,11 @@ actor DaemonClient {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await self.session(for: .interactiveHTTP).data(for: request)
+            if let transport = self.transport {
+                (data, response) = try await transport(request)
+            } else {
+                (data, response) = try await self.session(for: .interactiveHTTP).data(for: request)
+            }
         } catch {
             let description = error.localizedDescription
             logger.error(

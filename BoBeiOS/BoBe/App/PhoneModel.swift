@@ -543,9 +543,9 @@ final class PhoneModel {
             }
         case .conversationClosed:
             self.activeTools = []
-            await self.refreshConversation()
+            guard await self.refreshConversation() else { return false }
         case .conversationChanged:
-            await self.refreshConversation()
+            guard await self.refreshConversation() else { return false }
         case .snapshotRequired:
             guard await self.refreshConversation() else { return false }
             self.activeTools = []

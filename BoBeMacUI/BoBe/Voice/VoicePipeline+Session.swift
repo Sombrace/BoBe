@@ -3,16 +3,37 @@ import OSLog
 
 private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline.Session")
 
-extension VoicePipeline.State {
-    init?(serverPhase: VoicePhaseWire) {
-        switch serverPhase {
-        case .idle: return nil
-        case .listening: self = .listening
-        case .thinking: self = .thinking
-        case .speaking: self = .speaking
-        }
+struct VoicePhaseTracker {
+    private(set) var unacknowledgedAborts = 0
+
+    mutating func abortRequested() {
+        self.unacknowledgedAborts += 1
     }
 
+    mutating func state(
+        after phase: VoicePhaseWire,
+        turnId: String,
+        sessionId: String
+    ) -> VoicePipeline.State? {
+        switch phase {
+        case .idle:
+            guard self.unacknowledgedAborts > 0 else { return nil }
+            self.unacknowledgedAborts -= 1
+            return .listening
+        case .listening:
+            if turnId == sessionId, self.unacknowledgedAborts > 0 {
+                self.unacknowledgedAborts -= 1
+            }
+            return .listening
+        case .thinking:
+            return .thinking
+        case .speaking:
+            return .speaking
+        }
+    }
+}
+
+extension VoicePipeline.State {
     var hasSession: Bool {
         switch self {
         case .idle, .failed: false
@@ -275,6 +296,7 @@ extension VoicePipeline {
             self.sessionRestartError = reason
         }
         self.renegotiating = false
+        self.phaseTracker = VoicePhaseTracker()
         self.connectionGeneration &+= 1
         let oldTask = self.task
         self.task = nil
@@ -341,6 +363,7 @@ extension VoicePipeline {
 
     func abortCurrentTurn() {
         self.state = .cancelling
+        self.phaseTracker.abortRequested()
         Task { await self.sendClient(.control(action: .abort)) }
     }
 }

@@ -118,6 +118,7 @@ public final class VoicePipeline {
     @ObservationIgnored var overlapPlayheadChunk: UInt64?
     @ObservationIgnored var serverDrainTask: Task<Void, Never>?
     @ObservationIgnored var replyPlayback: ReplyPlayback?
+    @ObservationIgnored var phaseTracker = VoicePhaseTracker()
 
     let inputProcessor = VoiceInputProcessor()
     let audioLifecycle = AudioLifecycle()

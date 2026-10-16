@@ -287,8 +287,15 @@ struct ThemedSplitPane<Left: View, Right: View>: View {
 
 @MainActor
 final class NumberInputDebouncer {
+    private struct PendingEdit {
+        let text: String
+        let range: ClosedRange<Int>
+        let commit: @MainActor (Int) -> Void
+    }
+
     private let delay: Duration
     private var task: Task<Void, Never>?
+    private var pending: PendingEdit?
 
     init(delay: Duration = .milliseconds(600)) {
         self.delay = delay
@@ -301,6 +308,7 @@ final class NumberInputDebouncer {
 
     func schedule(_ text: String, in range: ClosedRange<Int>, commit: @escaping @MainActor (Int) -> Void) {
         self.task?.cancel()
+        self.pending = PendingEdit(text: text, range: range, commit: commit)
         let delay = self.delay
         self.task = Task { @MainActor in
             do {
@@ -308,20 +316,26 @@ final class NumberInputDebouncer {
             } catch {
                 return
             }
-            guard !Task.isCancelled, let value = Self.value(from: text, in: range) else { return }
-            commit(value)
+            guard !Task.isCancelled else { return }
+            self.commitPending()
         }
     }
 
-    func commitNow(_ text: String, in range: ClosedRange<Int>, commit: (Int) -> Void) {
-        self.cancel()
-        guard let value = Self.value(from: text, in: range) else { return }
-        commit(value)
-    }
-
-    func cancel() {
+    func commitPending() {
         self.task?.cancel()
         self.task = nil
+        guard let pending = self.pending else { return }
+        self.pending = nil
+        guard let value = Self.value(from: pending.text, in: pending.range) else { return }
+        pending.commit(value)
+    }
+
+    func commitNow(_ text: String, in range: ClosedRange<Int>, commit: (Int) -> Void) {
+        self.task?.cancel()
+        self.task = nil
+        self.pending = nil
+        guard let value = Self.value(from: text, in: range) else { return }
+        commit(value)
     }
 }
 
@@ -351,8 +365,11 @@ struct DebouncedNumberInput: View {
             .onSubmit {
                 self.debouncer.commitNow(self.text, in: self.range) { self.value = $0 }
             }
+            .onChange(of: self.isFocused) { _, focused in
+                if !focused { self.debouncer.commitPending() }
+            }
             .onAppear { self.text = String(self.value) }
-            .onDisappear { self.debouncer.cancel() }
+            .onDisappear { self.debouncer.commitPending() }
             .onChange(of: self.value) { _, newVal in
                 guard !self.isFocused else { return }
                 let str = String(newVal)

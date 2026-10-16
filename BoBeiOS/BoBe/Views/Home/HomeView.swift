@@ -186,7 +186,16 @@ struct MessageRow: View {
             }
             if !self.isMine { Spacer(minLength: 36) }
         }
-        .onScrollVisibilityChange(threshold: 0.5) { self.visible = $0 }
+        .onGeometryChange(for: Bool.self) { geometry in
+            guard let viewport = geometry.bounds(of: .scrollView) else { return false }
+            let row = geometry.frame(in: .local)
+            let visible = row.intersection(viewport)
+            return MessagePresentation.isPresented(
+                visibleHeight: visible.isNull ? 0 : visible.height,
+                rowHeight: row.height,
+                viewportHeight: viewport.height
+            )
+        } action: { self.visible = $0 }
         .task(id: self.presentationKey) {
             if self.visible, self.scenePhase == .active, !self.isMine, self.message.isComplete, !self.message.isStreaming {
                 self.model.presented(self.message)
@@ -225,6 +234,13 @@ struct MessageRow: View {
     private static func rendered(_ text: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+    }
+}
+
+enum MessagePresentation {
+    static func isPresented(visibleHeight: CGFloat, rowHeight: CGFloat, viewportHeight: CGFloat) -> Bool {
+        let required = min(rowHeight, viewportHeight) / 2
+        return required > 0 && visibleHeight >= required
     }
 }
 

@@ -185,4 +185,41 @@ struct ConversationTests {
         try await eventually { link.cursors.count >= 2 }
         #expect(link.cursors[1] == EventCursor(eventId: 9, incarnation: Fixture.incarnation))
     }
+
+    @Test(arguments: ["conversation_changed", "conversation_closed"])
+    func failedConversationRefreshKeepsTheCursor(event: String) async throws {
+        let harness = Harness()
+        defer { harness.stop() }
+        let link = harness.link()
+        link.stream(StreamScript(items: [
+            .connected,
+            try Fixture.event("indicator", eventId: 5, payload: ["indicator": "IDLE"]),
+            try Fixture.conversationEvent(event, eventId: 6),
+        ], ends: true))
+        let current = "msg_00000000000000000000000000000ccc"
+        link.script("GET /conversation/current", [
+            .success(Fixture.snapshot()),
+            .failure(.http(503, code: "SERVICE_UNAVAILABLE")),
+            .success(Fixture.snapshot([Fixture.turn(current, role: "assistant", content: "Fresh start")])),
+        ])
+        harness.model.start()
+        try await eventually(.seconds(20)) { link.cursors.count >= 2 }
+        #expect(link.cursors[1] == EventCursor(eventId: 5, incarnation: Fixture.incarnation))
+        try await eventually { harness.model.link == .online && harness.model.thread.map(\.id) == [current] }
+    }
+
+    @Test(arguments: ["conversation_changed", "conversation_closed"])
+    func refreshedConversationAdvancesTheCursor(event: String) async throws {
+        let harness = Harness()
+        defer { harness.stop() }
+        let link = harness.link()
+        link.stream(StreamScript(items: [
+            .connected,
+            try Fixture.event("indicator", eventId: 5, payload: ["indicator": "IDLE"]),
+            try Fixture.conversationEvent(event, eventId: 6),
+        ], ends: true))
+        harness.model.start()
+        try await eventually { link.cursors.count >= 2 }
+        #expect(link.cursors[1] == EventCursor(eventId: 6, incarnation: Fixture.incarnation))
+    }
 }

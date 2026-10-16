@@ -14,6 +14,31 @@ private final class Commits {
     var values: [Int] = []
 }
 
+@MainActor
+@Observable
+private final class NumberFieldModel {
+    var value = 120
+    var isShown = true
+}
+
+private struct NumberFieldHarness: View {
+    let model: NumberFieldModel
+
+    var body: some View {
+        VStack {
+            if self.model.isShown {
+                DebouncedNumberInput(
+                    value: Binding(get: { self.model.value }, set: { self.model.value = $0 }),
+                    accessibilityLabel: "Capture interval",
+                    range: 1 ... 600
+                )
+            }
+        }
+        .frame(width: 200, height: 60)
+        .environment(\.theme, allThemes[0])
+    }
+}
+
 @Suite("Settings controls")
 struct SettingsControlsTests {
     @Test
@@ -57,16 +82,90 @@ struct SettingsControlsTests {
 
         #expect(commits.values == [120])
 
-        debouncer.schedule("300", in: 1 ... 600) { commits.values.append($0) }
-        debouncer.cancel()
-        debouncer.schedule("900", in: 1 ... 600) { commits.values.append($0) }
+        debouncer.schedule("3", in: 1 ... 600) { commits.values.append($0) }
+        debouncer.schedule("30", in: 1 ... 600) { commits.values.append($0) }
+        debouncer.commitPending()
+
+        #expect(commits.values == [120, 30])
+
         try await Task.sleep(for: .milliseconds(200))
+        debouncer.commitPending()
 
-        #expect(commits.values == [120])
+        #expect(commits.values == [120, 30])
 
+        debouncer.schedule("900", in: 1 ... 600) { commits.values.append($0) }
+        debouncer.commitPending()
         debouncer.commitNow("45", in: 1 ... 600) { commits.values.append($0) }
 
-        #expect(commits.values == [120, 45])
+        #expect(commits.values == [120, 30, 45])
+    }
+
+    @Test
+    @MainActor
+    func aPendingNumberEditIsCommittedWhenTheFieldDisappears() async throws {
+        let model = NumberFieldModel()
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 240, height: 100),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: NumberFieldHarness(model: model))
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+
+        let field = try #require(Self.firstSubview(of: NSTextField.self, in: host))
+        #expect(window.makeFirstResponder(field))
+        try await Task.sleep(for: .milliseconds(100))
+        let editor = try #require(field.currentEditor() as? NSTextView)
+        editor.selectAll(nil)
+        editor.insertText("45", replacementRange: editor.selectedRange())
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(model.value == 120)
+
+        model.isShown = false
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(model.value == 45)
+    }
+
+    @Test
+    @MainActor
+    func aPendingNumberEditIsCommittedWhenTheFieldLosesFocus() async throws {
+        let model = NumberFieldModel()
+        let window = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 240, height: 100),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let host = NSHostingView(rootView: NumberFieldHarness(model: model))
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+
+        let field = try #require(Self.firstSubview(of: NSTextField.self, in: host))
+        #expect(window.makeFirstResponder(field))
+        try await Task.sleep(for: .milliseconds(100))
+        let editor = try #require(field.currentEditor() as? NSTextView)
+        editor.selectAll(nil)
+        editor.insertText("77", replacementRange: editor.selectedRange())
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(model.value == 120)
+
+        #expect(window.makeFirstResponder(nil))
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(model.value == 77)
     }
 
     @Test

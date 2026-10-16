@@ -140,11 +140,11 @@ extension DaemonClient {
     }
 
     func saveMCPConfig(_ request: MCPConfigMutationRequest) async throws -> MCPConfigSaveResponse {
-        try await fetch("/tools/mcp/config", method: "PUT", body: request)
+        try await fetch("/tools/mcp/config", method: "PUT", body: request, requestTimeout: Self.mcpStartupTimeout)
     }
 
     func resetMCPConfig() async throws -> MCPConfigResetResponse {
-        try await fetch("/tools/mcp/config", method: "DELETE")
+        try await fetch("/tools/mcp/config", method: "DELETE", requestTimeout: Self.mcpStartupTimeout)
     }
 
     struct PrivacyPurgeResponse: Decodable {
@@ -191,7 +191,7 @@ extension DaemonClient {
     }
 
     func updateSettings(_ request: SettingsUpdateRequest) async throws -> SettingsUpdateResponse {
-        try await fetch("/settings", method: "PATCH", body: request)
+        try await fetch("/settings", method: "PATCH", body: request, requestTimeout: Self.mcpStartupTimeout)
     }
 
     func listProviders() async throws -> ProvidersResponse {
