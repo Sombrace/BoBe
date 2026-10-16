@@ -37,9 +37,10 @@ Setup asks only what BoBe cannot decide; Settings changes any of it later.
 Click her face to open or close the conversation, drag it to move her, and
 press Escape or click elsewhere to fold the conversation away. Point near her
 for the chat, microphone and Settings controls. While she works her rim glows
-and the send button becomes **guide** or **stop**. The menu bar icon shows or
-hides her, opens Settings and quits; quitting also stops a daemon the app
-started.
+and the send button becomes **guide** or **stop**. BoBe has a Dock icon and a
+menu bar icon: clicking the Dock icon brings her back, and the menu bar icon
+shows or hides her, opens Settings and quits. Quitting also stops a daemon the
+app started.
 
 **Voice.** Click the microphone and speak; she answers out loud. Speech is
 recognized on your Mac and raw audio is never stored. Talk over her to
@@ -97,7 +98,7 @@ from `BoBeiOS/project.yml` after `scripts/tasks/build-pairing-ios.sh`.
 | Problem | What to do |
 |---|---|
 | "BoBe couldn't start her backend" | Another BoBe holds `~/.bobe/` (choose *Already running on this Mac*, or `bobe service uninstall`), or port 8766 is taken; logs are in `~/.bobe/logs/` |
-| She is not on screen | Menu bar icon → **Show BoBe** |
+| She is not on screen | Click BoBe in the Dock, or menu bar icon → **Show BoBe** |
 | The provider rejects the key | Paste it again in **Settings → AI & tools**; `bobe doctor --probe` shows which part fails |
 | A model change did nothing | Changes apply after a restart; the app restarts only a daemon it started |
 | Local models stopped | BoBe starts its own Ollama with the daemon; restart BoBe, start your own Ollama if you run one, and `bobe doctor --probe` shows which part fails |

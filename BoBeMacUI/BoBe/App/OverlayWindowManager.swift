@@ -79,7 +79,7 @@ final class OverlayWindowManager: NSObject {
         self.chatOpen = false
 
         let avatarFrame = OverlayCanvas.windowFrame(for: OverlayCanvas.clusterRect(placement), avatar: self.anchor)
-        let panel = OverlayPanel(contentRect: avatarFrame, title: "BoBe Overlay", identifier: "window.overlay")
+        let panel = OverlayPanel(contentRect: avatarFrame, title: "BoBe", identifier: "window.overlay")
         Self.install(
             OverlayHostingView(rootView: avatar.ignoresSafeArea()),
             size: OverlayCanvas.clusterSize,
@@ -99,8 +99,8 @@ final class OverlayWindowManager: NSObject {
         )
         self.columnPanel = columnPanel
 
-        panel.orderFrontRegardless()
         self.panel = panel
+        self.orderAvatarFront()
         self.trackPointer(true)
         self.evaluatePointer()
 
@@ -189,9 +189,15 @@ final class OverlayWindowManager: NSObject {
     }
 
     func show() {
-        self.panel?.orderFrontRegardless()
+        self.orderAvatarFront()
         self.applyColumn()
         self.evaluatePointer()
+    }
+
+    private func orderAvatarFront() {
+        guard let panel = self.panel else { return }
+        panel.orderFrontRegardless()
+        NSApp.addWindowsItem(panel, title: panel.title, filename: false)
     }
 
     func hide() {

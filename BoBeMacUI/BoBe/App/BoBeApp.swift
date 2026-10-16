@@ -64,8 +64,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.store.applyPersistedLocale()
 
-        NSApp.setActivationPolicy(.accessory)
-
         let currentPID = ProcessInfo.processInfo.processIdentifier
         let bundleMatches = NSRunningApplication.runningApplications(
             withBundleIdentifier: "com.bobe.app"

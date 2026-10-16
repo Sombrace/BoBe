@@ -113,6 +113,20 @@ struct OverlayPresentationTests {
 
     @Test
     @MainActor
+    func sheStaysInTheWindowMenuWhenHiddenAndShownAgain() throws {
+        let windows = try #require(NSApp.windowsMenu)
+        let overlay = OverlayWindowManager.shared
+        overlay.createPanels(avatar: Color.clear, column: Color.clear)
+        #expect(windows.items.contains { $0.title == "BoBe" })
+        overlay.hide()
+        overlay.show()
+        #expect(windows.items.contains { $0.title == "BoBe" })
+        overlay.close()
+        #expect(!windows.items.contains { $0.title == "BoBe" })
+    }
+
+    @Test
+    @MainActor
     func replyCodeKeepsTheBoBeThemeColorsWhateverTheMacAppearance() throws {
         let light = try #require(allThemes.first { !$0.isDark })
         let dark = try #require(allThemes.first { $0.isDark })
