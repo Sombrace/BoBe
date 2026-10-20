@@ -67,7 +67,7 @@ final class ProviderLoginRunner {
         self.state = .preparing
         self.didCopyCode = false
         self.submissionError = nil
-        self.streamTask = Task { [weak self] in
+        self.streamTask = Task(name: "Provider sign-in stream") { [weak self] in
             guard let self else { return }
             defer { if self.generation == generation { self.streamTask = nil } }
             do {

@@ -62,7 +62,7 @@ final class SettingsStore {
     private let clientOverride: (any SettingsClient)?
     private let currentSelection: @MainActor () -> EndpointSelection
     private var selection: EndpointSelection
-    private var endpointObserver: NSObjectProtocol?
+    private var endpointObserver: NotificationCenter.ObservationToken?
     private var bodyThemeGeneration: UInt64 = 0
     private var daemonSettings: DaemonSettings?
     private var pendingChanges = SettingsUpdateRequest()
@@ -77,13 +77,13 @@ final class SettingsStore {
         self.currentSelection = currentSelection
         self.selection = currentSelection()
         self.endpointObserver = NotificationCenter.default.addObserver(
-            forName: .bobeEndpointIdentityChanged, object: nil, queue: .main
+            for: EndpointIdentityChangedMessage.self
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, self.selection != self.currentSelection() else { return }
-                let wasLoaded = self.settings != nil || self.loadTask != nil
-                self.synchronizeEndpoint()
-                if wasLoaded { await self.loadIfNeeded() }
+            guard let self, self.selection != self.currentSelection() else { return }
+            let wasLoaded = self.settings != nil || self.loadTask != nil
+            self.synchronizeEndpoint()
+            if wasLoaded {
+                Task(name: "Reload settings for endpoint") { await self.loadIfNeeded() }
             }
         }
     }
@@ -197,7 +197,7 @@ final class SettingsStore {
 
     private func startBackendObserverIfNeeded() {
         guard self.backendObserverTask == nil else { return }
-        self.backendObserverTask = Task { [weak self] in
+        self.backendObserverTask = Task(name: "Observe daemon settings") { [weak self] in
             var wasCrashed = false
             let states = await BackendService.shared.stateStream
             for await state in states {

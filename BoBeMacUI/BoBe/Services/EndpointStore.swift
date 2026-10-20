@@ -10,6 +10,11 @@ nonisolated extension Notification.Name {
     static let bobeEndpointIdentityChanged = Notification.Name("bobe.endpointIdentityChanged")
 }
 
+nonisolated struct EndpointIdentityChangedMessage: NotificationCenter.MainActorMessage {
+    typealias Subject = EndpointStore
+    static var name: Notification.Name { .bobeEndpointIdentityChanged }
+}
+
 nonisolated struct EndpointProfile: Codable, Sendable, Equatable {
     enum TrustMode: String, Codable, Sendable {
         case loopback
@@ -524,8 +529,8 @@ nonisolated final class EndpointStore: @unchecked Sendable {
             return changed
         }
         guard changed else { return }
-        DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .bobeEndpointIdentityChanged, object: nil)
+        Task { @MainActor in
+            NotificationCenter.default.post(EndpointIdentityChangedMessage(), subject: self)
         }
     }
 

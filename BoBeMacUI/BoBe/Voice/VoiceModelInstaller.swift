@@ -235,7 +235,7 @@ final class VoiceModelInstaller {
         if self.monitorTask != nil, self.monitorSelection == selection { return }
         self.monitorTask?.cancel()
         self.monitorSelection = selection
-        self.monitorTask = Task { [weak self] in
+        self.monitorTask = Task(name: "Monitor voice models") { [weak self] in
             guard let self else { return }
             defer {
                 if self.monitorSelection == selection {

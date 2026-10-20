@@ -47,7 +47,7 @@ final class PairingRetirement {
             return
         }
         let previous = self.task
-        self.task = Task { [weak self] in
+        self.task = Task(name: "Retire pairing") { [weak self] in
             await previous?.value
             await self?.run(including: extra)
         }

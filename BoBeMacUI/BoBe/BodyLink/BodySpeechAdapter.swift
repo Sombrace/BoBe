@@ -24,7 +24,7 @@ actor BodySpeechAdapter {
         guard self.connectionLoop == nil else { return }
         self.baseURL = configuration.baseURL
         self.token = configuration.bearerToken
-        self.connectionLoop = Task { [weak self] in
+        self.connectionLoop = Task(name: "Body speech connection") { [weak self] in
             await self?.run()
         }
     }

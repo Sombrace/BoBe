@@ -80,7 +80,7 @@ extension VoicePipeline {
         )
         self.audioInputContinuation = continuation
         let processor = self.inputProcessor
-        self.audioInputTask = Task { [weak self] in
+        self.audioInputTask = Task(name: "Voice audio input") { [weak self] in
             for await captured in audioStream {
                 guard !Task.isCancelled else { return }
                 do {
@@ -240,7 +240,7 @@ extension VoicePipeline {
         guard frameRms > self.bargeInRmsDbfs else {
             self.bargeInCount = 0
             if self.playbackDucked,
-               Date.now.timeIntervalSince(self.lastOverlapAt) > BargeInPolicy.unduckAfterSeconds {
+               self.lastOverlapAt.duration(to: .now) > BargeInPolicy.unduckAfter {
                 self.setPlaybackDucked(false)
             }
             return
@@ -256,7 +256,7 @@ extension VoicePipeline {
         logger.info("voice.barge_in_sending playedMs=\(playedMs)")
         let evidence = self.partialTranscript
         let turnId = self.replyPlayback?.turnId
-        Task { [weak self] in
+        Task.immediate { [weak self] in
             guard let self else { return }
             await self.sendClient(.bargeIn(
                 tsMs: tsMs,

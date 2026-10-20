@@ -90,7 +90,7 @@ extension VoicePipeline {
         self.startKeepalive()
 
         self.sessionId = "voice-\(Int(Date.now.timeIntervalSince1970))"
-        self.handshakeTask = Task { [weak self, weak newTask] in
+        self.handshakeTask = Task(name: "Voice handshake") { [weak self, weak newTask] in
             guard let self, let newTask else { return }
             await self.negotiate(socket: newTask, generation: generation, settings: settings)
         }
@@ -152,7 +152,7 @@ extension VoicePipeline {
         self.negotiatedSettings = adopted
         guard adopted != desired else { return }
         self.renegotiationTask?.cancel()
-        self.renegotiationTask = Task { [weak self] in
+        self.renegotiationTask = Task(name: "Voice renegotiation") { [weak self] in
             try? await Task.sleep(for: .milliseconds(500))
             guard let self, !Task.isCancelled else { return }
             while self.state == .connecting, self.task != nil, !Task.isCancelled {
@@ -336,6 +336,6 @@ extension VoicePipeline {
     func abortCurrentTurn() {
         self.state = .cancelling
         self.phaseTracker.abortRequested()
-        Task { await self.sendClient(.control(action: .abort)) }
+        Task.immediate { await self.sendClient(.control(action: .abort)) }
     }
 }

@@ -140,8 +140,9 @@ public final class VoicePipeline {
     var keepaliveTask: Task<Void, Never>?
     var ttsLevelDecayTask: Task<Void, Never>?
     var lastTtsRmsAt: ContinuousClock.Instant?
-    private var notificationObservers: [NSObjectProtocol] = []
-    let keepalivePingIntervalNs: UInt64 = 25_000_000_000
+    private var welcomeObserver: NotificationCenter.ObservationToken?
+    private var engineConfigurationObserver: NSObjectProtocol?
+    let keepalivePingInterval: Duration = .seconds(25)
 
     var isWarm = false
     var inputVoiceProcessingEnabled = false
@@ -159,7 +160,7 @@ public final class VoicePipeline {
     var bargeInCount: Int = 0
     var bargeInSent: Bool = false
     @ObservationIgnored var playbackDucked = false
-    @ObservationIgnored var lastOverlapAt: Date = .distantPast
+    @ObservationIgnored var lastOverlapAt = ContinuousClock.now
     @ObservationIgnored var duckTask: Task<Void, Never>?
 
     private init() {
@@ -177,17 +178,14 @@ public final class VoicePipeline {
                 format: format
             )
         }
-        let token = NotificationCenter.default.addObserver(
-            forName: .bobeWelcomeCompleted,
-            object: nil,
-            queue: .main
+        self.welcomeObserver = NotificationCenter.default.addObserver(
+            for: WelcomeCompletedMessage.self
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            Task(name: "Refresh voice after welcome") { [weak self] in
                 await self?.refreshDaemonState()
             }
         }
-        self.notificationObservers.append(token)
-        let engineToken = NotificationCenter.default.addObserver(
+        self.engineConfigurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
             object: self.audioEngine,
             queue: .main
@@ -196,18 +194,17 @@ public final class VoicePipeline {
                 self?.handleAudioEngineConfigurationChange()
             }
         }
-        self.notificationObservers.append(engineToken)
         self.registerApplicationMuteHandler()
         self.observeVoiceSettings()
     }
 
     private func observeVoiceSettings() {
-        self.settingsObservation = Task { [weak self] in
+        self.settingsObservation = Task(name: "Observe voice settings") { [weak self] in
             for await _ in Observations({ SettingsStore.shared.settings }) {
                 self?.reconcileVoiceSettings()
             }
         }
-        self.sessionSettingsObservation = Task { [weak self] in
+        self.sessionSettingsObservation = Task(name: "Observe voice session settings") { [weak self] in
             for await desired in Observations({ VoiceSessionSettings.current() }) {
                 self?.reconcileSessionSettings(desired)
             }
@@ -478,8 +475,8 @@ public final class VoicePipeline {
             self.pendingPartialForServer = nil
             self.partialSendTask?.cancel()
             self.partialSendTask = nil
-            Task { try? await self.activeStt.reset() }
+            Task.immediate { try? await self.activeStt.reset() }
         }
-        Task { await self.sendClient(.control(action: shouldMute ? .mute : .unmute)) }
+        Task.immediate { await self.sendClient(.control(action: shouldMute ? .mute : .unmute)) }
     }
 }

@@ -145,7 +145,7 @@ final class BobeStore {
     let settingsStore: SettingsStore
     private let sendRequest: @MainActor (EndpointSelection, String, UUID) async throws -> SendMessageResponse
     let conversationSnapshot: @MainActor (EndpointSelection) async throws -> ConversationSnapshotResponse
-    private var endpointObserver: NSObjectProtocol?
+    private var endpointObserver: NotificationCenter.ObservationToken?
     private var eventStreamGeneration: UInt64 = 0
 
     init(
@@ -164,14 +164,12 @@ final class BobeStore {
         self.sendRequest = sendRequest
         self.conversationSnapshot = conversationSnapshot
         self.endpointObserver = NotificationCenter.default.addObserver(
-            forName: .bobeEndpointIdentityChanged, object: nil, queue: .main
+            for: EndpointIdentityChangedMessage.self
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self, self.selection != self.currentSelection() else { return }
-                let wasObserving = self.backendObserverTask != nil
-                self.synchronizeEndpoint()
-                if wasObserving { self.connect() }
-            }
+            guard let self, self.selection != self.currentSelection() else { return }
+            let wasObserving = self.backendObserverTask != nil
+            self.synchronizeEndpoint()
+            if wasObserving { self.connect() }
         }
     }
 
@@ -202,7 +200,7 @@ final class BobeStore {
 
     func observeBackendState() {
         guard self.backendObserverTask == nil else { return }
-        self.backendObserverTask = Task { [weak self] in
+        self.backendObserverTask = Task(name: "Observe daemon events") { [weak self] in
             let states = await BackendService.shared.stateStream
             for await state in states {
                 guard !Task.isCancelled else { return }

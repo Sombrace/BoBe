@@ -7,7 +7,7 @@ extension BobeStore {
         let selection = self.selection
         let settingsStore = self.settingsStore
         self.captureStartupTask?.cancel()
-        self.captureStartupTask = Task { [weak self] in
+        self.captureStartupTask = Task(name: "Start screen capture") { [weak self] in
             await settingsStore.refresh()
             guard let self, self.isCurrent(selection), !Task.isCancelled,
                   settingsStore.settings?.captureEnabled == true,
@@ -129,7 +129,7 @@ extension BobeStore {
 
     func scheduleReconnectStatusTransition() {
         self.reconnectStatusTask?.cancel()
-        self.reconnectStatusTask = Task { [weak self] in
+        self.reconnectStatusTask = Task(name: "Reconnect status") { [weak self] in
             try? await Task.sleep(for: .milliseconds(StoreTiming.reconnectStatusDelayMilliseconds))
             guard let self, !Task.isCancelled, !self.context.daemonConnected else { return }
             self.isReconnecting = true

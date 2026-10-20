@@ -155,7 +155,7 @@ actor DaemonClient {
 
     private func startSSE() {
         self.sseTask?.cancel()
-        self.sseTask = Task { [weak self] in
+        self.sseTask = Task(name: "Daemon event stream") { [weak self] in
             guard let self else { return }
             await self.runSSELoop()
         }

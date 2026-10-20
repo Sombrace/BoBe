@@ -48,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let shutdownDeadlineSeconds: TimeInterval = 8
     private var isDuplicateInstance = false
     private var isStartingUp = true
+    private var welcomeObserver: NotificationCenter.ObservationToken?
 
     override init() {
         self.store = BobeStore.shared
@@ -90,21 +91,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SystemPowerObserver.shared.start()
         DiagnosticsMetrics.shared.start()
 
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(self.handleWelcomeCompleted),
-            name: .bobeWelcomeCompleted,
-            object: nil
-        )
+        self.welcomeObserver = NotificationCenter.default.addObserver(
+            for: WelcomeCompletedMessage.self
+        ) { [weak self] _ in
+            self?.handleWelcomeCompleted()
+        }
 
         Task {
             await self.startApp()
         }
     }
 
-    @objc
     private func handleWelcomeCompleted() {
-        Task {
+        Task(name: "Finish setup after welcome") {
             SetupWindowManager.shared.close()
             await self.completePostStartSetup()
             self.showOverlay()

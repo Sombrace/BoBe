@@ -148,7 +148,7 @@ extension VoicePipeline {
             return
         }
         self.serverDrainTask?.cancel()
-        self.serverDrainTask = Task { [weak self] in
+        self.serverDrainTask = Task(name: "Drain server speech") { [weak self] in
             guard let self else { return }
             let drained = await self.waitForPlaybackDrain()
             guard !Task.isCancelled,
