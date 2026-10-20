@@ -28,6 +28,22 @@ struct VoiceCaptureFrameEncoderTests {
     }
 
     @Test
+    func encodesTheWireLayoutByteForByte() throws {
+        let samples = (0 ..< VoiceWire.captureFrameSamples).map { Float($0 % 7 - 3) / 3.5 }
+        let frame = try #require(VoiceCaptureFrameEncoder.encode(
+            streamId: 0xA1B2_C3D4,
+            sequence: 0x0102_0304,
+            samples: samples[...]
+        ))
+        var expected: [UInt8] = [0xA1, 0xB2, 0xC3, 0xD4, 0x01, 0x02, 0x03, 0x04, 0, 0, 0, 0, 0]
+        for sample in samples {
+            let bits = UInt16(bitPattern: Int16(clamping: Int32((max(-1, min(1, sample)) * 32_767).rounded())))
+            expected += [UInt8(bits & 0xFF), UInt8(bits >> 8)]
+        }
+        #expect(Array(frame) == expected)
+    }
+
+    @Test
     func rejectsWrongFrameSizeAndZeroStream() {
         let samples = Array(repeating: Float(0), count: VoiceWire.captureFrameSamples - 1)
         #expect(VoiceCaptureFrameEncoder.encode(streamId: 1, sequence: 0, samples: samples[...]) == nil)
@@ -46,6 +62,19 @@ struct TtsFrameHeaderTests {
         data.append(flags)
         data.append(contentsOf: payload)
         return data
+    }
+
+    @Test(arguments: [0, 1, 3])
+    func parsesAFrameSlicedAtAnyOffset(_ offset: Int) throws {
+        let frame = Data(repeating: 0xEE, count: offset) + self.encode(
+            chunkId: 0x0102_0304_0506_0708,
+            flags: TtsFrameHeader.flagFirstOfTurn,
+            payload: [9, 8, 7]
+        )
+        let parsed = try #require(TtsFrameHeader.parse(frame.dropFirst(offset)))
+        #expect(parsed.header.chunkId == 0x0102_0304_0506_0708)
+        #expect(parsed.header.isFirstOfTurn)
+        #expect(Array(parsed.payload) == [9, 8, 7])
     }
 
     @Test

@@ -3,6 +3,7 @@ import Foundation
 import os
 import OSLog
 import Security
+import Synchronization
 
 nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "BackendService")
 
@@ -715,7 +716,7 @@ nonisolated enum BackendServiceError: Error, LocalizedError {
 }
 
 nonisolated private final class StderrBuffer: Sendable {
-    private let lines = OSAllocatedUnfairLock(initialState: [String]())
+    private let lines = Mutex<[String]>([])
 
     func append(_ line: String) {
         self.lines.withLock { lines in

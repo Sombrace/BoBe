@@ -8,18 +8,15 @@ final class AccessibilityRuntime {
 
     private(set) var reduceMotion: Bool
 
-    @ObservationIgnored private var displayOptionsObserver: NSObjectProtocol?
+    @ObservationIgnored private var displayOptionsObserver: NotificationCenter.ObservationToken?
 
     private init(workspace: NSWorkspace = .shared) {
         self.reduceMotion = workspace.accessibilityDisplayShouldReduceMotion
         self.displayOptionsObserver = workspace.notificationCenter.addObserver(
-            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
-            object: nil,
-            queue: .main
+            of: workspace,
+            for: .accessibilityDisplayOptionsDidChange
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.refresh(from: .shared)
-            }
+            self?.refresh(from: .shared)
         }
     }
 

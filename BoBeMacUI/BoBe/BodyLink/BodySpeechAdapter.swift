@@ -251,17 +251,14 @@ actor BodySpeechAdapter {
     }
 
     private static func floatSamples(from pcm: Data) -> [Float] {
-        var samples = [Float]()
-        samples.reserveCapacity(pcm.count / 2)
-        var index = pcm.startIndex
-        while index < pcm.endIndex {
-            let low = UInt16(pcm[index])
-            let highIndex = pcm.index(after: index)
-            let high = UInt16(pcm[highIndex])
-            samples.append(Float(Int16(bitPattern: low | (high << 8))) / 32_768)
-            index = pcm.index(highIndex, offsetBy: 1)
+        let bytes = pcm.bytes
+        let count = bytes.byteCount / MemoryLayout<Int16>.size
+        return [Float](capacity: count) { samples in
+            for index in 0 ..< count {
+                let sample = bytes.load(fromByteOffset: index * MemoryLayout<Int16>.size, as: Int16.self)
+                samples.append(Float(Int16(littleEndian: sample)) / 32_768)
+            }
         }
-        return samples
     }
 }
 

@@ -1,6 +1,5 @@
 @preconcurrency import AVFoundation
 import Observation
-import os
 import Speech
 
 @Observable
@@ -265,17 +264,14 @@ nonisolated private final class SpeechFeed: @unchecked Sendable {
         let ratio = self.output.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 32
         guard let converted = AVAudioPCMBuffer(pcmFormat: self.output, frameCapacity: capacity) else { return }
-        let supplied = OSAllocatedUnfairLock(initialState: false)
+        var supplied = false
         var error: NSError?
         let status = self.converter.convert(to: converted, error: &error) { _, inputStatus in
-            let first = supplied.withLock { done in
-                defer { done = true }
-                return !done
-            }
-            guard first else {
+            guard !supplied else {
                 inputStatus.pointee = .noDataNow
                 return nil
             }
+            supplied = true
             inputStatus.pointee = .haveData
             return buffer
         }

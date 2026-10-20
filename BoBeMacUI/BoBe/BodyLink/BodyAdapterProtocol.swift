@@ -152,40 +152,28 @@ nonisolated struct BodyAdapterMediaHeader: Equatable, Sendable {
     let sequence: UInt32
 
     static func parse(_ data: Data) -> (header: Self, payload: Data)? {
-        guard data.count >= self.length,
-              data[data.startIndex] == 1,
-              let kind = Kind(rawValue: data[data.startIndex + 1]),
-              data[data.startIndex + 2] == 0,
-              data[data.startIndex + 3] == 0,
-              data[data.startIndex + 36 ..< data.startIndex + 40].allSatisfy({ $0 == 0 })
+        let bytes = data.bytes
+        guard bytes.byteCount >= self.length,
+              bytes.load(fromByteOffset: 0, as: UInt8.self) == 1,
+              let kind = Kind(rawValue: bytes.load(fromByteOffset: 1, as: UInt8.self)),
+              bytes.load(fromByteOffset: 2, as: UInt16.self) == 0,
+              bytes.load(fromByteOffset: 36, as: UInt32.self) == 0
         else {
             return nil
         }
-        let generation = readUInt64BE(data, offset: 4)
-        let leaseId = readUuid(data, offset: 12)
-        let streamId = readUInt32BE(data, offset: 28)
-        guard generation != 0, streamId != 0, let leaseId else { return nil }
+        let generation = UInt64(bigEndian: bytes.load(fromByteOffset: 4, as: UInt64.self))
+        let streamId = UInt32(bigEndian: bytes.load(fromByteOffset: 28, as: UInt32.self))
+        guard generation != 0, streamId != 0 else { return nil }
         return (
             Self(
                 kind: kind,
                 connectionGeneration: generation,
-                leaseId: leaseId,
+                leaseId: UUID(uuid: bytes.unsafeLoadUnaligned(fromByteOffset: 12, as: uuid_t.self)),
                 streamId: streamId,
-                sequence: readUInt32BE(data, offset: 32)
+                sequence: UInt32(bigEndian: bytes.load(fromByteOffset: 32, as: UInt32.self))
             ),
-            data.subdata(in: data.startIndex + self.length ..< data.endIndex)
+            data.dropFirst(self.length)
         )
-    }
-
-    private static func readUuid(_ data: Data, offset: Int) -> UUID? {
-        let bytes = Array(data.dropFirst(offset).prefix(16))
-        guard bytes.count == 16 else { return nil }
-        return UUID(uuid: (
-            bytes[0], bytes[1], bytes[2], bytes[3],
-            bytes[4], bytes[5], bytes[6], bytes[7],
-            bytes[8], bytes[9], bytes[10], bytes[11],
-            bytes[12], bytes[13], bytes[14], bytes[15]
-        ))
     }
 }
 
@@ -203,30 +191,22 @@ nonisolated struct BodyLinkMicrophoneFrame {
     }
 
     static func parse(_ data: Data) -> Self? {
-        guard data.count == self.headerLength + self.payloadLength,
-              data[data.startIndex] == 1,
-              data[data.startIndex + 1] == 1
+        let bytes = data.bytes
+        guard bytes.byteCount == self.headerLength + self.payloadLength,
+              bytes.load(fromByteOffset: 0, as: UInt8.self) == 1,
+              bytes.load(fromByteOffset: 1, as: UInt8.self) == 1
         else {
             return nil
         }
-        let flags = UInt16(data[data.startIndex + 2]) << 8
-            | UInt16(data[data.startIndex + 3])
+        let flags = UInt16(bigEndian: bytes.load(fromByteOffset: 2, as: UInt16.self))
         guard flags & ~self.discontinuityFlag == 0 else { return nil }
-        let streamId = readUInt32BE(data, offset: 4)
+        let streamId = UInt32(bigEndian: bytes.load(fromByteOffset: 4, as: UInt32.self))
         guard streamId != 0 else { return nil }
         return Self(
             flags: flags,
             streamId: streamId,
-            sequence: readUInt32BE(data, offset: 8),
-            pcm: data.subdata(in: data.startIndex + self.headerLength ..< data.endIndex)
+            sequence: UInt32(bigEndian: bytes.load(fromByteOffset: 8, as: UInt32.self)),
+            pcm: data.dropFirst(self.headerLength)
         )
     }
-}
-
-nonisolated private func readUInt32BE(_ data: Data, offset: Int) -> UInt32 {
-    data.dropFirst(offset).prefix(4).reduce(0) { ($0 << 8) | UInt32($1) }
-}
-
-nonisolated private func readUInt64BE(_ data: Data, offset: Int) -> UInt64 {
-    data.dropFirst(offset).prefix(8).reduce(0) { ($0 << 8) | UInt64($1) }
 }

@@ -1,6 +1,5 @@
 @preconcurrency import AVFoundation
 import Foundation
-import os
 
 nonisolated struct VoiceLoadTimeout: Error {}
 
@@ -95,18 +94,14 @@ nonisolated func convertSingleBuffer(
     source: AVAudioBuffer,
     into output: AVAudioPCMBuffer
 ) -> (status: AVAudioConverterOutputStatus, error: NSError?) {
-    let state = OSAllocatedUnfairLock(initialState: false)
+    var fed = false
     var err: NSError?
     let status = converter.convert(to: output, error: &err) { _, statusPtr in
-        let shouldFeed = state.withLock { fed in
-            guard !fed else { return false }
-            fed = true
-            return true
-        }
-        if !shouldFeed {
+        guard !fed else {
             statusPtr.pointee = .noDataNow
             return nil
         }
+        fed = true
         statusPtr.pointee = .haveData
         return source
     }

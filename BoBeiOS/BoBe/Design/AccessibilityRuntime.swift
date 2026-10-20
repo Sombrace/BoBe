@@ -7,18 +7,15 @@ final class AccessibilityRuntime {
 
     private(set) var reduceMotion: Bool
 
-    @ObservationIgnored private var observer: NSObjectProtocol?
+    @ObservationIgnored private var observer: NotificationCenter.ObservationToken?
 
     private init() {
         self.reduceMotion = UIAccessibility.isReduceMotionEnabled
         self.observer = NotificationCenter.default.addObserver(
-            forName: UIAccessibility.reduceMotionStatusDidChangeNotification,
-            object: nil,
-            queue: .main
+            of: UIAccessibility.self,
+            for: .reduceMotionStatusDidChange
         ) { _ in
-            Task { @MainActor in
-                AccessibilityRuntime.shared.refresh()
-            }
+            AccessibilityRuntime.shared.refresh()
         }
     }
 

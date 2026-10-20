@@ -2,6 +2,7 @@ import Foundation
 import LocalAuthentication
 import OSLog
 import Security
+import Synchronization
 
 nonisolated private let endpointLogger = Logger(subsystem: "com.bobe.app", category: "EndpointStore")
 
@@ -146,7 +147,7 @@ nonisolated private extension String {
 nonisolated final class EndpointCredentialMemory: Sendable {
     static let shared = EndpointCredentialMemory()
 
-    private let credentials = OSAllocatedUnfairLock(initialState: [String: String]())
+    private let credentials = Mutex<[String: String]>([:])
 
     func load(reference: String) -> String? {
         self.credentials.withLock { $0[reference] }

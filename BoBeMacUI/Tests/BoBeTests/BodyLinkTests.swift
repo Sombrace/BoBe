@@ -28,6 +28,38 @@ struct BodyLinkTests {
         #expect(BodyAdapterMediaHeader.parse(frame) == nil)
     }
 
+    @Test(arguments: [0, 1, 3])
+    func adapterFramesParseFromAnySliceOffset(_ offset: Int) throws {
+        let leaseId = UUID()
+        var uuid = leaseId.uuid
+        var media = Data(repeating: 0xEE, count: offset)
+        media.append(contentsOf: [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2])
+        withUnsafeBytes(of: &uuid) { media.append(contentsOf: $0) }
+        media.append(contentsOf: [0, 0, 1, 0, 0, 0, 0, 9, 0, 0, 0, 0])
+        var microphone = Data([1, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 9])
+        microphone.append(Data(repeating: 0, count: BodyLinkMicrophoneFrame.headerLength - microphone.count))
+        let pcm = (0 ..< BodyLinkMicrophoneFrame.payloadLength / 2).flatMap { index -> [UInt8] in
+            let bits = UInt16(bitPattern: Int16(index * 97 - 16_000))
+            return [UInt8(bits & 0xFF), UInt8(bits >> 8)]
+        }
+        microphone.append(contentsOf: pcm)
+        media.append(microphone)
+
+        let parsed = try #require(BodyAdapterMediaHeader.parse(media.dropFirst(offset)))
+        #expect(parsed.header == BodyAdapterMediaHeader(
+            kind: .microphonePcm,
+            connectionGeneration: 0x0102,
+            leaseId: leaseId,
+            streamId: 0x100,
+            sequence: 9
+        ))
+        let frame = try #require(BodyLinkMicrophoneFrame.parse(parsed.payload))
+        #expect(frame.streamId == 0x100)
+        #expect(frame.sequence == 9)
+        #expect(frame.hasDiscontinuity)
+        #expect(Array(frame.pcm) == pcm)
+    }
+
     @Test
     func microphoneFrameRejectsZeroStreamAndWrongSize() throws {
         var frame = Data(repeating: 0, count: 660)

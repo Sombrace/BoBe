@@ -11,7 +11,7 @@ final class OpusDecoder {
         case decodeFailed(NSError?)
     }
 
-    init(outputFormat: AVAudioFormat) throws {
+    init(outputFormat: AVAudioFormat) throws(DecodeError) {
         var asbd = AudioStreamBasicDescription(
             mSampleRate: outputFormat.sampleRate,
             mFormatID: kAudioFormatOpus,
@@ -33,16 +33,19 @@ final class OpusDecoder {
         self.converter = converter
     }
 
-    func decode(_ packet: UnsafeBufferPointer<UInt8>, to buffer: AVAudioPCMBuffer) throws {
-        guard let base = packet.baseAddress, !packet.isEmpty else { return }
-        let byteCount = packet.count
+    func decode(_ packet: RawSpan, to buffer: AVAudioPCMBuffer) throws(DecodeError) {
+        guard !packet.isEmpty else { return }
+        let byteCount = packet.byteCount
 
         let compressed = AVAudioCompressedBuffer(
             format: self.inputFormat,
             packetCapacity: 1,
             maximumPacketSize: byteCount
         )
-        memcpy(compressed.data, base, byteCount)
+        packet.withUnsafeBytes { source in
+            guard let base = source.baseAddress else { return }
+            compressed.data.copyMemory(from: base, byteCount: byteCount)
+        }
         compressed.byteLength = UInt32(byteCount)
         compressed.packetCount = 1
         compressed.packetDescriptions?.pointee = AudioStreamPacketDescription(
