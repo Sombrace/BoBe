@@ -163,14 +163,10 @@ nonisolated enum PauseSensitivityMs {
     static let patient: Int = 1500
 }
 
-nonisolated enum VoiceSttEngineId {
+nonisolated enum VoiceEngineId {
     static let appleSpeechAnalyzer = "apple_speech_analyzer"
-    static let fluidAudioParakeet = "fluidaudio_parakeet_eou"
-    static let fluidAudioNemotron = "fluidaudio_nemotron"
-}
-
-nonisolated enum VoiceSttTuning {
-    static let nemotronChunkMs = 1_120
+    static let appleSpeechSynthesizer = "apple_speech_synthesizer"
+    static let serverPocket = "server_pocket"
 }
 
 nonisolated enum InstallStatusWire: String, Codable, Sendable, Equatable {

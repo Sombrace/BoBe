@@ -359,7 +359,7 @@
 "settings.voice.description" = "Reconocimiento de voz, la voz de BoBe y cómo decide cuándo has terminado de hablar.";
 "settings.voice.section.preferences" = "Preferencias";
 "settings.voice.section.models" = "Modelos";
-"settings.voice.section.models.location_note" = "Los modelos de escucha de este Mac usan la caché de FluidAudio en ~/Library/Application Support/FluidAudio/. El runtime seleccionado guarda la voz de BoBe en su propia carpeta de datos.";
+"settings.voice.section.models.location_note" = "macOS guarda y actualiza el modelo de reconocimiento de voz de cada idioma. El runtime seleccionado guarda la voz en inglés de BoBe en su propia carpeta de datos.";
 "settings.voice.language" = "Idioma";
 "settings.voice.language.description" = "El idioma en el que te escucha BoBe. El inglés es el más fiable; los demás idiomas aún se están perfeccionando.";
 "settings.voice.pause_sensitivity" = "Sensibilidad a las pausas";
@@ -427,7 +427,7 @@
 "setup.physical.error.rejected" = "BoBe no pudo usar esa configuración de red.";
 "setup.physical.error.timed_out" = "BoBe tardó demasiado en conectarse. Inténtalo de nuevo.";
 
-"setup.voice.body" = "Una única descarga de alrededor de 600 MB, más para otros idiomas.";
+"setup.voice.body" = "Una única descarga para su voz y su oído.";
 "setup.voice.complete" = "Ya está lista para hablar.";
 "setup.voice.failed" = "La configuración de voz no terminó.";
 "setup.voice.poll_failure" = "La descarga se detuvo. Vuelve a intentarlo ahora o más tarde en Ajustes.";
@@ -577,17 +577,13 @@
 "settings.voice.model.tts.name_expert" = "Pocket TTS · inglés · Q8";
 "settings.voice.model.tts.purpose" = "Habla en inglés con seis voces. Más adelante habrá más paquetes de idiomas.";
 "settings.voice.model.tts.size" = "~170 MB";
-"settings.voice.model.supertonic.name" = "FluidAudio Supertonic-3 multilingüe";
-"settings.voice.model.supertonic.purpose" = "Síntesis de voz experimental dentro de la app para los idiomas compatibles.";
-"settings.voice.model.supertonic.size" = "~100 MB";
-"settings.voice.model.stt_en.name" = "Oído — inglés";
-"settings.voice.model.stt_en.name_expert" = "FluidAudio Parakeet EOU (inglés)";
-"settings.voice.model.stt_en.purpose" = "Te oye cuando el idioma elegido es el inglés.";
-"settings.voice.model.stt_en.size" = "~450 MB";
-"settings.voice.model.stt_multi.name" = "Oído — otros idiomas";
-"settings.voice.model.stt_multi.name_expert" = "FluidAudio Nemotron 3.5 Streaming multilingüe + Silero VAD";
-"settings.voice.model.stt_multi.purpose" = "Te oye cuando el idioma no es el inglés.";
-"settings.voice.model.stt_multi.size" = "Varía según la versión del modelo";
+"settings.voice.model.stt.name" = "Oído";
+"settings.voice.model.stt.name_expert_format" = "Apple Speech · %@";
+"settings.voice.model.stt.purpose" = "Te oye en el idioma que elegiste. macOS lo descarga y lo actualiza.";
+"settings.voice.model.managed_by_macos" = "Gestionado por macOS";
+"settings.voice.model.system_voice.name_format" = "Voz del sistema · %@";
+"settings.voice.model.system_voice.purpose" = "BoBe habla idiomas distintos del inglés con la mejor voz del sistema de este Mac. Descarga voces mejoradas o premium en Ajustes del Sistema › Accesibilidad para un sonido más natural.";
+"settings.voice.no_system_voice_format" = "Este Mac no tiene ninguna voz en %@. Añade una en Ajustes del Sistema › Accesibilidad.";
 "settings.voice.reinstall" = "Reinstalar todo";
 "settings.voice.reinstalling" = "Reinstalando…";
 "settings.voice.reinstall.accessibility" = "Reinstalar todos los modelos de voz";
@@ -605,21 +601,8 @@
 "settings.voice.model.status.downloading" = "Descargando…";
 "settings.voice.model.status.failed" = "Error";
 "settings.voice.model.status.checking" = "Comprobando…";
-"settings.voice.stt_preference" = "Motor de reconocimiento de voz";
-"settings.voice.stt_preference.description" = "Elige dónde se reconoce la voz. La opción automática mantiene FluidAudio, la predeterminada ya probada, hasta que Apple Speech supere las pruebas de calidad con audio real de BoBe. Vuelve a conectar la voz después de cambiarlo.";
-"settings.voice.stt_preference.automatic" = "Automático (recomendado)";
-"settings.voice.stt_preference.apple_speech" = "Apple Speech (experimental)";
-"settings.voice.stt_preference.fluid_audio" = "FluidAudio (local)";
-"settings.voice.stt_preference.daemon" = "Daemon de BoBe";
-"settings.voice.tts_backend" = "Motor de síntesis de voz";
-"settings.voice.tts_backend.description" = "Experimental. Supertonic genera voz multilingüe dentro de la app y descarga su modelo de Core ML la primera vez que se usa. Vuelve a conectar la voz después de cambiarlo.";
-"settings.voice.tts_backend.server_pocket" = "Pocket TTS en el servidor (inglés)";
-"settings.voice.tts_backend.client_supertonic" = "Supertonic-3 en el cliente (experimental)";
-"settings.voice.tts_backend.best_for_format" = "%1$@ · ideal para %2$@";
-"settings.voice.advice.engine_format" = "%1$@ no habla %2$@. %3$@ sí.";
 "settings.voice.advice.persona_format" = "La voz actual de BoBe está hecha para otro idioma. ¿Usar una voz en %@?";
 "settings.voice.advice.switch" = "Cambiar";
-"settings.voice.language_unsupported" = "%@ no tiene ninguna voz en %@. Elige un idioma compatible u otro motor de voz.";
 "setup.voice.model.tts" = "Su voz";
 "setup.voice.model.stt" = "Su oído";
 

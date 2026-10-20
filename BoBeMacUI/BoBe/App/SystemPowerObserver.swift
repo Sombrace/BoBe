@@ -94,7 +94,7 @@ final class SystemPowerObserver {
             BobeStore.shared.resumeEventStream()
         }
         await VoicePipeline.shared.refreshDaemonState()
-        VoicePipeline.shared.bootstrapSttPresence()
+        await VoicePipeline.shared.bootstrapSttPresence()
     }
 
     func stop() {

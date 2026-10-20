@@ -264,7 +264,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !VoiceSetupPreference.isDeferred else { return }
         let pipeline = VoicePipeline.shared
         await pipeline.refreshDaemonState()
-        pipeline.bootstrapSttPresence()
+        await pipeline.bootstrapSttPresence()
         switch pipeline.readiness {
         case .modelsMissing, .failed:
             let readinessDesc = String(describing: pipeline.readiness)

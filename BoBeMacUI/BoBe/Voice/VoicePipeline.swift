@@ -1,6 +1,5 @@
 @preconcurrency import AudioToolbox
 @preconcurrency import AVFoundation
-import FluidAudio
 import Foundation
 import Observation
 import OSLog
@@ -75,12 +74,9 @@ public final class VoicePipeline {
     let audioEngine = AVAudioEngine()
     let playerNode = AVAudioPlayerNode()
 
-    let parakeetStt = FluidAudioStt()
-    let nemotronStt = FluidAudioNemotronStt()
-    var appleSttByLanguage: [String: AppleSpeechStt] = [:]
+    var recognizers: [String: AppleSpeechStt] = [:]
 
     var sessionSttLanguage: String?
-    var sessionSttEngineId: String?
     var sessionTtsBackend: VoiceTtsBackend?
     var sessionVoicePersona: String?
     var sessionVoiceSpeed: Float?
@@ -88,14 +84,9 @@ public final class VoicePipeline {
     var sessionSpeechOffer: SpeechOfferWire?
     var handshakeComplete = false
 
-    var loadedSttKeys: Set<String> = []
-    var effectiveSttEngineId: String {
-        self.sessionSttEngineId ?? self.preferredSttEngineId(for: self.activeSttLanguage)
-    }
+    var loadedSttLanguages: Set<String> = []
     var sttLoaded: Bool {
-        self.loadedSttKeys.contains(
-            Self.sttReadinessKey(engineId: self.effectiveSttEngineId, language: self.effectiveLanguage)
-        )
+        self.loadedSttLanguages.contains(self.effectiveLanguage)
     }
 
     var pendingTurnId: String?
@@ -123,7 +114,7 @@ public final class VoicePipeline {
     var audioInputContinuation: AsyncStream<CapturedVoiceAudio>.Continuation?
     var audioInputTask: Task<Void, Never>?
     var droppedAudioInputChunks = 0
-    let clientTtsEngine = ClientTtsEngine()
+    let systemVoice = SystemVoice()
     var clientTtsQueue: ClientTtsSentenceQueue?
     var clientTtsTask: Task<Void, Never>?
     var clientTtsTurnId: String?
@@ -224,11 +215,11 @@ public final class VoicePipeline {
     }
 
     public func prewarm() async -> Bool {
-        self.bootstrapSttPresence()
-        if VoiceSttPreferenceStore.shared.preference.usesEndpointEngine,
-           self.sttStatus == .ready,
-           !self.sttLoaded {
+        await self.bootstrapSttPresence()
+        if self.sttStatus == .ready, !self.sttLoaded {
             await self.ensureSttLoaded()
+        } else if self.sttStatus == .notLoaded {
+            Task(name: "Speech recognition install") { await self.ensureSttLoaded() }
         }
         guard !self.isWarm else { return true }
         do {
@@ -245,30 +236,22 @@ public final class VoicePipeline {
     }
 
     public func prewarmSttOnly() async {
-        guard VoiceSttPreferenceStore.shared.preference.usesEndpointEngine else { return }
-        self.bootstrapSttPresence()
+        await self.bootstrapSttPresence()
         if self.sttStatus == .ready, !self.sttLoaded {
-            Task { [weak self] in await self?.ensureSttLoaded() }
+            Task(name: "Speech recognition prewarm") { [weak self] in await self?.ensureSttLoaded() }
         }
     }
 
-    public func bootstrapSttPresence() {
-        if VoiceSttPreferenceStore.shared.preference == .daemon {
-            self.sttStatus = self.daemonSttReady ? .ready : .notLoaded
-            return
-        }
-        if self.sttStatus == .ready {
-            return
-        }
-        self.sttStatus = self.activeModelIsInstalled ? .ready : .notLoaded
+    public func bootstrapSttPresence() async {
+        guard self.sttStatus != .ready || self.sttStatusLanguage != self.activeSttLanguage,
+              self.sttStatus != .downloading
+        else { return }
+        await self.refreshSttState()
     }
 
     public func ensureSttLoaded(for requestedLanguage: String? = nil) async {
-        guard VoiceSttPreferenceStore.shared.preference.usesEndpointEngine else { return }
         let language = requestedLanguage ?? self.activeSttLanguage
-        let engineId = self.preferredSttEngineId(for: language)
-        let readinessKey = Self.sttReadinessKey(engineId: engineId, language: language)
-        if self.loadedSttKeys.contains(readinessKey) {
+        if self.loadedSttLanguages.contains(language) {
             return
         }
         let isActiveLanguage = language == self.activeSttLanguage
@@ -276,10 +259,7 @@ public final class VoicePipeline {
             self.sttStatus = .downloading
         }
         self.sttDownloadLanguage = language
-        self.sttLoadProgress = VoiceSttLoadProgress(
-            fractionCompleted: 0,
-            phase: .listing
-        )
+        self.sttLoadProgress = VoiceSttLoadProgress(fractionCompleted: 0)
         let onPartial: @Sendable (String) async -> Void = { [weak self] text in
             await self?.handleSttPartial(text)
         }
@@ -287,11 +267,7 @@ public final class VoicePipeline {
             await self?.handleSttEou(text)
         }
         let onFailure: @Sendable (String) async -> Void = { [weak self] message in
-            await self?.handleSttFailure(
-                message,
-                engineId: engineId,
-                language: language
-            )
+            await self?.handleSttFailure(message, language: language)
         }
         let onProgress: @Sendable (VoiceSttLoadProgress) -> Void = { [weak self] progress in
             Task { @MainActor in
@@ -299,18 +275,18 @@ public final class VoicePipeline {
                 self?.sttLoadProgress = progress
             }
         }
-        let engine = self.sttEngine(engineId: engineId, language: language)
-        let timeoutSeconds: TimeInterval = 30 * 60
+        let recognizer = self.recognizer(for: language)
+        let timeout = Duration.seconds(30 * 60)
         do {
-            try await withVoiceLoadTimeout(seconds: timeoutSeconds) {
-                try await engine.loadModels(
+            try await withVoiceLoadTimeout(timeout) {
+                try await recognizer.load(
                     onPartial: onPartial,
                     onEou: onEou,
                     onFailure: onFailure,
                     onProgress: onProgress
                 )
             }
-            self.loadedSttKeys.insert(readinessKey)
+            self.loadedSttLanguages.insert(language)
             if isActiveLanguage {
                 self.sttStatus = .ready
             }
@@ -318,29 +294,23 @@ public final class VoicePipeline {
                 self.sttDownloadLanguage = nil
                 self.sttLoadProgress = nil
             }
-            logger.info(
-                "endpoint STT loaded engine=\(engineId, privacy: .public) language=\(language, privacy: .public)"
-            )
+            logger.info("Apple Speech ready language=\(language, privacy: .public)")
         } catch is VoiceLoadTimeout {
-            await engine.cancelLoading()
-            let msg = "STT load timed out after \(Int(timeoutSeconds))s"
+            await recognizer.cancelLoading()
+            let msg = "Speech recognition setup timed out after \(timeout)"
             self.lastError = msg
             if isActiveLanguage {
                 self.sttStatus = .failed(msg)
             }
             self.sttDownloadLanguage = nil
             self.sttLoadProgress = nil
-            logger.error(
-                "endpoint STT load timed out engine=\(engineId, privacy: .public) language=\(language, privacy: .public)"
-            )
+            logger.error("Apple Speech setup timed out language=\(language, privacy: .public)")
         } catch is CancellationError {
-            if isActiveLanguage {
-                self.sttStatus = self.loadedSttKeys.contains(readinessKey)
-                    || (engineId != VoiceSttEngineId.appleSpeechAnalyzer
-                        && self.modelIsInstalled(for: language)) ? .ready : .notLoaded
-            }
             self.sttDownloadLanguage = nil
             self.sttLoadProgress = nil
+            if isActiveLanguage {
+                await self.refreshSttState()
+            }
         } catch {
             let msg = error.localizedDescription
             self.lastError = "STT load: \(msg)"
@@ -350,48 +320,19 @@ public final class VoicePipeline {
             self.sttDownloadLanguage = nil
             self.sttLoadProgress = nil
             logger.error(
-                "endpoint STT load failed engine=\(engineId, privacy: .public) language=\(language, privacy: .public): \(msg, privacy: .public)"
+                "Apple Speech setup failed language=\(language, privacy: .public): \(msg, privacy: .public)"
             )
         }
     }
 
     public func cancelSttLoading() async {
         let language = self.sttDownloadLanguage ?? self.activeSttLanguage
-        let engineId = self.preferredSttEngineId(for: language)
-        await self.sttEngine(engineId: engineId, language: language).cancelLoading()
+        await self.recognizer(for: language).cancelLoading()
         self.sttDownloadLanguage = nil
         self.sttLoadProgress = nil
         if language == self.activeSttLanguage {
-            let key = Self.sttReadinessKey(engineId: engineId, language: language)
-            self.sttStatus = self.loadedSttKeys.contains(key)
-                || (engineId != VoiceSttEngineId.appleSpeechAnalyzer
-                    && self.modelIsInstalled(for: language)) ? .ready : .notLoaded
+            await self.refreshSttState()
         }
-    }
-
-    func unloadSttEngine(_ engineId: String) async {
-        await self.sttEngine(engineId: engineId, language: self.activeSttLanguage).cleanup()
-        let unloaded = Self.unloading(
-            engineId: engineId,
-            loadedKeys: self.loadedSttKeys,
-            activeEngineId: self.preferredSttEngineId(for: self.activeSttLanguage),
-            activeStatus: self.sttStatus
-        )
-        self.loadedSttKeys = unloaded.loadedKeys
-        self.sttStatus = unloaded.activeStatus
-    }
-
-    static func unloading(
-        engineId: String,
-        loadedKeys: Set<String>,
-        activeEngineId: String,
-        activeStatus: SttStatus
-    ) -> (loadedKeys: Set<String>, activeStatus: SttStatus) {
-        let prefix = Self.sttReadinessKey(engineId: engineId, language: "")
-        return (
-            loadedKeys.filter { !$0.hasPrefix(prefix) },
-            activeEngineId == engineId ? .notLoaded : activeStatus
-        )
     }
 
     private static func mintTurnId() -> String {
@@ -422,19 +363,9 @@ public final class VoicePipeline {
         }
     }
 
-    private func handleSttFailure(
-        _ message: String,
-        engineId: String,
-        language: String
-    ) {
-        let readinessKey = Self.sttReadinessKey(
-            engineId: engineId,
-            language: language
-        )
-        self.loadedSttKeys.remove(readinessKey)
-        guard self.effectiveSttEngineId == engineId,
-              self.effectiveLanguage == language
-        else { return }
+    private func handleSttFailure(_ message: String, language: String) {
+        self.loadedSttLanguages.remove(language)
+        guard self.effectiveLanguage == language else { return }
         self.sttStatus = .failed(message)
         self.lastError = "STT runtime: \(message)"
         if self.task != nil {

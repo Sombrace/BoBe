@@ -14,10 +14,6 @@ packages:
   Textual:
     url: https://github.com/gonzalezreal/textual
     exactVersion: 0.5.0
-  FluidAudio:
-    url: https://github.com/FluidInference/FluidAudio.git
-    exactVersion: 0.17.7
-    traits: []
 
 settings:
   base:
@@ -74,7 +70,6 @@ targets:
       - target: PairingClient
       - package: Sparkle
       - package: Textual
-      - package: FluidAudio
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bobe.app

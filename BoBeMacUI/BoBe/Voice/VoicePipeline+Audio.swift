@@ -1,5 +1,4 @@
 @preconcurrency import AVFoundation
-import FluidAudio
 import Foundation
 import OSLog
 
@@ -164,7 +163,7 @@ extension VoicePipeline {
         do {
             try await self.activeStt.acceptSamples(processed.samples16k)
         } catch {
-            if case FluidAudioSttError.notLoaded = error {
+            if case .notLoaded = error {
                 logger.debug("stt.acceptSamples_notLoaded_race")
             } else {
                 logger.warning(

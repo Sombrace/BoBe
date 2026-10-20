@@ -5,8 +5,7 @@ use crate::voice::session::VoiceDefaults;
 
 pub(crate) const ENDPOINT_STT_ENGINE: &str = "voice_v1_endpoint_stt";
 pub(crate) const APPLE_SPEECH_ANALYZER_ENGINE: &str = "apple_speech_analyzer";
-pub(crate) const FLUIDAUDIO_PARAKEET_ENGINE: &str = "fluidaudio_parakeet_eou";
-pub(crate) const FLUIDAUDIO_NEMOTRON_ENGINE: &str = "fluidaudio_nemotron";
+pub(crate) const APPLE_SPEECH_SYNTHESIZER_ENGINE: &str = "apple_speech_synthesizer";
 pub(crate) const SERVER_POCKET_ENGINE: &str = "server_pocket";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -156,15 +155,13 @@ impl SpeechPlan {
                 })
         });
         let endpoint_tts = offer.endpoint_tts.iter().find(|engine| {
-            engine.ready
+            engine.id == APPLE_SPEECH_SYNTHESIZER_ENGINE
+                && engine.ready
                 && engine.languages.iter().any(|language| {
                     language == &offer.language
                         || language.split('-').next() == offer.language.split('-').next()
                 })
-                && engine
-                    .voices
-                    .iter()
-                    .any(|voice| matches!(voice.as_str(), "supertonic_f1" | "supertonic_m1"))
+                && engine.voices.first().is_some_and(|voice| !voice.is_empty())
                 && engine
                     .sample_rates
                     .contains(&crate::constants::voice_wire::TTS_OUTPUT_SAMPLE_RATE)
@@ -300,10 +297,7 @@ impl From<SpeechSite> for SpeechBoundaryOwner {
 }
 
 fn is_allowed_endpoint_stt(engine_id: &str) -> bool {
-    matches!(
-        engine_id,
-        APPLE_SPEECH_ANALYZER_ENGINE | FLUIDAUDIO_PARAKEET_ENGINE | FLUIDAUDIO_NEMOTRON_ENGINE
-    )
+    engine_id == APPLE_SPEECH_ANALYZER_ENGINE
 }
 
 fn resolve_site(
@@ -369,7 +363,7 @@ mod tests {
             language: "en".into(),
             playback_rates: vec![24_000],
             endpoint_stt: vec![endpoint_engine(
-                FLUIDAUDIO_PARAKEET_ENGINE,
+                APPLE_SPEECH_ANALYZER_ENGINE,
                 &["en"],
                 true,
                 true,
@@ -377,12 +371,12 @@ mod tests {
                 &[],
             )],
             endpoint_tts: vec![endpoint_engine(
-                "client_supertonic",
+                APPLE_SPEECH_SYNTHESIZER_ENGINE,
                 &["en"],
                 false,
                 false,
                 &[24_000],
-                &["supertonic_f1"],
+                &["com.apple.voice.compact.en-US.Samantha"],
             )],
             audio_uplink: false,
             overrides: SpeechOverrides::default(),
@@ -427,9 +421,7 @@ mod tests {
 
     #[test]
     fn v2_accepts_apple_speech_as_endpoint_only() {
-        let mut offer = offer();
-        offer.endpoint_stt[0].id = APPLE_SPEECH_ANALYZER_ENGINE.into();
-        let plan = resolve(&offer, None, None).unwrap();
+        let plan = resolve(&offer(), None, None).unwrap();
         assert_eq!(plan.stt_site, SpeechSite::Endpoint);
         assert_eq!(plan.stt_engine_id, APPLE_SPEECH_ANALYZER_ENGINE);
         assert_eq!(plan.uplink, SpeechUplink::Transcript);
@@ -438,12 +430,36 @@ mod tests {
 
     #[test]
     fn v2_rejects_unrecognized_endpoint_stt_identity() {
-        let mut offer = offer();
-        offer.endpoint_stt[0].id = "invented_endpoint_stt".into();
-        assert_eq!(
-            resolve(&offer, None, None).unwrap_err(),
-            SpeechPlanError::NoSpeechPath("STT".into())
-        );
+        for engine in ["invented_endpoint_stt", "fluidaudio_parakeet_eou"] {
+            let mut offer = offer();
+            offer.endpoint_stt[0].id = engine.into();
+            assert_eq!(
+                resolve(&offer, None, None).unwrap_err(),
+                SpeechPlanError::NoSpeechPath("STT".into())
+            );
+        }
+    }
+
+    #[test]
+    fn v2_endpoint_tts_uses_the_offered_system_voice() {
+        let plan = resolve(&offer(), None, None).unwrap();
+        assert_eq!(plan.tts_engine_id, APPLE_SPEECH_SYNTHESIZER_ENGINE);
+        assert_eq!(plan.voice_id, "com.apple.voice.compact.en-US.Samantha");
+    }
+
+    #[test]
+    fn v2_ignores_unrecognized_or_voiceless_endpoint_tts() {
+        let mut unknown = offer();
+        unknown.endpoint_tts[0].id = "client_supertonic".into();
+        let mut voiceless = offer();
+        voiceless.endpoint_tts[0].voices = vec![String::new()];
+        for mut offer in [unknown, voiceless] {
+            offer.overrides.tts = SpeechPlacementOverride::Endpoint;
+            assert_eq!(
+                resolve(&offer, None, None).unwrap_err(),
+                SpeechPlanError::NoSpeechPath("TTS".into())
+            );
+        }
     }
 
     #[test]

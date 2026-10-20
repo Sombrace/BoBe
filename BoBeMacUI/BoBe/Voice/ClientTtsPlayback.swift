@@ -165,22 +165,19 @@ extension VoicePipeline {
         self.clientTtsActive = true
         self.clientTtsFirstAudioSent = false
         self.pendingServerListening = false
-        let engine = self.clientTtsEngine
-        let language = self.effectiveLanguage
-        let settings = SettingsStore.shared.settings
-        let voiceId = self.sessionVoicePersona ?? settings?.voicePersona
-        let speed = self.sessionVoiceSpeed ?? settings?.voiceSpeed ?? 1
+        let systemVoice = self.systemVoice
+        let voiceIdentifier = self.sessionSpeechPlan?.voiceId ?? ""
+        let speed = self.sessionVoiceSpeed ?? SettingsStore.shared.settings?.voiceSpeed ?? 1
 
-        self.clientTtsTask = Task { [weak self] in
+        self.clientTtsTask = Task(name: "System voice turn") { [weak self] in
             guard let self else { return }
             while let sentence = await queue.next() {
                 guard !Task.isCancelled, sentence.turnId == turnId else { return }
                 do {
                     let synthesisStart = ContinuousClock.now
-                    let samples = try await engine.synthesize(
+                    let samples = try await systemVoice.synthesize(
                         text: sentence.text,
-                        language: language,
-                        voiceId: voiceId,
+                        voiceIdentifier: voiceIdentifier,
                         speed: speed
                     )
                     guard !Task.isCancelled else { return }
@@ -193,14 +190,11 @@ extension VoicePipeline {
                     }
                     if !self.clientTtsFirstAudioSent {
                         self.clientTtsFirstAudioSent = true
-                        let synthesisMs = synthesisStart.duration(to: .now)
-                            .components.seconds * 1_000
-                            + synthesisStart.duration(to: .now).components.attoseconds
-                                / 1_000_000_000_000_000
+                        let synthesisMs = synthesisStart.duration(to: .now) / .milliseconds(1)
                         await self.sendClient(
                             .ttsPlaybackStarted(
                                 turnId: turnId,
-                                synthesisMs: UInt64(max(0, synthesisMs))
+                                synthesisMs: UInt64(max(0, synthesisMs.rounded()))
                             )
                         )
                     }

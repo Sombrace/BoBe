@@ -12,7 +12,6 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
         .package(url: "https://github.com/gonzalezreal/textual", exact: "0.5.0"),
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7", traits: []),
     ],
     targets: [
         .target(
@@ -40,7 +39,6 @@ let package = Package(
                 "PairingClient",
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "Textual", package: "textual"),
-                .product(name: "FluidAudio", package: "FluidAudio"),
             ],
             path: "BoBe",
             exclude: [

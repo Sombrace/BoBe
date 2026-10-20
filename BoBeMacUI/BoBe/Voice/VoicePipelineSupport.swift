@@ -14,13 +14,13 @@ nonisolated enum VoiceError: Error, CustomStringConvertible {
 }
 
 nonisolated func withVoiceLoadTimeout(
-    seconds: TimeInterval,
+    _ timeout: Duration,
     _ operation: @escaping @Sendable () async throws -> Void
 ) async throws {
     try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { try await operation() }
         group.addTask {
-            try await Task.sleep(for: .seconds(seconds))
+            try await Task.sleep(for: timeout)
             throw VoiceLoadTimeout()
         }
         _ = try await group.next()

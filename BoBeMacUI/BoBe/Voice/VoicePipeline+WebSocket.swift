@@ -135,7 +135,7 @@ extension VoicePipeline {
             }
             guard offered,
                   self.sttLoaded,
-                  plan.sttEngineId == self.effectiveSttEngineId,
+                  plan.sttEngineId == VoiceEngineId.appleSpeechAnalyzer,
                   plan.uplink == .transcript,
                   plan.eouOwner == .endpoint
             else { return false }
@@ -152,11 +152,11 @@ extension VoicePipeline {
                     && engine.voices.contains(plan.voiceId)
             }
             return offered
-                && self.sessionTtsBackend == .clientSupertonic
-                && plan.ttsEngineId == VoiceTtsBackend.clientSupertonic.rawValue
+                && self.sessionTtsBackend == .systemVoice
+                && plan.ttsEngineId == VoiceEngineId.appleSpeechSynthesizer
                 && plan.downlink == .text
         }
-        return plan.ttsEngineId == VoiceTtsBackend.serverPocket.rawValue
+        return plan.ttsEngineId == VoiceEngineId.serverPocket
             && plan.downlink == .audio
     }
 

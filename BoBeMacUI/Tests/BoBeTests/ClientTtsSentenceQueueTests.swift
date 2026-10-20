@@ -2,8 +2,8 @@
 import Foundation
 import Testing
 
-@Suite("Client TTS engine", .serialized)
-struct ClientTtsEngineTests {
+@Suite("Client TTS sentence queue")
+struct ClientTtsSentenceQueueTests {
     @Test
     func boundedSentenceQueuePreservesOrderUnderBackpressure() async throws {
         let queue = ClientTtsSentenceQueue(capacity: 1)
@@ -34,25 +34,5 @@ struct ClientTtsEngineTests {
 
         #expect(!(await secondSend.value))
         #expect(await queue.next() == nil)
-    }
-
-    @Test
-    func realSupertonicSynthesisWhenEnabled() async throws {
-        guard ProcessInfo.processInfo.environment["BOBE_RUN_MODEL_TESTS"] == "1" else {
-            return
-        }
-        let engine = ClientTtsEngine()
-        try await engine.prepare()
-        let started = ContinuousClock.now
-        let samples = try await engine.synthesize(
-            text: "BoBe client speech is ready.",
-            language: "en",
-            voiceId: "af_bella",
-            speed: 1
-        )
-        #expect(samples.count > 24_000 / 2)
-        #expect(samples.contains(where: { $0 != 0 }))
-        #expect(started.duration(to: .now) < .seconds(1))
-        await engine.cleanup()
     }
 }

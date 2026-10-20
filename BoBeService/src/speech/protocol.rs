@@ -206,7 +206,7 @@ mod tests {
     const MAC_OFFER: &str = r#"{
         "language":"en",
         "playback_rates":[24000],
-        "endpoint_stt":[{"id":"parakeet","languages":["en"],"partials":true,"eou":true,"voices":[],"sample_rates":[],"ready":true}],
+        "endpoint_stt":[{"id":"apple_speech_analyzer","languages":["en"],"partials":true,"eou":true,"voices":[],"sample_rates":[],"ready":true}],
         "endpoint_tts":[],
         "audio_uplink":false,
         "overrides":{"stt":"auto","tts":"daemon"},
@@ -218,7 +218,7 @@ mod tests {
         "endpoint_kind":"mac_app",
         "language":"en",
         "playback_rates":[24000],
-        "endpoint_stt":[{"id":"parakeet","languages":["en"],"partials":true,"eou":true,"voices":[],"sample_rates":[],"ready":true}],
+        "endpoint_stt":[{"id":"apple_speech_analyzer","languages":["en"],"partials":true,"eou":true,"voices":[],"sample_rates":[],"ready":true}],
         "endpoint_tts":[],
         "audio_uplink":false,
         "overrides":{"stt":"auto","tts":"daemon"},
@@ -256,7 +256,7 @@ mod tests {
                 assert_eq!(voice_id, None);
                 assert_eq!(speed, None);
                 assert_eq!(speech_offer.language, "en");
-                assert_eq!(speech_offer.endpoint_stt[0].id, "parakeet");
+                assert_eq!(speech_offer.endpoint_stt[0].id, "apple_speech_analyzer");
             }
             other => panic!("expected Hello, got {other:?}"),
         }

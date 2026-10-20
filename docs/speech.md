@@ -2,15 +2,24 @@
 
 Speech is recognized and synthesized on the owner's hardware, and raw audio is
 not stored. Models download from their publishers on first use and are not
-part of BoBe's source or releases.
+part of BoBe's source or releases. On the Mac, macOS supplies the recognizer
+and the voices for languages other than English.
 
 | Surface | Recognition | Synthesis |
 |---|---|---|
-| Mac app | Parakeet Realtime EOU for English, Nemotron 3.5 for other languages, Silero VAD | The daemon's Pocket TTS, streamed as Opus; Supertonic-3 in the app is an experimental option for other languages |
+| Mac app | Apple Speech: `SpeechTranscriber` where macOS supports the language, otherwise `DictationTranscriber` (Greek) | The daemon's Pocket TTS for English, streamed as Opus; the Mac's best system voice for other languages |
 | Daemon (headless, physical body) | sherpa-onnx streaming Zipformer, English | Pocket TTS, English |
 
-English needs about 600 MB; each other language adds about 0.7 GB. The daemon
-runs Pocket TTS natively through `ptts` with no Python or model server, and
+macOS downloads, stores and updates the speech recognition model for each
+language through `AssetInventory`, and BoBe reserves the one it listens with.
+BoBe ends a turn when you pause for the chosen pause sensitivity (Tight
+400 ms, Balanced 800 ms, Patient 1.5 s), then finalizes that utterance before
+sending it. When the English model is still downloading, the daemon's English
+recognizer hears you instead; other languages wait for the download. Languages
+other than English are spoken with the best installed system voice: Premium,
+then Enhanced, then the default. Owners can add better voices in System
+Settings › Accessibility. Pocket TTS needs about 170 MB. The daemon runs Pocket
+TTS natively through `ptts` with no Python or model server, and
 `BoBeService/src/voice/install_artifacts.rs` pins every model file's SHA-256.
 Building the daemon needs a C++ compiler and libclang. Try a voice without a
 provider with `bobe voice preview` ([command line](cli.md#working-with-bobe)).
@@ -23,16 +32,11 @@ Each license applies to its model, not to BoBe's code.
 |---|---|---|---|
 | Pocket TTS, English b6369a24 generation, Q8 GGUF | Daemon voice | CC BY 4.0, Kyutai | Third-party conversion [`davencyw/pocket-tts-ptts`](https://huggingface.co/davencyw/pocket-tts-ptts) at a pinned revision, of [`kyutai/pocket-tts-without-voice-cloning`](https://huggingface.co/kyutai/pocket-tts-without-voice-cloning) |
 | Voices Alba; Azelma, Eponine, Fantine; Javert, Marius | Daemon voice presets | CC BY 4.0 (Alba MacKenna); CC BY 4.0 (CSTR VCTK corpus); CC0 (Kyutai voice donations) | [`kyutai/tts-voices`](https://huggingface.co/kyutai/tts-voices) |
-| Parakeet Realtime EOU 120M, Core ML | Mac English recognition | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | [`FluidInference/parakeet-realtime-eou-120m-coreml`](https://huggingface.co/FluidInference/parakeet-realtime-eou-120m-coreml) |
-| Nemotron 3.5 ASR Streaming Multilingual 0.6B, Core ML | Mac recognition, other languages | [OpenMDW-1.1](https://openmdw.ai/license/1-1/) | [`FluidInference/Nemotron-3.5-ASR-Streaming-Multilingual-0.6b-CoreML`](https://huggingface.co/FluidInference/Nemotron-3.5-ASR-Streaming-Multilingual-0.6b-CoreML) |
-| Silero VAD, Core ML | Mac voice activity detection | MIT | [`FluidInference/silero-vad-coreml`](https://huggingface.co/FluidInference/silero-vad-coreml) |
-| Supertonic-3, Core ML | Experimental Mac voice | OpenRAIL-M, with use restrictions | [`FluidInference/supertonic-3-coreml`](https://huggingface.co/FluidInference/supertonic-3-coreml), from [`Supertone/supertonic-3`](https://huggingface.co/Supertone/supertonic-3) |
 | Streaming Zipformer English 20M | Daemon recognition | Apache-2.0 | [sherpa-onnx ASR models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) |
 
 The Pocket TTS pack installs a `NOTICE.txt` with its attribution; keep it when
 redistributing the weights or voice embeddings. Cosette (Expresso) and Jean
 (EARS) are excluded because their recordings are licensed for noncommercial use
-only; do not restore them from a model mirror. Redistributing Parakeet requires
-NVIDIA's notice, "Licensed by NVIDIA Corporation under the NVIDIA Open Model
-License", and a copy of that license. Supertonic-3's license forbids the uses
-listed in its OpenRAIL-M restrictions.
+only; do not restore them from a model mirror. Apple's speech recognition
+models and system voices are part of macOS and are covered by its license;
+BoBe neither ships nor redistributes them.

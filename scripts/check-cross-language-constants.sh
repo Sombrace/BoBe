@@ -116,12 +116,21 @@ for label, rust_name, swift_name in (
     ("voice WS subprotocol v2", "SUBPROTOCOL_V2", "subprotocolV2"),
 ):
     contract.expect(label, rust_string(rust_name, module="voice_wire"), swift_string("VoiceWire", swift_name))
-for label, rust_name, swift_name in (
-    ("Apple Speech endpoint engine", "APPLE_SPEECH_ANALYZER_ENGINE", "appleSpeechAnalyzer"),
-    ("FluidAudio Parakeet endpoint engine", "FLUIDAUDIO_PARAKEET_ENGINE", "fluidAudioParakeet"),
-    ("FluidAudio Nemotron endpoint engine", "FLUIDAUDIO_NEMOTRON_ENGINE", "fluidAudioNemotron"),
-):
-    contract.expect(label, rust_string(rust_name, rust_speech_plan), swift_string("VoiceSttEngineId", swift_name))
+contract.expect(
+    "Apple Speech endpoint recognizer",
+    rust_string("APPLE_SPEECH_ANALYZER_ENGINE", rust_speech_plan),
+    swift_string("VoiceEngineId", "appleSpeechAnalyzer"),
+)
+contract.expect(
+    "Apple system voice endpoint synthesizer",
+    rust_string("APPLE_SPEECH_SYNTHESIZER_ENGINE", rust_speech_plan),
+    swift_string("VoiceEngineId", "appleSpeechSynthesizer"),
+)
+contract.expect(
+    "daemon Pocket TTS engine",
+    rust_string("SERVER_POCKET_ENGINE", rust_speech_plan),
+    swift_string("VoiceEngineId", "serverPocket"),
+)
 
 rust_voices = quoted(
     "Rust Pocket TTS voices",

@@ -157,8 +157,6 @@ struct VoiceSessionSettingsTests {
         language: "en",
         persona: "alba",
         speed: 1,
-        ttsBackend: .serverPocket,
-        sttPreference: .automatic,
         remoteAudioConsent: false
     )
 
@@ -166,16 +164,12 @@ struct VoiceSessionSettingsTests {
         language: String? = nil,
         persona: String? = nil,
         speed: Float? = nil,
-        ttsBackend: VoiceTtsBackend? = nil,
-        sttPreference: VoiceSttPreference? = nil,
         remoteAudioConsent: Bool? = nil
     ) -> VoiceSessionSettings {
         VoiceSessionSettings(
             language: language ?? self.negotiated.language,
             persona: persona ?? self.negotiated.persona,
             speed: speed ?? self.negotiated.speed,
-            ttsBackend: ttsBackend ?? self.negotiated.ttsBackend,
-            sttPreference: sttPreference ?? self.negotiated.sttPreference,
             remoteAudioConsent: remoteAudioConsent ?? self.negotiated.remoteAudioConsent
         )
     }
@@ -186,8 +180,6 @@ struct VoiceSessionSettingsTests {
             self.changing(language: "es"),
             self.changing(persona: "marius"),
             self.changing(speed: 1.25),
-            self.changing(ttsBackend: .clientSupertonic),
-            self.changing(sttPreference: .fluidAudio),
             self.changing(remoteAudioConsent: true),
         ]
         for desired in changes {
@@ -202,8 +194,6 @@ struct VoiceSessionSettingsTests {
             language: "en",
             persona: nil,
             speed: nil,
-            ttsBackend: .serverPocket,
-            sttPreference: .automatic,
             remoteAudioConsent: false
         )
         let adopted = beforeSettingsLoaded.adoptingDaemonDefaults(from: self.negotiated)

@@ -7,12 +7,16 @@ enum PocketVoices {
         slot.capitalized
     }
 
+    static func speaks(_ language: String) -> Bool {
+        VoiceTtsBackend.languageKey(language) == "en"
+    }
+
     static func language(ofSlot slot: String) -> String? {
         self.allSlots.contains(slot) ? "en" : nil
     }
 
     static func slot(for language: String, like current: String) -> String? {
-        guard VoiceTtsBackend.languageKey(language) == "en" else { return nil }
+        guard self.speaks(language) else { return nil }
         return self.allSlots.contains(current) ? current : VoiceWire.defaultPersona
     }
 }

@@ -98,15 +98,9 @@ extension VoicePipeline {
 
     private func applySessionSettings(_ settings: VoiceSessionSettings) {
         self.sessionSttLanguage = settings.language
-        self.sessionSttEngineId = self.preferredSttEngineId(for: settings.language)
         self.sessionTtsBackend = settings.ttsBackend
         self.sessionVoicePersona = settings.persona
         self.sessionVoiceSpeed = settings.speed
-        if settings.language != "en" {
-            let nemotron = self.nemotronStt
-            let language = settings.language
-            Task { await nemotron.setLanguage(language) }
-        }
     }
 
     private func isCurrent(_ socket: URLSessionWebSocketTask, _ generation: UInt64) -> Bool {
@@ -119,17 +113,6 @@ extension VoicePipeline {
         settings: VoiceSessionSettings
     ) async {
         guard self.isCurrent(socket, generation) else { return }
-        if settings.ttsBackend == .clientSupertonic {
-            do {
-                try await self.clientTtsEngine.prepare()
-            } catch {
-                guard self.isCurrent(socket, generation) else { return }
-                let reason = "Supertonic prepare: \(error.localizedDescription)"
-                self.lastError = reason
-                self.tearDownConnection(finalState: .failed(reason), sendAbort: false)
-                return
-            }
-        }
         let warmed = await self.prewarm()
         guard self.isCurrent(socket, generation) else { return }
         guard warmed else {
@@ -220,8 +203,9 @@ extension VoicePipeline {
     private func makeSpeechOffer(settings: VoiceSessionSettings) -> SpeechOfferWire {
         Self.speechOffer(
             settings: settings,
-            endpointSttEngineId: settings.sttPreference.usesEndpointEngine && self.sttLoaded
-                ? self.effectiveSttEngineId
+            recognizerReady: self.sttLoaded,
+            systemVoice: settings.ttsBackend == .systemVoice
+                ? SystemVoiceChoice.best(for: settings.language)?.identifier
                 : nil,
             endpointId: SurfaceIdentity.current(),
             daemonIsNonLoopback: !DaemonConfig.endpoint.isLoopbackRuntime
@@ -230,31 +214,32 @@ extension VoicePipeline {
 
     static func speechOffer(
         settings: VoiceSessionSettings,
-        endpointSttEngineId: String?,
+        recognizerReady: Bool,
+        systemVoice: String?,
         endpointId: UUID,
         daemonIsNonLoopback: Bool
     ) -> SpeechOfferWire {
         let language = settings.language
-        let endpointStt = endpointSttEngineId.map { engineId in
+        let endpointStt = recognizerReady ? [SpeechEngineOfferWire(
+            id: VoiceEngineId.appleSpeechAnalyzer,
+            languages: [language],
+            partials: true,
+            eou: true,
+            voices: [],
+            sampleRates: [],
+            ready: true
+        )] : []
+        let endpointTts = systemVoice.map { voice in
             [SpeechEngineOfferWire(
-                id: engineId,
+                id: VoiceEngineId.appleSpeechSynthesizer,
                 languages: [language],
-                partials: true,
-                eou: true,
-                voices: [],
-                sampleRates: [],
+                partials: false,
+                eou: false,
+                voices: [voice],
+                sampleRates: [UInt32(VoiceWire.ttsOutputSampleRate)],
                 ready: true
             )]
         } ?? []
-        let endpointTts = settings.ttsBackend == .clientSupertonic ? [SpeechEngineOfferWire(
-            id: VoiceTtsBackend.clientSupertonic.rawValue,
-            languages: [language],
-            partials: false,
-            eou: false,
-            voices: [Self.supertonicVoiceId(for: settings.persona)],
-            sampleRates: [UInt32(VoiceWire.ttsOutputSampleRate)],
-            ready: true
-        )] : []
         return SpeechOfferWire(
             endpointId: endpointId,
             endpointKind: SpeechOfferWire.macEndpointKind,
@@ -262,21 +247,10 @@ extension VoicePipeline {
             playbackRates: [UInt32(VoiceWire.ttsOutputSampleRate)],
             endpointStt: endpointStt,
             endpointTts: endpointTts,
-            audioUplink: settings.sttPreference.allowsDaemonRecognition,
-            overrides: SpeechOverridesWire(
-                stt: settings.sttPreference.placement,
-                tts: settings.ttsBackend == .clientSupertonic ? .endpoint : .daemon
-            ),
+            audioUplink: VoiceTtsBackend.languageKey(language) == "en",
             daemonIsNonLoopback: daemonIsNonLoopback,
             remoteAudioConsent: settings.remoteAudioConsent
         )
-    }
-
-    static func supertonicVoiceId(for canonicalVoiceId: String?) -> String {
-        let normalized = canonicalVoiceId?.lowercased() ?? ""
-        return normalized.hasPrefix("am_") || normalized.hasPrefix("bm_")
-            ? "supertonic_m1"
-            : "supertonic_f1"
     }
 
     public func disconnect() {
@@ -315,7 +289,6 @@ extension VoicePipeline {
         }
         self.tearDownAudio()
         self.sessionSttLanguage = nil
-        self.sessionSttEngineId = nil
         self.sessionTtsBackend = nil
         self.sessionVoicePersona = nil
         self.sessionVoiceSpeed = nil

@@ -16,12 +16,6 @@ enum SpeechBoundaryOwnerWire: String, Codable, Sendable {
     case daemon
 }
 
-enum SpeechPlacementOverrideWire: String, Codable, Sendable {
-    case auto
-    case endpoint
-    case daemon
-}
-
 struct SpeechEngineOfferWire: Codable, Sendable {
     let id: String
     let languages: [String]
@@ -37,11 +31,6 @@ struct SpeechEngineOfferWire: Codable, Sendable {
     }
 }
 
-struct SpeechOverridesWire: Codable, Sendable {
-    let stt: SpeechPlacementOverrideWire
-    let tts: SpeechPlacementOverrideWire
-}
-
 struct SpeechOfferWire: Codable, Sendable {
     let endpointId: UUID
     let endpointKind: String
@@ -50,14 +39,13 @@ struct SpeechOfferWire: Codable, Sendable {
     let endpointStt: [SpeechEngineOfferWire]
     let endpointTts: [SpeechEngineOfferWire]
     let audioUplink: Bool
-    let overrides: SpeechOverridesWire
     let daemonIsNonLoopback: Bool
     let remoteAudioConsent: Bool
 
     static let macEndpointKind = "mac_app"
 
     enum CodingKeys: String, CodingKey {
-        case language, overrides
+        case language
         case endpointId = "endpoint_id"
         case endpointKind = "endpoint_kind"
         case playbackRates = "playback_rates"

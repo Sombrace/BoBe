@@ -4,8 +4,6 @@ struct VoicePanel: View {
     @Environment(VoicePipeline.self) private var pipeline
     @Environment(SettingsStore.self) private var store
     @Environment(ExpertMode.self) private var expertMode
-    @State private var ttsPreference = VoiceTtsPreference.shared
-    @State private var sttPreference = VoiceSttPreferenceStore.shared
     @State private var remoteSpeechConsent = RemoteSpeechConsent.shared
     @State private var installer = VoiceModelInstaller.shared
     @State private var installError: String?
@@ -95,9 +93,16 @@ struct VoicePanel: View {
                     )
                 }
 
-                if let advice = self.languageAdvice {
-                    VoiceLanguageAdviceStrip(message: self.adviceMessage(advice)) {
-                        self.apply(advice)
+                if let slot = self.pocketVoiceAdvice {
+                    VoiceLanguageAdviceStrip(
+                        message: L10n.tr(
+                            "settings.voice.advice.persona_format",
+                            VoiceLanguages.displayName(for: self.voiceLanguage)
+                        )
+                    ) {
+                        withAnimation(BobeMotion.standard) {
+                            self.store.binding(\.voicePersona, fallback: VoiceWire.defaultPersona).wrappedValue = slot
+                        }
                     }
                     .transition(.bobeRise)
                 }
@@ -114,22 +119,8 @@ struct VoicePanel: View {
                     )
                 }
 
-                SettingsRow(
-                    label: L10n.tr("settings.voice.persona"),
-                    description: L10n.tr("settings.voice.persona.description")
-                ) {
-                    BobeMenuPicker(
-                        selection: Binding(
-                            get: {
-                                let saved = self.store.settings?.voicePersona ?? VoiceWire.defaultPersona
-                                return PocketVoices.allSlots.contains(saved) ? saved : VoiceWire.defaultPersona
-                            },
-                            set: { self.store.binding(\.voicePersona, fallback: VoiceWire.defaultPersona).wrappedValue = $0 }
-                        ),
-                        options: PocketVoices.allSlots,
-                        label: PocketVoices.displayName(for:),
-                        width: 240
-                    )
+                if self.ttsBackend == .serverPocket {
+                    self.personaRow
                 }
 
                 if !DaemonConfig.endpoint.isLoopbackRuntime {
@@ -143,49 +134,6 @@ struct VoicePanel: View {
                                 set: { self.remoteSpeechConsent.setEnabled($0) }
                             ),
                             accessibilityLabel: L10n.tr("settings.voice.remote_stt_consent")
-                        )
-                    }
-                }
-
-                if self.expertMode.isEnabled {
-                    SettingsRow(
-                        label: L10n.tr("settings.voice.stt_preference"),
-                        description: L10n.tr("settings.voice.stt_preference.description")
-                    ) {
-                        BobeMenuPicker(
-                            selection: Binding(
-                                get: { self.sttPreference.preference.rawValue },
-                                set: { raw in
-                                    guard let preference = VoiceSttPreference(rawValue: raw) else {
-                                        return
-                                    }
-                                    self.sttPreference.setPreference(preference)
-                                    self.pipeline.refreshSttPreferenceState()
-                                }
-                            ),
-                            options: VoiceSttPreference.allCases.map(\.rawValue),
-                            label: {
-                                VoiceSttPreference(rawValue: $0)?.label ?? $0
-                            },
-                            width: 240
-                        )
-                    }
-
-                    SettingsRow(
-                        label: L10n.tr("settings.voice.tts_backend"),
-                        description: L10n.tr("settings.voice.tts_backend.description")
-                    ) {
-                        BobeMenuPicker(
-                            selection: Binding(
-                                get: { self.ttsPreference.backend.rawValue },
-                                set: { raw in
-                                    guard let backend = VoiceTtsBackend(rawValue: raw) else { return }
-                                    self.ttsPreference.setBackend(backend)
-                                }
-                            ),
-                            options: VoiceTtsBackend.allCases.map(\.rawValue),
-                            label: { self.backendLabel($0) },
-                            width: 240
                         )
                     }
                 }
@@ -232,59 +180,49 @@ struct VoicePanel: View {
             description: self.modelsSummary
         ) {
             VStack(alignment: .leading, spacing: 14) {
-                if self.expertMode.isEnabled,
-                   self.ttsPreference.backend == .clientSupertonic {
+                switch self.ttsBackend {
+                case .serverPocket:
                     VoiceModelCard(
-                        name: L10n.tr("settings.voice.model.supertonic.name"),
-                        purpose: L10n.tr("settings.voice.model.supertonic.purpose"),
-                        sizeHint: L10n.tr("settings.voice.model.supertonic.size"),
-                        location: VoiceModel.supertonicTts.installPath,
-                        status: self.installer.status(of: .supertonicTts),
-                        onInstall: { await self.install(.supertonicTts) },
+                        name: self.expertMode.isEnabled
+                            ? L10n.tr("settings.voice.model.tts.name_expert")
+                            : L10n.tr("settings.voice.model.tts.name"),
+                        purpose: L10n.tr("settings.voice.model.tts.purpose"),
+                        sizeHint: L10n.tr("settings.voice.model.tts.size"),
+                        location: self.expertMode.isEnabled && DaemonConfig.endpoint.daemonFilesystemIsLocalToApp
+                            ? VoiceModel.pocketTts.installPath
+                            : nil,
+                        status: self.installer.status(of: .pocketTts),
+                        onInstall: { await self.install(.pocketTts) },
+                        onUninstall: nil
+                    )
+                case .systemVoice:
+                    VoiceModelCard(
+                        name: L10n.tr(
+                            "settings.voice.model.system_voice.name_format",
+                            self.installer.systemVoice?.name ?? VoiceLanguages.displayName(for: self.voiceLanguage)
+                        ),
+                        purpose: L10n.tr("settings.voice.model.system_voice.purpose"),
+                        sizeHint: L10n.tr("settings.voice.model.managed_by_macos"),
+                        location: nil,
+                        status: self.installer.status(of: .systemVoice),
+                        onInstall: nil,
                         onUninstall: nil
                     )
                 }
 
                 VoiceModelCard(
                     name: self.expertMode.isEnabled
-                        ? L10n.tr("settings.voice.model.tts.name_expert")
-                        : L10n.tr("settings.voice.model.tts.name"),
-                    purpose: L10n.tr("settings.voice.model.tts.purpose"),
-                    sizeHint: L10n.tr("settings.voice.model.tts.size"),
-                    location: self.expertMode.isEnabled && DaemonConfig.endpoint.daemonFilesystemIsLocalToApp
-                        ? VoiceModel.pocketTts.installPath
-                        : nil,
-                    status: self.installer.status(of: .pocketTts),
-                    onInstall: { await self.install(.pocketTts) },
+                        ? L10n.tr(
+                            "settings.voice.model.stt.name_expert_format",
+                            VoiceLanguages.displayName(for: self.voiceLanguage)
+                        )
+                        : L10n.tr("settings.voice.model.stt.name"),
+                    purpose: L10n.tr("settings.voice.model.stt.purpose"),
+                    sizeHint: L10n.tr("settings.voice.model.managed_by_macos"),
+                    location: nil,
+                    status: self.installer.status(of: .speechRecognition),
+                    onInstall: { await self.install(.speechRecognition) },
                     onUninstall: nil
-                )
-
-                VoiceModelCard(
-                    name: self.expertMode.isEnabled
-                        ? L10n.tr("settings.voice.model.stt_en.name_expert")
-                        : L10n.tr("settings.voice.model.stt_en.name"),
-                    purpose: L10n.tr("settings.voice.model.stt_en.purpose"),
-                    sizeHint: L10n.tr("settings.voice.model.stt_en.size"),
-                    location: self.expertMode.isEnabled
-                        ? VoiceModel.englishStt.installPath
-                        : nil,
-                    status: self.installer.status(of: .englishStt),
-                    onInstall: { await self.install(.englishStt) },
-                    onUninstall: { await self.installer.uninstall(.englishStt) }
-                )
-
-                VoiceModelCard(
-                    name: self.expertMode.isEnabled
-                        ? L10n.tr("settings.voice.model.stt_multi.name_expert")
-                        : L10n.tr("settings.voice.model.stt_multi.name"),
-                    purpose: L10n.tr("settings.voice.model.stt_multi.purpose"),
-                    sizeHint: L10n.tr("settings.voice.model.stt_multi.size"),
-                    location: self.expertMode.isEnabled
-                        ? VoiceModel.multilingualStt.installPath
-                        : nil,
-                    status: self.installer.status(of: .multilingualStt),
-                    onInstall: { await self.install(.multilingualStt) },
-                    onUninstall: { await self.installer.uninstall(.multilingualStt) }
                 )
 
                 if self.expertMode.isEnabled {
@@ -342,47 +280,35 @@ struct VoicePanel: View {
         self.store.settings?.voiceSttLanguage ?? "en"
     }
 
-    private var languageAdvice: VoiceLanguageAdvice? {
-        VoiceLanguageAdvice.advice(
+    private var ttsBackend: VoiceTtsBackend {
+        .best(for: self.voiceLanguage)
+    }
+
+    private var pocketVoiceAdvice: String? {
+        VoiceLanguageAdvice.pocketVoice(
             language: self.voiceLanguage,
-            backend: self.ttsPreference.backend,
             persona: self.store.settings?.voicePersona ?? VoiceWire.defaultPersona
         )
     }
 
-    private func adviceMessage(_ advice: VoiceLanguageAdvice) -> String {
-        let language = VoiceLanguages.displayName(for: self.voiceLanguage)
-        switch advice {
-        case let .engine(best):
-            return L10n.tr(
-                "settings.voice.advice.engine_format",
-                self.ttsPreference.backend.shortName, language, best.shortName
+    private var personaRow: some View {
+        SettingsRow(
+            label: L10n.tr("settings.voice.persona"),
+            description: L10n.tr("settings.voice.persona.description")
+        ) {
+            BobeMenuPicker(
+                selection: Binding(
+                    get: {
+                        let saved = self.store.settings?.voicePersona ?? VoiceWire.defaultPersona
+                        return PocketVoices.allSlots.contains(saved) ? saved : VoiceWire.defaultPersona
+                    },
+                    set: { self.store.binding(\.voicePersona, fallback: VoiceWire.defaultPersona).wrappedValue = $0 }
+                ),
+                options: PocketVoices.allSlots,
+                label: PocketVoices.displayName(for:),
+                width: 240
             )
-        case .persona:
-            return L10n.tr("settings.voice.advice.persona_format", language)
         }
-    }
-
-    private func apply(_ advice: VoiceLanguageAdvice) {
-        withAnimation(BobeMotion.standard) {
-            switch advice {
-            case let .engine(backend):
-                self.ttsPreference.setBackend(backend)
-            case let .persona(slot):
-                self.store.binding(\.voicePersona, fallback: VoiceWire.defaultPersona).wrappedValue = slot
-            }
-        }
-    }
-
-    private func backendLabel(_ raw: String) -> String {
-        guard let backend = VoiceTtsBackend(rawValue: raw) else { return raw }
-        let others = VoiceTtsBackend.allCases.filter { $0 != backend }
-        let onlyChoice = backend.speaks(self.voiceLanguage) && !others.contains { $0.speaks(self.voiceLanguage) }
-        guard backend == VoiceTtsBackend.best(for: self.voiceLanguage), onlyChoice else { return backend.label }
-        return L10n.tr(
-            "settings.voice.tts_backend.best_for_format",
-            backend.label, VoiceLanguages.displayName(for: self.voiceLanguage)
-        )
     }
 
     private func loadAll() async {

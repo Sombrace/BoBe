@@ -13,26 +13,9 @@ struct VoiceWsEndpointTests {
 
     @Suite("VoiceSttLoadProgress")
     struct VoiceSttLoadProgressTests {
-        @Test
-        func percentRoundsAndClamps() {
-            #expect(
-                VoiceSttLoadProgress(
-                    fractionCompleted: 0.426,
-                    phase: .downloading(completedFiles: 2, totalFiles: 5)
-                ).percent == 43
-            )
-            #expect(
-                VoiceSttLoadProgress(
-                    fractionCompleted: -1,
-                    phase: .listing
-                ).percent == 0
-            )
-            #expect(
-                VoiceSttLoadProgress(
-                    fractionCompleted: 2,
-                    phase: .compiling(modelName: "encoder")
-                ).percent == 100
-            )
+        @Test(arguments: [(0.426, 43), (-1, 0), (2, 100)])
+        func percentRoundsAndClamps(fraction: Double, percent: Int) {
+            #expect(VoiceSttLoadProgress(fractionCompleted: fraction).percent == percent)
         }
     }
 
@@ -95,117 +78,86 @@ struct VoiceWsEndpointTests {
         }
     }
 
-    @Suite("Apple Speech transcript normalization")
-    struct AppleSpeechTranscriptTests {
+    @Suite("Speech pause")
+    struct SpeechPauseTests {
+        private static let frame = SpeechPause.frameSamples
+
+        private static func tone(frames: Int, amplitude: Float = 0.2) -> [Float] {
+            (0 ..< frames * Self.frame).map { amplitude * sin(Float($0) * 0.2) }
+        }
+
+        private static func silence(frames: Int, level: Float = 0) -> [Float] {
+            [Float](repeating: level, count: frames * Self.frame)
+        }
+
+        @Test
+        func silenceAloneNeverEndsATurn() {
+            var pause = SpeechPause()
+            pause.observe(Self.silence(frames: 200))
+            #expect(!pause.heardSpeech)
+            #expect(!pause.reached(.milliseconds(400)))
+        }
+
+        @Test(arguments: [400, 800, 1_500])
+        func aPauseAfterSpeechEndsTheTurnAtTheChosenSensitivity(_ milliseconds: Int) {
+            var pause = SpeechPause()
+            pause.observe(Self.tone(frames: 50))
+            let frames = milliseconds / 20
+            pause.observe(Self.silence(frames: frames - 1))
+            #expect(!pause.reached(.milliseconds(milliseconds)))
+            pause.observe(Self.silence(frames: 1))
+            #expect(pause.reached(.milliseconds(milliseconds)))
+        }
+
+        @Test
+        func speechResumingBeforeThePauseKeepsTheTurnOpen() {
+            var pause = SpeechPause()
+            pause.observe(Self.tone(frames: 20))
+            pause.observe(Self.silence(frames: 30))
+            pause.observe(Self.tone(frames: 5))
+            pause.observe(Self.silence(frames: 30))
+            #expect(!pause.reached(.milliseconds(800)))
+        }
+
+        @Test
+        func steadyRoomNoiseCountsAsSilence() {
+            var pause = SpeechPause()
+            pause.observe(Self.tone(frames: 40, amplitude: 0.3))
+            pause.observe(Self.tone(frames: 60, amplitude: 0.004))
+            #expect(pause.reached(.milliseconds(800)))
+        }
+
+        @Test
+        func partialFramesCarryOverBetweenChunks() {
+            var pause = SpeechPause()
+            let speech = Self.tone(frames: 4)
+            pause.observe(Array(speech[..<(Self.frame / 2)]))
+            #expect(!pause.heardSpeech)
+            pause.observe(Array(speech[(Self.frame / 2)...]))
+            #expect(pause.heardSpeech)
+        }
+    }
+
+    @Suite("Speech recognition locale")
+    struct SpeechRecognitionLocaleTests {
+        private static let supported = ["en_GB", "en_US", "es_ES", "es_MX", "zh_CN", "zh_TW", "el_GR"].map(Locale.init)
+
         @Test(arguments: [
-            ("", "hello", "hello"),
-            ("hello", "", "hello"),
-            ("hello", "hello world", "hello world"),
-            ("hello world", "world", "hello world"),
-            ("hello", "world", "hello world"),
-            ("  hello  ", "  world  ", "hello world"),
+            ("en", "en_US"),
+            ("en-GB", "en_GB"),
+            ("es", "es_ES"),
+            ("es-MX", "es_MX"),
+            ("zh", "zh_CN"),
+            ("el", "el_GR"),
         ])
-        func mergesCommittedAndVolatileText(
-            committed: String,
-            candidate: String,
-            expected: String
-        ) {
-            #expect(mergeSpeechTranscript(committed: committed, candidate: candidate) == expected)
-        }
-    }
-
-    @Suite("Endpoint STT preference")
-    struct EndpointSttPreferenceTests {
-        @Test
-        func daemonPreferenceForcesDaemonPlacement() {
-            #expect(VoiceSttPreference.daemon.placement == .daemon)
-            #expect(VoiceSttPreference.daemon.allowsDaemonRecognition)
+        func choosesTheLanguagesHomeRegion(requested: String, expected: String) {
+            let chosen = SpeechRecognitionModule.closest(to: Locale(identifier: requested), in: Self.supported)
+            #expect(chosen?.identifier == expected)
         }
 
         @Test
-        func automaticPreferenceLetsTheDaemonChoose() {
-            #expect(VoiceSttPreference.automatic.placement == .auto)
-            #expect(VoiceSttPreference.automatic.usesEndpointEngine)
-            #expect(VoiceSttPreference.automatic.allowsDaemonRecognition)
-        }
-
-        @Test(arguments: [VoiceSttPreference.appleSpeech, VoiceSttPreference.fluidAudio])
-        func explicitOnDeviceRecognitionNeverUploadsAudio(_ preference: VoiceSttPreference) {
-            #expect(preference.placement == .endpoint)
-            #expect(preference.usesEndpointEngine)
-            #expect(!preference.allowsDaemonRecognition)
-        }
-
-        @Test
-        func daemonPreferenceRequiresDaemonReadiness() {
-            #expect(!VoiceSttPreference.daemon.usesEndpointEngine)
-            #expect(!VoiceSttPreference.daemon.speechRecognitionReady(
-                endpointReady: true,
-                daemonReady: false
-            ))
-            #expect(VoiceSttPreference.daemon.speechRecognitionReady(
-                endpointReady: false,
-                daemonReady: true
-            ))
-        }
-
-        @Test
-        func automaticPreferenceCanFallBackToDaemon() {
-            #expect(VoiceSttPreference.automatic.speechRecognitionReady(
-                endpointReady: false,
-                daemonReady: true
-            ))
-            #expect(!VoiceSttPreference.automatic.speechRecognitionReady(
-                endpointReady: false,
-                daemonReady: false
-            ))
-        }
-
-        @Test(arguments: [VoiceSttPreference.appleSpeech, VoiceSttPreference.fluidAudio])
-        func explicitOnDeviceRecognitionNeedsItsOwnEngine(_ preference: VoiceSttPreference) {
-            #expect(!preference.speechRecognitionReady(
-                endpointReady: false,
-                daemonReady: true
-            ))
-            #expect(preference.speechRecognitionReady(
-                endpointReady: true,
-                daemonReady: false
-            ))
-        }
-    }
-
-    @Suite("Shared recognition models")
-    struct SharedRecognitionModelTests {
-        @Test
-        func uninstallingMultilingualClearsEveryNemotronLanguage() {
-            let nemotron = VoiceSttEngineId.fluidAudioNemotron
-            let parakeet = VoiceSttEngineId.fluidAudioParakeet
-            let loaded: Set = [
-                VoicePipeline.sttReadinessKey(engineId: nemotron, language: "es"),
-                VoicePipeline.sttReadinessKey(engineId: nemotron, language: "zh"),
-                VoicePipeline.sttReadinessKey(engineId: parakeet, language: "en"),
-            ]
-            let unloaded = VoicePipeline.unloading(
-                engineId: nemotron,
-                loadedKeys: loaded,
-                activeEngineId: nemotron,
-                activeStatus: .ready
-            )
-            #expect(unloaded.loadedKeys == [VoicePipeline.sttReadinessKey(engineId: parakeet, language: "en")])
-            #expect(unloaded.activeStatus == .notLoaded)
-        }
-
-        @Test
-        func uninstallingAnotherModelLeavesTheActiveRecognizerReady() {
-            let apple = VoiceSttEngineId.appleSpeechAnalyzer
-            let unloaded = VoicePipeline.unloading(
-                engineId: VoiceSttEngineId.fluidAudioNemotron,
-                loadedKeys: [VoicePipeline.sttReadinessKey(engineId: apple, language: "es")],
-                activeEngineId: apple,
-                activeStatus: .ready
-            )
-            #expect(unloaded.loadedKeys == [VoicePipeline.sttReadinessKey(engineId: apple, language: "es")])
-            #expect(unloaded.activeStatus == .ready)
+        func anUnlistedLanguageHasNoRecognizer() {
+            #expect(SpeechRecognitionModule.closest(to: Locale(identifier: "ko"), in: Self.supported) == nil)
         }
     }
 

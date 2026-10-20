@@ -34,34 +34,21 @@ def identity(url):
     return source(url).rsplit("/", 1)[-1]
 
 
-def traits(listing):
-    if listing is None:
-        return None
-    return tuple(sorted(item.strip().strip("\"'") for item in listing.split(",") if item.strip()))
-
-
-def shown(enabled):
-    return "default" if enabled is None else "[" + ", ".join(enabled) + "]"
-
-
-def add(pins, origin, url, version, enabled=None):
+def add(pins, origin, url, version):
     name = identity(url)
     if name in pins:
         fail(f"{origin} declares {name} twice")
-    pins[name] = (source(url), version, enabled)
+    pins[name] = (source(url), version)
 
 
 swiftpm = {}
 package = read(PACKAGE)
 declarations = re.findall(r"\.package\(", package)
-exact = re.findall(
-    r'\.package\(\s*url:\s*"([^"]+)"\s*,\s*exact:\s*"([^"]+)"\s*(,\s*traits:\s*\[([^\]]*)\]\s*)?\)',
-    package,
-)
+exact = re.findall(r'\.package\(\s*url:\s*"([^"]+)"\s*,\s*exact:\s*"([^"]+)"\s*\)', package)
 if not exact or len(exact) != len(declarations):
-    fail(f"every {PACKAGE} dependency must be declared as .package(url:exact:) or .package(url:exact:traits:)")
-for url, version, has_traits, listing in exact:
-    add(swiftpm, PACKAGE, url, version, traits(listing) if has_traits else None)
+    fail(f"every {PACKAGE} dependency must be declared as .package(url:exact:)")
+for url, version in exact:
+    add(swiftpm, PACKAGE, url, version)
 
 block = re.findall(r"^packages:[ \t]*\n((?:(?:[ \t]+[^\n]*)?\n)*)", read(PROJECT), re.MULTILINE)
 if len(block) != 1:
@@ -72,7 +59,7 @@ for line in block[0].splitlines():
     if not line.strip():
         continue
     entry = re.fullmatch(r"  ([A-Za-z0-9_.-]+):[ \t]*", line)
-    field = re.fullmatch(r"    ([A-Za-z]+):[ \t]*(\[[^\]]*\]|\S+)[ \t]*", line)
+    field = re.fullmatch(r"    ([A-Za-z]+):[ \t]*(\S+)[ \t]*", line)
     if entry is not None:
         current = entry.group(1)
         if current in xcodegen_entries:
@@ -84,12 +71,9 @@ for line in block[0].splitlines():
         fail(f"cannot parse {PROJECT} packages line: {line.strip()!r}")
 xcodegen = {}
 for name, fields in xcodegen_entries.items():
-    if not {"url", "exactVersion"} <= set(fields) <= {"url", "exactVersion", "traits"}:
-        fail(f"{PROJECT} package {name} must declare url, exactVersion and optionally traits, found {sorted(fields)}")
-    listing = fields.get("traits")
-    if listing is not None and not (listing.startswith("[") and listing.endswith("]")):
-        fail(f"{PROJECT} package {name} traits must be a flow list, found {listing!r}")
-    add(xcodegen, PROJECT, fields["url"], fields["exactVersion"], traits(listing[1:-1]) if listing else None)
+    if set(fields) != {"url", "exactVersion"}:
+        fail(f"{PROJECT} package {name} must declare exactly url and exactVersion, found {sorted(fields)}")
+    add(xcodegen, PROJECT, fields["url"], fields["exactVersion"])
 
 try:
     resolved_document = json.loads(read(RESOLVED))
@@ -113,19 +97,17 @@ if set(swiftpm) != set(xcodegen):
         f"{PACKAGE} declares {sorted(swiftpm)} but {PROJECT} declares {sorted(xcodegen)}"
     )
 for name in sorted(swiftpm):
-    url, version, enabled = swiftpm[name]
+    url, version = swiftpm[name]
     for origin, pins in ((PROJECT, xcodegen), (RESOLVED, resolved)):
         if name not in pins:
             if origin == RESOLVED:
                 problems.append(f"{RESOLVED} has no pin for {name}")
             continue
-        other_url, other_version, other_enabled = pins[name]
+        other_url, other_version = pins[name]
         if other_url != url:
             problems.append(f"{name} source is {url} in {PACKAGE} but {other_url} in {origin}")
         if other_version != version:
             problems.append(f"{name} is {version} in {PACKAGE} but {other_version} in {origin}")
-        if origin == PROJECT and other_enabled != enabled:
-            problems.append(f"{name} traits are {shown(enabled)} in {PACKAGE} but {shown(other_enabled)} in {origin}")
 if problems:
     print("Swift package pin drift:", *problems, sep="\n  ", file=sys.stderr)
     raise SystemExit(1)

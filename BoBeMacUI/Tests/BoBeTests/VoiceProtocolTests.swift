@@ -196,7 +196,7 @@ struct ClientVoiceMessageEncodingTests {
         language: "en",
         playbackRates: [24_000],
         endpointStt: [SpeechEngineOfferWire(
-            id: "parakeet",
+            id: VoiceEngineId.appleSpeechAnalyzer,
             languages: ["en"],
             partials: true,
             eou: true,
@@ -206,7 +206,6 @@ struct ClientVoiceMessageEncodingTests {
         )],
         endpointTts: [],
         audioUplink: false,
-        overrides: SpeechOverridesWire(stt: .auto, tts: .daemon),
         daemonIsNonLoopback: false,
         remoteAudioConsent: false
     )
@@ -301,22 +300,20 @@ struct ClientVoiceMessageEncodingTests {
         #expect(encodedOffer["language"] as? String == "en")
         #expect(encodedOffer["playback_rates"] as? [Int] == [24_000])
         let stt = encodedOffer["endpoint_stt"] as? [[String: Any]]
-        #expect(stt?.first?["id"] as? String == "parakeet")
+        #expect(stt?.first?["id"] as? String == "apple_speech_analyzer")
+        #expect(encodedOffer["overrides"] == nil)
     }
 
-    @Test
-    func builtOfferNamesThisMacAndARemoteDaemon() throws {
+    private func builtOffer(
+        language: String,
+        recognizerReady: Bool,
+        systemVoice: String? = nil
+    ) throws -> [String: Any] {
         let surface = try #require(UUID(uuidString: "00000000-0000-0000-0000-0000000000AB"))
         let offer = VoicePipeline.speechOffer(
-            settings: VoiceSessionSettings(
-                language: "en",
-                persona: "alba",
-                speed: 1,
-                ttsBackend: .serverPocket,
-                sttPreference: .fluidAudio,
-                remoteAudioConsent: false
-            ),
-            endpointSttEngineId: VoiceSttEngineId.fluidAudioParakeet,
+            settings: VoiceSessionSettings(language: language, persona: "alba", speed: 1, remoteAudioConsent: false),
+            recognizerReady: recognizerReady,
+            systemVoice: systemVoice,
             endpointId: surface,
             daemonIsNonLoopback: true
         )
@@ -325,8 +322,34 @@ struct ClientVoiceMessageEncodingTests {
         #expect(encodedOffer["endpoint_id"] as? String == surface.uuidString)
         #expect(encodedOffer["endpoint_kind"] as? String == "mac_app")
         #expect(encodedOffer["daemon_is_non_loopback"] as? Bool == true)
-        #expect(encodedOffer["audio_uplink"] as? Bool == false)
-        #expect((encodedOffer["overrides"] as? [String: Any])?["stt"] as? String == "endpoint")
+        return encodedOffer
+    }
+
+    @Test
+    func englishOffersAppleSpeechAndKeepsTheDaemonAsFallback() throws {
+        let offer = try self.builtOffer(language: "en", recognizerReady: true)
+        let stt = try #require(offer["endpoint_stt"] as? [[String: Any]])
+        #expect(stt.map { $0["id"] as? String } == ["apple_speech_analyzer"])
+        #expect(offer["audio_uplink"] as? Bool == true)
+        #expect((offer["endpoint_tts"] as? [Any])?.isEmpty == true)
+    }
+
+    @Test
+    func englishWithoutAppleSpeechAssetsRecognizesOnTheDaemon() throws {
+        let offer = try self.builtOffer(language: "en", recognizerReady: false)
+        #expect((offer["endpoint_stt"] as? [Any])?.isEmpty == true)
+        #expect(offer["audio_uplink"] as? Bool == true)
+    }
+
+    @Test
+    func greekNeverUploadsAudioAndSpeaksWithTheSystemVoice() throws {
+        let voice = "com.apple.voice.super-compact.el-GR.Melina"
+        let offer = try self.builtOffer(language: "el", recognizerReady: true, systemVoice: voice)
+        #expect(offer["audio_uplink"] as? Bool == false)
+        let tts = try #require((offer["endpoint_tts"] as? [[String: Any]])?.first)
+        #expect(tts["id"] as? String == "apple_speech_synthesizer")
+        #expect(tts["voices"] as? [String] == [voice])
+        #expect(tts["sample_rates"] as? [Int] == [24_000])
     }
 
     @Test
@@ -335,12 +358,6 @@ struct ClientVoiceMessageEncodingTests {
         let second = UUID(uuidString: "00000000-0000-0000-0000-000000000002") ?? UUID()
         #expect(RemoteSpeechConsent.storageKey(authorityId: first)
             != RemoteSpeechConsent.storageKey(authorityId: second))
-    }
-
-    @Test
-    func supertonicVoiceIdentityReflectsActualStyle() {
-        #expect(VoicePipeline.supertonicVoiceId(for: "am_michael") == "supertonic_m1")
-        #expect(VoicePipeline.supertonicVoiceId(for: "af_bella") == "supertonic_f1")
     }
 
     @Test

@@ -366,7 +366,7 @@
 "setup.voice.stt_label.progress_format" = "聞き取り：ダウンロード中 %d%%…";
 "setup.voice.stt_label.ready" = "聞き取り：準備完了";
 "setup.voice.stt_label.failed_format" = "聞き取り：読み込めませんでした。%@";
-"setup.voice.body" = "約600 MBのダウンロードが1回だけ必要です。他の言語ではさらに増えます。";
+"setup.voice.body" = "声と聞き取りのためのダウンロードが1回だけ必要です。";
 "setup.voice.complete" = "話す準備ができました。";
 "setup.voice.failed" = "音声の準備が完了しませんでした。";
 "setup.voice.poll_failure" = "ダウンロードが止まりました。今すぐ、またはあとで設定からもう一度お試しください。";
@@ -393,7 +393,7 @@
 "settings.voice.description" = "音声認識、BoBeの声、あなたが話し終えたことをBoBeがどう判断するかを設定します。";
 "settings.voice.section.preferences" = "基本設定";
 "settings.voice.section.models" = "モデル";
-"settings.voice.section.models.location_note" = "このMac上の聞き取りモデルは、~/Library/Application Support/FluidAudio/ にあるFluidAudioのキャッシュを使います。BoBeの話す声は、選択したランタイムが独自のデータフォルダーに保存します。";
+"settings.voice.section.models.location_note" = "各言語の音声認識モデルは、macOSが保存して更新します。BoBeの英語の声は、選択したランタイムが独自のデータフォルダーに保存します。";
 
 "settings.context_editor.mode.guided" = "ガイド";
 "settings.context_editor.mode.raw" = "直接編集";
@@ -586,21 +586,8 @@
 "setup.cloud_auth.sheet.submit" = "送信";
 "setup.cloud_auth.sheet.failed_title" = "サインインが完了しませんでした";
 
-"settings.voice.stt_preference" = "音声認識エンジン";
-"settings.voice.stt_preference.description" = "音声をどこで認識するかを選びます。「自動」は、Apple SpeechがBoBeの実音声による品質基準を満たすまで、実績のあるFluidAudioを使い続けます。変更後は音声を接続し直してください。";
-"settings.voice.stt_preference.automatic" = "自動（推奨）";
-"settings.voice.stt_preference.apple_speech" = "Apple Speech（実験的）";
-"settings.voice.stt_preference.fluid_audio" = "FluidAudio（ローカル）";
-"settings.voice.stt_preference.daemon" = "BoBeデーモン";
-"settings.voice.tts_backend" = "音声合成バックエンド";
-"settings.voice.tts_backend.description" = "実験的な機能です。Supertonicは多言語TTSをアプリ内で実行し、初回使用時にCore MLモデルをダウンロードします。変更後は音声を接続し直してください。";
-"settings.voice.tts_backend.server_pocket" = "サーバー Pocket TTS（英語）";
-"settings.voice.tts_backend.client_supertonic" = "クライアントSupertonic-3（実験的）";
-"settings.voice.tts_backend.best_for_format" = "%1$@ · %2$@に最適";
-"settings.voice.advice.engine_format" = "%1$@は%2$@を話せません。%3$@なら話せます。";
 "settings.voice.advice.persona_format" = "BoBeの現在の声は別の言語向けです。%@用の声に切り替えますか？";
 "settings.voice.advice.switch" = "切り替える";
-"settings.voice.language_unsupported" = "%@には%@の声がありません。対応している言語か、別の音声エンジンを選んでください。";
 "setup.voice.model.tts" = "話す声";
 "setup.voice.model.stt" = "聞き取り";
 
@@ -619,17 +606,13 @@
 "settings.voice.model.tts.name_expert" = "Pocket TTS · 英語 · Q8";
 "settings.voice.model.tts.purpose" = "6種類の声で英語を話します。ほかの言語パックも順次追加される予定です。";
 "settings.voice.model.tts.size" = "約170 MB";
-"settings.voice.model.supertonic.name" = "FluidAudio Supertonic-3（多言語）";
-"settings.voice.model.supertonic.purpose" = "対応する言語向けの、アプリ内で動く実験的な音声合成です。";
-"settings.voice.model.supertonic.size" = "約100 MB";
-"settings.voice.model.stt_en.name" = "聞き取り（英語）";
-"settings.voice.model.stt_en.name_expert" = "FluidAudio Parakeet EOU（英語）";
-"settings.voice.model.stt_en.purpose" = "言語を英語に設定しているときに、あなたの声を聞き取ります。";
-"settings.voice.model.stt_en.size" = "約450 MB";
-"settings.voice.model.stt_multi.name" = "聞き取り（その他の言語）";
-"settings.voice.model.stt_multi.name_expert" = "FluidAudio Nemotron 3.5 多言語ストリーミング + Silero VAD";
-"settings.voice.model.stt_multi.purpose" = "言語が英語以外のときに、あなたの声を聞き取ります。";
-"settings.voice.model.stt_multi.size" = "モデルのバージョンにより異なります";
+"settings.voice.model.stt.name" = "聞き取り";
+"settings.voice.model.stt.name_expert_format" = "Apple Speech · %@";
+"settings.voice.model.stt.purpose" = "選んだ言語であなたの声を聞き取ります。ダウンロードと更新はmacOSが行います。";
+"settings.voice.model.managed_by_macos" = "macOSが管理";
+"settings.voice.model.system_voice.name_format" = "システムの声 · %@";
+"settings.voice.model.system_voice.purpose" = "BoBeは英語以外の言語を、このMacで最も品質の高いシステムの声で話します。より自然な声にするには、システム設定 › アクセシビリティで拡張またはプレミアムの声をダウンロードしてください。";
+"settings.voice.no_system_voice_format" = "このMacには%@の声がありません。システム設定 › アクセシビリティで追加してください。";
 "settings.voice.reinstall" = "すべて再インストール";
 "settings.voice.reinstalling" = "再インストール中…";
 "settings.voice.reinstall.accessibility" = "すべての音声モデルを再インストール";

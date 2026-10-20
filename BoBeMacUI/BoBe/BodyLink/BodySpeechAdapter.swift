@@ -9,7 +9,7 @@ nonisolated private let bodyAdapterLogger = Logger(
 actor BodySpeechAdapter {
     static let shared = BodySpeechAdapter()
 
-    private let stt = FluidAudioStt()
+    private let stt = AppleSpeechStt(language: "en")
     private var baseURL: URL?
     private var token: String?
     private var socket: URLSessionWebSocketTask?
@@ -76,7 +76,7 @@ actor BodySpeechAdapter {
     }
 
     private func prepareStt() async throws {
-        try await self.stt.loadModels(
+        try await self.stt.load(
             onPartial: { [weak self] text in
                 await self?.handlePartial(text)
             },
@@ -218,7 +218,7 @@ actor BodySpeechAdapter {
     }
 
     private func finishCapture(route: BodyRoute) async throws {
-        let finished = try await self.stt.finish()
+        let finished = await self.stt.finish()
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let transcript = combineBodyTranscriptSegments(
             self.eouSegments,
