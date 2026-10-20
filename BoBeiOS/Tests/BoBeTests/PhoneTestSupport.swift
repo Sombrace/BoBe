@@ -5,7 +5,7 @@ import SwiftUI
 import Synchronization
 import Testing
 
-enum Fixture {
+nonisolated enum Fixture {
     static let authority = UUID(uuidString: "6F0B3A0E-2E0C-4E0A-9A55-6E1B2D3C4F50")!
     static let otherAuthority = UUID(uuidString: "1C2D3E4F-5A6B-4C7D-8E9F-0A1B2C3D4E5F")!
     static let endpoint = UUID(uuidString: "D9C9D04A-7BEF-4747-BA22-C7D610E62612")!
@@ -139,7 +139,7 @@ enum Fixture {
     }
 }
 
-struct Request: Sendable {
+nonisolated struct Request: Sendable {
     let method: String
     let path: String
     let body: Data?
@@ -149,14 +149,14 @@ struct Request: Sendable {
     }
 }
 
-struct StreamScript: Sendable {
+nonisolated struct StreamScript: Sendable {
     var items: [BrainStreamItem]
     var ends = false
 
     static let open = StreamScript(items: [.connected])
 }
 
-final class FakeLink: BrainLink, @unchecked Sendable {
+nonisolated final class FakeLink: BrainLink {
     private struct State {
         var replies: [String: [Result<Data, BrainError>]] = [:]
         var requests: [Request] = []
@@ -245,7 +245,6 @@ final class FakeLink: BrainLink, @unchecked Sendable {
     func invalidate() {}
 }
 
-@MainActor
 final class FakeDaemon {
     private var links: [String: FakeLink] = [:]
 
@@ -257,7 +256,7 @@ final class FakeDaemon {
     }
 }
 
-final class MemorySecrets: SecretStore, @unchecked Sendable {
+nonisolated final class MemorySecrets: SecretStore {
     private struct State {
         var items: [String: Data] = [:]
         var failingWrites: Set<String> = []
@@ -306,7 +305,6 @@ final class MemorySecrets: SecretStore, @unchecked Sendable {
     }
 }
 
-@MainActor
 struct Harness {
     let daemon = FakeDaemon()
     let secrets = MemorySecrets()
@@ -357,7 +355,6 @@ struct Harness {
     }
 }
 
-@MainActor
 func eventually(
     _ timeout: Duration = .seconds(5),
     sourceLocation: SourceLocation = #_sourceLocation,
@@ -373,7 +370,6 @@ func eventually(
     }
 }
 
-@MainActor
 func pause(_ duration: Duration = .milliseconds(200)) async {
     try? await Task.sleep(for: duration)
 }

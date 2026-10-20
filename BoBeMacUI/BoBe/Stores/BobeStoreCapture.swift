@@ -7,7 +7,7 @@ extension BobeStore {
         let selection = self.selection
         let settingsStore = self.settingsStore
         self.captureStartupTask?.cancel()
-        self.captureStartupTask = Task { @MainActor [weak self] in
+        self.captureStartupTask = Task { [weak self] in
             await settingsStore.refresh()
             guard let self, self.isCurrent(selection), !Task.isCancelled,
                   settingsStore.settings?.captureEnabled == true,
@@ -33,9 +33,9 @@ extension BobeStore {
         if looks {
             self.isReadingScreen = true
         }
-        self.screenReadTask = Task { @MainActor [weak self] in
+        self.screenReadTask = Task { [weak self] in
             let started = ContinuousClock.now
-            let reply = await Task.detached(priority: .utility) { await ScreenReader.read() }.value
+            let reply = await ScreenReader.read()
             do {
                 try await client.completeBodyRequest(requestId, reply: reply)
             } catch {
@@ -100,9 +100,7 @@ extension BobeStore {
                 ctx.daemonConnected = false
                 ctx.daemonError = true
             }
-            await MainActor.run {
-                _ = SetupWindowManager.shared.showRuntimeRepair(issue: issue)
-            }
+            _ = SetupWindowManager.shared.showRuntimeRepair(issue: issue)
         }
     }
 
@@ -131,7 +129,7 @@ extension BobeStore {
 
     func scheduleReconnectStatusTransition() {
         self.reconnectStatusTask?.cancel()
-        self.reconnectStatusTask = Task { @MainActor [weak self] in
+        self.reconnectStatusTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(StoreTiming.reconnectStatusDelayMilliseconds))
             guard let self, !Task.isCancelled, !self.context.daemonConnected else { return }
             self.isReconnecting = true

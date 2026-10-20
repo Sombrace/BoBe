@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-private final class DaemonSessionCache: @unchecked Sendable {
+nonisolated private final class DaemonSessionCache: @unchecked Sendable {
     static let shared = DaemonSessionCache()
 
     private struct Key: Hashable {
@@ -55,7 +55,7 @@ private final class DaemonSessionCache: @unchecked Sendable {
     }
 }
 
-enum DaemonTransportPurpose: Hashable, Sendable {
+nonisolated enum DaemonTransportPurpose: Hashable, Sendable {
     case interactiveHTTP
     case persistentEventStream
     case finiteEventStream
@@ -65,7 +65,7 @@ enum DaemonTransportPurpose: Hashable, Sendable {
     case bodyLoopbackWebSocket
 }
 
-enum DaemonTransportPolicy {
+nonisolated enum DaemonTransportPolicy {
     static func configuration(
         for endpoint: DaemonEndpoint,
         purpose: DaemonTransportPurpose
@@ -105,7 +105,7 @@ enum DaemonTransportPolicy {
     }
 }
 
-private extension DaemonTransportPurpose {
+nonisolated private extension DaemonTransportPurpose {
     var waitsForRemoteConnectivity: Bool {
         switch self {
         case .persistentEventStream, .finiteEventStream, .realtimeWebSocket:

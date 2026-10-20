@@ -1,6 +1,6 @@
 import Foundation
 
-protocol VoiceSttEngine: Sendable {
+nonisolated protocol VoiceSttEngine: Sendable {
     func loadModels(
         onPartial: @escaping @Sendable (String) async -> Void,
         onEou: @escaping @Sendable (String) async -> Void,
@@ -17,13 +17,13 @@ protocol VoiceSttEngine: Sendable {
     func cleanup() async
 }
 
-enum VoiceSttCallbackEvent: Sendable {
+nonisolated enum VoiceSttCallbackEvent: Sendable {
     case partial(String)
     case endOfUtterance(String)
     case barrier(CheckedContinuation<Void, Never>)
 }
 
-struct VoiceSttLoadProgress: Sendable, Equatable {
+nonisolated struct VoiceSttLoadProgress: Sendable, Equatable {
     enum Phase: Sendable, Equatable {
         case listing
         case downloading(completedFiles: Int, totalFiles: Int)

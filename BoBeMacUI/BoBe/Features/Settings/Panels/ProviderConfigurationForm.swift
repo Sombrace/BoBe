@@ -334,7 +334,6 @@ struct ProviderConfigurationForm: View {
         self.error = nil
     }
 
-    @MainActor
     private func connect() async {
         guard !self.isPreparing, self.fields.canConnect(apiKey: self.apiKey),
               EndpointStore.shared.selection == self.observedSelection else { return }
@@ -388,7 +387,6 @@ struct ProviderConfigurationForm: View {
         }
     }
 
-    @MainActor
     private func completeConnection(_ selection: EndpointSelection) async throws {
         let client = DaemonClient(endpoint: selection.endpoint)
         let profile = self.fields.profileID
@@ -414,7 +412,6 @@ struct ProviderConfigurationForm: View {
         self.onConnected()
     }
 
-    @MainActor
     private func finishSignIn(_ context: ProviderSignInContext) {
         self.signIn = nil
         guard EndpointStore.shared.selection == context.selection else { return }

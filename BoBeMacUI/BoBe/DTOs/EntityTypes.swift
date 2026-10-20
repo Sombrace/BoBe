@@ -1,6 +1,6 @@
 import Foundation
 
-enum GoalStatus: String, Codable, Sendable, CaseIterable {
+nonisolated enum GoalStatus: String, Codable, Sendable, CaseIterable {
     case active, paused, completed, archived, unknown
 
     init(from decoder: Decoder) throws {
@@ -9,7 +9,7 @@ enum GoalStatus: String, Codable, Sendable, CaseIterable {
     }
 }
 
-struct Goal: Identifiable, Codable, Sendable {
+nonisolated struct Goal: Identifiable, Codable, Sendable {
     let id: String
     var title: String
     var status: GoalStatus
@@ -36,7 +36,7 @@ struct Goal: Identifiable, Codable, Sendable {
     }
 }
 
-struct GoalListResponse: Codable, Sendable {
+nonisolated struct GoalListResponse: Codable, Sendable {
     let goals: [Goal]
     let activeCount: Int
 
@@ -46,7 +46,7 @@ struct GoalListResponse: Codable, Sendable {
     }
 }
 
-struct GoalCreateRequest: Codable, Sendable {
+nonisolated struct GoalCreateRequest: Codable, Sendable {
     let title: String
     var summary: String?
     var whyItMatters: String?
@@ -58,7 +58,7 @@ struct GoalCreateRequest: Codable, Sendable {
     }
 }
 
-struct GoalUpdateRequest: Codable, Sendable {
+nonisolated struct GoalUpdateRequest: Codable, Sendable {
     var title: String?
     var status: GoalStatus?
     var priority: Int?
@@ -72,16 +72,16 @@ struct GoalUpdateRequest: Codable, Sendable {
     }
 }
 
-struct MemoryResponse: Codable, Sendable {
+nonisolated struct MemoryResponse: Codable, Sendable {
     let content: String
     let bytes: Int
 }
 
-struct MemoryUpdateRequest: Codable, Sendable {
+nonisolated struct MemoryUpdateRequest: Codable, Sendable {
     let content: String
 }
 
-struct Soul: Identifiable, Codable, Sendable {
+nonisolated struct Soul: Identifiable, Codable, Sendable {
     let id: String
     var name: String
     var content: String
@@ -98,23 +98,23 @@ struct Soul: Identifiable, Codable, Sendable {
     }
 }
 
-struct SoulListResponse: Codable, Sendable {
+nonisolated struct SoulListResponse: Codable, Sendable {
     let souls: [Soul]
     let count: Int
 }
 
-struct SoulCreateRequest: Codable, Sendable {
+nonisolated struct SoulCreateRequest: Codable, Sendable {
     let name: String
     let content: String
     var enabled: Bool?
 }
 
-struct SoulUpdateRequest: Codable, Sendable {
+nonisolated struct SoulUpdateRequest: Codable, Sendable {
     var content: String?
     var enabled: Bool?
 }
 
-struct UserProfile: Identifiable, Codable, Sendable {
+nonisolated struct UserProfile: Identifiable, Codable, Sendable {
     let id: String
     var name: String
     var content: String
@@ -131,22 +131,22 @@ struct UserProfile: Identifiable, Codable, Sendable {
     }
 }
 
-struct UserProfileListResponse: Codable, Sendable {
+nonisolated struct UserProfileListResponse: Codable, Sendable {
     let profiles: [UserProfile]
 }
 
-struct UserProfileCreateRequest: Codable, Sendable {
+nonisolated struct UserProfileCreateRequest: Codable, Sendable {
     let name: String
     let content: String
     var enabled: Bool?
 }
 
-struct UserProfileUpdateRequest: Codable, Sendable {
+nonisolated struct UserProfileUpdateRequest: Codable, Sendable {
     var content: String?
     var enabled: Bool?
 }
 
-struct MCPServer: Identifiable, Codable, Sendable {
+nonisolated struct MCPServer: Identifiable, Codable, Sendable {
     var id: String {
         self.name
     }
@@ -163,7 +163,7 @@ struct MCPServer: Identifiable, Codable, Sendable {
     }
 }
 
-struct MCPConfigDocumentResponse: Codable, Sendable {
+nonisolated struct MCPConfigDocumentResponse: Codable, Sendable {
     let rawJson: String
     let servers: [MCPServer]
 
@@ -173,7 +173,7 @@ struct MCPConfigDocumentResponse: Codable, Sendable {
     }
 }
 
-struct MCPConfigMutationRequest: Codable, Sendable {
+nonisolated struct MCPConfigMutationRequest: Codable, Sendable {
     let rawJson: String
 
     enum CodingKeys: String, CodingKey {
@@ -181,7 +181,7 @@ struct MCPConfigMutationRequest: Codable, Sendable {
     }
 }
 
-struct MCPConfigValidateResponse: Codable, Sendable {
+nonisolated struct MCPConfigValidateResponse: Codable, Sendable {
     let valid: Bool
     let normalizedJson: String
     let serverCount: Int
@@ -194,7 +194,7 @@ struct MCPConfigValidateResponse: Codable, Sendable {
     }
 }
 
-struct MCPConfigSaveResponse: Codable, Sendable {
+nonisolated struct MCPConfigSaveResponse: Codable, Sendable {
     let message: String
     let rawJson: String
     let servers: [MCPServer]
@@ -205,7 +205,7 @@ struct MCPConfigSaveResponse: Codable, Sendable {
     }
 }
 
-struct MCPConfigResetResponse: Codable, Sendable {
+nonisolated struct MCPConfigResetResponse: Codable, Sendable {
     let message: String
     let rawJson: String
 

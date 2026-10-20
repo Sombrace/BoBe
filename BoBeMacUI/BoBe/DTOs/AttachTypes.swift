@@ -1,12 +1,12 @@
 import Foundation
 
-enum AttachWire {
+nonisolated enum AttachWire {
     static let protocolMin: UInt32 = 1
     static let protocolMax: UInt32 = 1
     static let path = "/v1/hello"
 }
 
-struct HelloRequest: Codable, Sendable {
+nonisolated struct HelloRequest: Codable, Sendable {
     let surfaceId: UUID
     let surfaceKind: String
     let surfaceAppVersion: String
@@ -26,7 +26,7 @@ struct HelloRequest: Codable, Sendable {
     }
 }
 
-struct SurfaceCapabilitiesWire: Codable, Sendable {
+nonisolated struct SurfaceCapabilitiesWire: Codable, Sendable {
     let microphone: Bool
     let playback: Bool
     let wake: Bool
@@ -42,7 +42,7 @@ struct SurfaceCapabilitiesWire: Codable, Sendable {
     }
 }
 
-enum CapabilityStateWire: String, Codable, Sendable {
+nonisolated enum CapabilityStateWire: String, Codable, Sendable {
     case ready
     case unsupported
     case unknown
@@ -53,11 +53,11 @@ enum CapabilityStateWire: String, Codable, Sendable {
     }
 }
 
-struct RuntimeCapabilitiesWire: Codable, Sendable {
+nonisolated struct RuntimeCapabilitiesWire: Codable, Sendable {
     let stt: CapabilityStateWire
 }
 
-enum ReadinessStateWire: String, Codable, Sendable, Equatable {
+nonisolated enum ReadinessStateWire: String, Codable, Sendable, Equatable {
     case ready
     case initializing
     case notReady = "not_ready"
@@ -73,7 +73,7 @@ enum ReadinessStateWire: String, Codable, Sendable, Equatable {
     }
 }
 
-struct HelloReadiness: Codable, Sendable {
+nonisolated struct HelloReadiness: Codable, Sendable {
     let state: ReadinessStateWire
     let blockingReasons: [String]
 
@@ -83,7 +83,7 @@ struct HelloReadiness: Codable, Sendable {
     }
 }
 
-struct HelloResponse: Codable, Sendable {
+nonisolated struct HelloResponse: Codable, Sendable {
     let runtimeAuthorityId: UUID
     let runtimeAuthorityEpoch: Int
     let daemonVersion: String

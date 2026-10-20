@@ -1,14 +1,14 @@
 import Foundation
 import os
 
-struct LocalizationCatalog: Sendable {
+nonisolated struct LocalizationCatalog: Sendable {
     let localeId: String
     let bundle: Bundle
 }
 
-private let lock = OSAllocatedUnfairLock<LocalizationCatalog?>(initialState: nil)
+nonisolated private let lock = OSAllocatedUnfairLock<LocalizationCatalog?>(initialState: nil)
 
-enum L10n {
+nonisolated enum L10n {
     static func setLocaleOverride(_ localeId: String?) {
         let catalog = localeId.flatMap(self.catalog(for:))
         lock.withLock { $0 = catalog }

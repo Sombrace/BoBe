@@ -1,14 +1,13 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline.WebSocket")
+nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline.WebSocket")
 
-@MainActor
 extension VoicePipeline {
 
     func startReceiveLoop(socket: URLSessionWebSocketTask, generation: UInt64) {
         self.receiveTask?.cancel()
-        self.receiveTask = Task { @MainActor [weak self, weak socket] in
+        self.receiveTask = Task { [weak self, weak socket] in
             guard let self, let socket else { return }
             do {
                 while !Task.isCancelled {

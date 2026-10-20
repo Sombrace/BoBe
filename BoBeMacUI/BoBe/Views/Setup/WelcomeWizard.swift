@@ -89,7 +89,6 @@ struct PendingProviderActivation: Equatable {
     }
 }
 
-@MainActor
 @Observable
 final class SetupNavigation {
     private(set) var currentStep: WelcomeStep
@@ -517,7 +516,7 @@ struct WelcomeWizard: View {
     }
 
     private func advance() {
-        Task { @MainActor in
+        Task {
             let commit: (() async throws -> Void)? = self.requiresCommit
                 ? { try await self.commitCurrentStep() }
                 : nil
@@ -653,7 +652,7 @@ struct WelcomeWizard: View {
             self.navigation.goBack()
             return
         }
-        Task { @MainActor in
+        Task {
             await self.navigation.goBack(after: { try await LocalRuntimeInstall.cancel() })
         }
     }

@@ -60,7 +60,6 @@ enum VoiceLanguageAdvice: Equatable, Sendable {
     }
 }
 
-@MainActor
 @Observable
 final class VoiceTtsPreference {
     static let shared = VoiceTtsPreference()

@@ -5,9 +5,8 @@ import Foundation
 import Observation
 import OSLog
 
-private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline")
+nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline")
 
-@MainActor
 @Observable
 public final class VoicePipeline {
     public enum State: Equatable {
@@ -212,12 +211,12 @@ public final class VoicePipeline {
     }
 
     private func observeVoiceSettings() {
-        self.settingsObservation = Task { @MainActor [weak self] in
+        self.settingsObservation = Task { [weak self] in
             for await _ in Observations({ SettingsStore.shared.settings }) {
                 self?.reconcileVoiceSettings()
             }
         }
-        self.sessionSettingsObservation = Task { @MainActor [weak self] in
+        self.sessionSettingsObservation = Task { [weak self] in
             for await desired in Observations({ VoiceSessionSettings.current() }) {
                 self?.reconcileSessionSettings(desired)
             }
@@ -411,7 +410,7 @@ public final class VoicePipeline {
         self.partialTranscript = text
         self.pendingPartialForServer = text
         guard self.partialSendTask == nil else { return }
-        self.partialSendTask = Task { @MainActor [weak self] in
+        self.partialSendTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(80))
             guard let self, !Task.isCancelled, self.pendingTurnId == turnId else { return }
             let latest = self.pendingPartialForServer
@@ -471,7 +470,7 @@ public final class VoicePipeline {
         self.heldUtteranceCount += 1
         self.partialTranscript = utterance
         self.heldUtteranceTask?.cancel()
-        self.heldUtteranceTask = Task { @MainActor [weak self] in
+        self.heldUtteranceTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(TurnCompletion.graceMilliseconds))
             guard let self, !Task.isCancelled, let held = self.heldUtterance else { return }
             self.heldUtteranceTask = nil

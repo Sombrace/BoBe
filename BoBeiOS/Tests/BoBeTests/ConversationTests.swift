@@ -3,7 +3,6 @@ import Foundation
 import SwiftUI
 import Testing
 
-@MainActor
 @Suite("iPhone conversation")
 struct ConversationTests {
     @Test

@@ -304,7 +304,6 @@ struct ClientVoiceMessageEncodingTests {
         #expect(stt?.first?["id"] as? String == "parakeet")
     }
 
-    @MainActor
     @Test
     func builtOfferNamesThisMacAndARemoteDaemon() throws {
         let surface = try #require(UUID(uuidString: "00000000-0000-0000-0000-0000000000AB"))
@@ -330,7 +329,6 @@ struct ClientVoiceMessageEncodingTests {
         #expect((encodedOffer["overrides"] as? [String: Any])?["stt"] as? String == "endpoint")
     }
 
-    @MainActor
     @Test
     func remoteConsentKeysAreAuthorityScoped() {
         let first = UUID(uuidString: "00000000-0000-0000-0000-000000000001") ?? UUID()
@@ -339,7 +337,6 @@ struct ClientVoiceMessageEncodingTests {
             != RemoteSpeechConsent.storageKey(authorityId: second))
     }
 
-    @MainActor
     @Test
     func supertonicVoiceIdentityReflectsActualStyle() {
         #expect(VoicePipeline.supertonicVoiceId(for: "am_michael") == "supertonic_m1")

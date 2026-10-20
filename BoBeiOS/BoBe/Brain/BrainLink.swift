@@ -1,12 +1,12 @@
 import Foundation
 
-protocol BrainLink: AnyObject, Sendable {
+nonisolated protocol BrainLink: AnyObject, Sendable {
     func exchange(_ path: [String], method: String, body: Data?, query: [URLQueryItem]) async throws -> Data
     func events(after cursor: EventCursor?) -> AsyncThrowingStream<BrainStreamItem, any Error>
     func invalidate()
 }
 
-extension BrainLink {
+nonisolated extension BrainLink {
     func get<Response: Decodable & Sendable>(
         _ path: [String],
         query: [URLQueryItem] = []

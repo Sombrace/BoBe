@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import Observation
 
-protocol ProviderLoginClient: Sendable {
+nonisolated protocol ProviderLoginClient: Sendable {
     func startProviderLogin(profile: String) async throws
     func cancelProviderLogin(profile: String) async throws
     func providerLoginStatus(profile: String) async throws -> ProviderLoginPhase
@@ -15,7 +15,6 @@ protocol ProviderLoginClient: Sendable {
 
 extension DaemonClient: ProviderLoginClient {}
 
-@MainActor
 @Observable
 final class ProviderLoginRunner {
     enum State: Equatable {
@@ -173,7 +172,7 @@ final class ProviderLoginRunner {
         pasteboard.clearContents()
         pasteboard.setString(code, forType: .string)
         self.didCopyCode = true
-        Task { @MainActor [weak self] in
+        Task { [weak self] in
             try? await Task.sleep(for: .seconds(2))
             self?.didCopyCode = false
         }

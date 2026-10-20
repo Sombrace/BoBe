@@ -120,7 +120,6 @@ struct AgentWorkSection: View {
         }
     }
 
-    @MainActor
     private func refresh() async {
         let endpoint = EndpointStore.shared.selection
         do {
@@ -139,7 +138,6 @@ struct AgentWorkSection: View {
         }
     }
 
-    @MainActor
     private func setTool(_ tool: AgentToolWire, enabled: Bool) async {
         guard !self.working, let selection, EndpointStore.shared.selection == self.endpoint else { return }
         let endpoint = self.endpoint
@@ -158,7 +156,6 @@ struct AgentWorkSection: View {
         }
     }
 
-    @MainActor
     private func changeJob(_ job: AgentJobWire, resume: Bool) async {
         guard !self.working, EndpointStore.shared.selection == self.endpoint else { return }
         let endpoint = self.endpoint
@@ -176,7 +173,6 @@ struct AgentWorkSection: View {
         }
     }
 
-    @MainActor
     private func restart() async {
         guard !self.working, self.endpoint == EndpointStore.shared.selection,
               self.endpoint.endpoint.canRestartRuntime else { return }

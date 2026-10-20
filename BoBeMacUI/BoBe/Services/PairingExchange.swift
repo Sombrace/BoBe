@@ -2,13 +2,13 @@ import CryptoKit
 import Foundation
 import PairingClient
 
-enum PairingTrust: Sendable {
+nonisolated enum PairingTrust: Sendable {
     case loopback
     case firstUse
     case pinned(Data)
 }
 
-struct PairingTarget: Sendable {
+nonisolated struct PairingTarget: Sendable {
     let url: URL
     let transport: String
     let trust: PairingTrust
@@ -18,7 +18,7 @@ struct PairingTarget: Sendable {
     }
 }
 
-struct PairingEnrollment: Encodable, Sendable {
+nonisolated struct PairingEnrollment: Encodable, Sendable {
     let endpointId: String
     let label: String
     let protocolMin: Int
@@ -44,7 +44,7 @@ struct PairingEnrollment: Encodable, Sendable {
     }
 }
 
-struct PairingOutcome: Sendable {
+nonisolated struct PairingOutcome: Sendable {
     let endpointId: UUID
     let credential: String
     let runtimeAuthorityId: UUID
@@ -52,7 +52,7 @@ struct PairingOutcome: Sendable {
     let tlsSPKISha256: Data?
 }
 
-enum PairingExchange {
+nonisolated enum PairingExchange {
     static let protocolName = "bobe-pairing-opaque-ristretto255-v1"
 
     private struct Connection {
@@ -147,6 +147,7 @@ enum PairingExchange {
         }
     }
 
+    @concurrent
     static func run(
         _ target: PairingTarget,
         code: String,
@@ -341,7 +342,7 @@ enum PairingExchange {
     }
 }
 
-enum DevicePairingError: LocalizedError {
+nonisolated enum DevicePairingError: LocalizedError {
     case invalidAddress, unreachable, identityMismatch, invalidResponse, rejected, retired, randomness
 
     var errorDescription: String? {
@@ -356,7 +357,7 @@ enum DevicePairingError: LocalizedError {
     }
 }
 
-extension Data {
+nonisolated extension Data {
     func base64URLEncodedString() -> String {
         self.base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
@@ -376,7 +377,7 @@ extension Data {
     }
 }
 
-private extension ChaChaPoly.Nonce {
+nonisolated private extension ChaChaPoly.Nonce {
     var data: Data {
         self.withUnsafeBytes { Data($0) }
     }

@@ -328,7 +328,6 @@ private struct OverlaySettingsButton: View {
     }
 }
 
-@MainActor
 final class OverlayAppMenuController: NSObject {
     static let shared = OverlayAppMenuController()
 

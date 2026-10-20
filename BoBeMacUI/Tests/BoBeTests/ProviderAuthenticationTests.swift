@@ -233,7 +233,6 @@ struct ProviderAuthenticationTests {
     }
 
     @Test
-    @MainActor
     func cancelBeforeStartupDoesNotStartAnUnattendedLogin() async throws {
         let selection = Self.selection()
         let client = LoginClientFixture()
@@ -248,7 +247,6 @@ struct ProviderAuthenticationTests {
     }
 
     @Test(arguments: ["authorization-response", ""])
-    @MainActor
     func loginAcceptsInputAndCompletesOnItsPinnedClient(_ value: String) async throws {
         let selection = Self.selection()
         let client = LoginClientFixture()
@@ -268,7 +266,6 @@ struct ProviderAuthenticationTests {
     }
 
     @Test
-    @MainActor
     func authorityChangeBlocksInputAndCancelsTheOriginalProfile() async throws {
         var selection = Self.selection()
         let client = LoginClientFixture()
@@ -285,7 +282,6 @@ struct ProviderAuthenticationTests {
         #expect(runner.state == .canceled)
     }
 
-    @MainActor
     private func waitForInput(_ runner: ProviderLoginRunner) async throws {
         for _ in 0 ..< 100 {
             if case .awaitingInput = runner.state { return }

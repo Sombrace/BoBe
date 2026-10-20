@@ -1,6 +1,6 @@
 import Foundation
 
-struct PairingInvite: Equatable, Sendable {
+nonisolated struct PairingInvite: Equatable, Sendable {
     static let defaultPort = 8766
 
     let origins: [URL]

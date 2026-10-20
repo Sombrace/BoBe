@@ -1,23 +1,23 @@
 import Foundation
 
-enum BrainError: Error, Equatable {
+nonisolated enum BrainError: Error, Equatable {
     case unauthorized
     case unreachable
     case http(Int, code: String?)
     case invalidResponse
 }
 
-enum BrainStreamItem: Sendable {
+nonisolated enum BrainStreamItem: Sendable {
     case connected
     case event(StreamBundle)
 }
 
-struct EventCursor: Sendable, Equatable {
+nonisolated struct EventCursor: Sendable, Equatable {
     let eventId: UInt64
     let incarnation: UUID
 }
 
-final class BrainClient: BrainLink {
+nonisolated final class BrainClient: BrainLink {
     let origin: URL
     private let credential: String
     private let session: URLSession

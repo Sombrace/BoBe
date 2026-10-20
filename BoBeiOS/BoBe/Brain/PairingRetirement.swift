@@ -1,7 +1,6 @@
 import Foundation
 import Observation
 
-@MainActor
 @Observable
 final class PairingRetirement {
     private(set) var pending: Bool

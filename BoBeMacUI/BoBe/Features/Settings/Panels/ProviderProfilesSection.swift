@@ -320,7 +320,6 @@ struct ProviderProfilesSection: View {
         .disabled(self.working)
     }
 
-    @MainActor
     private func load() async {
         let endpoint = self.endpoint
         do {
@@ -350,7 +349,6 @@ struct ProviderProfilesSection: View {
         }
     }
 
-    @MainActor
     private func perform(endpoint: EndpointSelection, _ operation: (DaemonClient) async throws -> Void) async {
         guard !self.working, EndpointStore.shared.selection == endpoint, self.endpoint == endpoint else { return }
         self.working = true
@@ -366,13 +364,11 @@ struct ProviderProfilesSection: View {
         }
     }
 
-    @MainActor
     private func saveRoute(_ workload: ProviderWorkload, route: WorkloadRouteWire, endpoint: EndpointSelection) async {
         self.probe = nil
         await self.perform(endpoint: endpoint) { client in _ = try await client.setProviderRoute(workload, route: route) }
     }
 
-    @MainActor
     private func test(_ workload: ProviderWorkload, route: WorkloadRouteWire, endpoint: EndpointSelection) async {
         self.testing = workload
         self.testedWorkload = nil
@@ -388,7 +384,6 @@ struct ProviderProfilesSection: View {
 
     private enum AccountAction { case signOut, clearKey, remove }
 
-    @MainActor
     private func accountAction(_ profile: ProviderProfileWire, action: AccountAction, endpoint: EndpointSelection) async {
         self.probe = nil
         await self.perform(endpoint: endpoint) { client in
@@ -400,7 +395,6 @@ struct ProviderProfilesSection: View {
         }
     }
 
-    @MainActor
     private func restart() async {
         await self.perform(endpoint: self.endpoint) { _ in try await BackendService.shared.userRestart() }
     }

@@ -1,6 +1,6 @@
 import Foundation
 
-enum FluidAudioModelPresence {
+nonisolated enum FluidAudioModelPresence {
     static var parakeetEou320msDirectory: URL {
         FluidAudioCache.root
             .appendingPathComponent("parakeet-eou-streaming", isDirectory: true)

@@ -29,7 +29,6 @@ struct OwnerQuestionsView: View {
         }
     }
 
-    @MainActor
     private func refresh() async {
         guard EndpointStore.shared.selection == self.selection else { return }
         do {
@@ -131,7 +130,6 @@ private struct OwnerQuestionRow: View {
         }
     }
 
-    @MainActor
     private func presented() async {
         guard NSApp.isActive, EndpointStore.shared.selection == self.selection else { return }
         do { try await DaemonClient(endpoint: self.selection.endpoint).markOwnerQuestionPresented(self.question.id) }
@@ -141,7 +139,6 @@ private struct OwnerQuestionRow: View {
         }
     }
 
-    @MainActor
     private func submit(_ response: String) async {
         guard !self.working, !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               EndpointStore.shared.selection == self.selection else { return }

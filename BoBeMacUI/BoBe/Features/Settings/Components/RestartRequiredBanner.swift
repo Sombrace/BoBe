@@ -1,6 +1,5 @@
 import SwiftUI
 
-@MainActor
 @Observable
 final class RuntimeRestartRequest {
     private(set) var isRestarting = false

@@ -1,6 +1,6 @@
 import Foundation
 
-struct ConversationSnapshotResponse: Decodable, Sendable {
+nonisolated struct ConversationSnapshotResponse: Decodable, Sendable {
     let turns: [ConversationSnapshotTurn]
     let pendingUpdates: [ConversationSnapshotTurn]
 
@@ -10,7 +10,7 @@ struct ConversationSnapshotResponse: Decodable, Sendable {
     }
 }
 
-struct ConversationSnapshotTurn: Decodable, Sendable {
+nonisolated struct ConversationSnapshotTurn: Decodable, Sendable {
     let id: String
     let messageId: String
     let role: String

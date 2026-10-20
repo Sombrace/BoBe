@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-@MainActor
 enum BobeWindowFactory {
     static func make(
         contentRect: NSRect,

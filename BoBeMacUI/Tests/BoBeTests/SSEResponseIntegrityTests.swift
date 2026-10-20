@@ -5,7 +5,6 @@ import Testing
 @Suite("SSE response integrity", .serialized)
 struct SSEResponseIntegrityTests {
     @Test
-    @MainActor
     func terminalDeltaReplacesIncompleteStreamWithAuthoritativeResponse() async throws {
         let store = BobeStore()
 
@@ -20,7 +19,6 @@ struct SSEResponseIntegrityTests {
     }
 
     @Test
-    @MainActor
     func ambientReplyEventWaitsForVisibleLiveContent() async throws {
         let store = BobeStore()
 
@@ -32,7 +30,6 @@ struct SSEResponseIntegrityTests {
     }
 
     @Test
-    @MainActor
     func recoverableChatErrorPreservesInterruptedResponse() async throws {
         let store = BobeStore()
 
@@ -46,7 +43,6 @@ struct SSEResponseIntegrityTests {
     }
 
     @Test
-    @MainActor
     func canonicalSnapshotKeepsWireIdentityAndInterruptedState() throws {
         let json = """
         {
@@ -85,7 +81,6 @@ struct SSEResponseIntegrityTests {
     }
 
     @Test
-    @MainActor
     func canonicalReplacementFreezesPendingDeltaBeforeAwaitingSnapshot() async throws {
         let store = BobeStore()
 
@@ -106,7 +101,6 @@ struct SSEResponseIntegrityTests {
     }
 
     @Test
-    @MainActor
     func canonicalReplacementDropsEmptyStreamingPlaceholder() async throws {
         let store = BobeStore()
 

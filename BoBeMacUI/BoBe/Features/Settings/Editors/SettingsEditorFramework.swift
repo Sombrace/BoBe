@@ -1,7 +1,6 @@
 import Observation
 import SwiftUI
 
-@MainActor
 @Observable
 final class SettingsEditCoordinator {
     static let shared = SettingsEditCoordinator()

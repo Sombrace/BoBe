@@ -20,8 +20,7 @@ enum PhonePairing {
     }
 
     static func pair(_ invite: PairingInvite) async throws -> BrainPairing {
-        let label = await MainActor.run { UIDevice.current.name }
-        let enrollment = self.enrollment(endpointId: SurfaceIdentity.current(), label: label)
+        let enrollment = self.enrollment(endpointId: SurfaceIdentity.current(), label: UIDevice.current.name)
         var lastError: any Error = DevicePairingError.unreachable
         for origin in invite.origins {
             do {

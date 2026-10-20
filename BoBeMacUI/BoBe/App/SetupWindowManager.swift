@@ -5,7 +5,6 @@ extension Notification.Name {
     static let bobeWelcomeCompleted = Notification.Name("bobe.welcomeCompleted")
 }
 
-@MainActor
 final class SetupWindowManager: NSObject, NSWindowDelegate {
     static let shared = SetupWindowManager()
 
@@ -114,7 +113,7 @@ final class SetupWindowManager: NSObject, NSWindowDelegate {
             marksOnboardingComplete: false,
             onComplete: {
                 SetupWindowManager.shared.close()
-                Task { @MainActor in
+                Task {
                     BobeStore.shared.repairIssue = nil
                     BobeStore.shared.connect()
                     OverlayWindowManager.shared.show()

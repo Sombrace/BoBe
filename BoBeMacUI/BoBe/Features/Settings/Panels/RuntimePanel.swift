@@ -83,7 +83,7 @@ struct RuntimePanel: View {
                 .bobeButton(.secondary)
                 .disabled(self.isWorking)
                 Button(L10n.tr("settings.runtime.switch")) {
-                    Task { @MainActor in
+                    Task {
                         await self.beginRuntimeSwitch()
                     }
                 }
@@ -164,7 +164,6 @@ struct RuntimePanel: View {
         }
     }
 
-    @MainActor
     private func beginRuntimeSwitch() async {
         guard !SetupWindowManager.shared.isPresented else {
             SetupWindowManager.shared.show()
@@ -185,7 +184,7 @@ struct RuntimePanel: View {
         let shown = SetupWindowManager.shared.show(
             initialStep: .runtimeLocation,
             onCancel: {
-                Task { @MainActor in
+                Task {
                     let candidateProfile = EndpointStore.shared.profile
                     if candidateProfile?.mode == .managedLocal,
                        previousProfile?.mode != .managedLocal {
@@ -236,7 +235,6 @@ struct RuntimePanel: View {
         }
     }
 
-    @MainActor
     private func restartRuntime() async {
         guard !self.isWorking else { return }
         self.isWorking = true
@@ -253,7 +251,6 @@ struct RuntimePanel: View {
         }
     }
 
-    @MainActor
     private func refresh() async {
         guard !self.isWorking else { return }
         self.isWorking = true
@@ -261,7 +258,6 @@ struct RuntimePanel: View {
         await self.refreshAuthenticatedConnection()
     }
 
-    @MainActor
     private func refreshAuthenticatedConnection() async {
         do {
             guard let attach = try await EndpointAttachService.shared.attachConfiguredEndpoint() else {

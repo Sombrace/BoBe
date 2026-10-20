@@ -4,9 +4,9 @@ import Foundation
 import Observation
 import OSLog
 
-let bobeStoreLogger = Logger(subsystem: "com.bobe.app", category: "BobeStore")
+nonisolated let bobeStoreLogger = Logger(subsystem: "com.bobe.app", category: "BobeStore")
 
-@Observable @MainActor
+@Observable
 final class BobeStore {
     static let shared = BobeStore()
     static let messageWindowCapacity = 200
@@ -207,26 +207,24 @@ final class BobeStore {
             let states = await BackendService.shared.stateStream
             for await state in states {
                 guard !Task.isCancelled else { return }
-                await MainActor.run { [weak self] in
-                    switch state {
-                    case .fatal:
-                        self?.cancelReconnectStatusTransition()
-                        self?.isBackendFatal = true
-                        self?.isReconnecting = false
-                        self?.updateState { ctx in
-                            ctx.daemonConnected = false
-                            ctx.daemonError = true
-                        }
-                    case .ready:
-                        self?.cancelReconnectStatusTransition()
-                        self?.isBackendFatal = false
-                        self?.isReconnecting = false
-                        self?.updateState { $0.daemonError = false }
-                    case .crashed:
-                        self?.scheduleReconnectStatusTransition()
-                    default:
-                        break
+                switch state {
+                case .fatal:
+                    self?.cancelReconnectStatusTransition()
+                    self?.isBackendFatal = true
+                    self?.isReconnecting = false
+                    self?.updateState { ctx in
+                        ctx.daemonConnected = false
+                        ctx.daemonError = true
                     }
+                case .ready:
+                    self?.cancelReconnectStatusTransition()
+                    self?.isBackendFatal = false
+                    self?.isReconnecting = false
+                    self?.updateState { $0.daemonError = false }
+                case .crashed:
+                    self?.scheduleReconnectStatusTransition()
+                default:
+                    break
                 }
             }
         }

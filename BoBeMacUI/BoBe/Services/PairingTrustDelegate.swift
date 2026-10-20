@@ -3,7 +3,7 @@ import Foundation
 import PairingClient
 import Security
 
-final class PairingTrustDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+nonisolated final class PairingTrustDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var observedSPKI: Data?
     private let expectedSPKI: Data?

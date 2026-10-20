@@ -2,7 +2,6 @@
 import Foundation
 import Testing
 
-@MainActor
 @Suite("iPhone work and memory loading")
 struct WorkLoadTests {
     @Test

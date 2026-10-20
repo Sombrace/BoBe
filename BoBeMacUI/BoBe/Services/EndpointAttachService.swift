@@ -1,6 +1,6 @@
 import Foundation
 
-struct AttachResult: Sendable {
+nonisolated struct AttachResult: Sendable {
     let hello: HelloResponse
 }
 
@@ -124,13 +124,13 @@ actor EndpointAttachService {
     }
 }
 
-enum RuntimeRecoveryAction: Sendable, Equatable {
+nonisolated enum RuntimeRecoveryAction: Sendable, Equatable {
     case retryConnection
     case pairAgain
     case chooseRuntime
 }
 
-enum RuntimeIssueKind: Sendable, Equatable {
+nonisolated enum RuntimeIssueKind: Sendable, Equatable {
     case unreachable
     case notReady
     case credentialRejected
@@ -143,7 +143,7 @@ enum RuntimeIssueKind: Sendable, Equatable {
     case other
 }
 
-struct RuntimeIssue: Sendable, Equatable {
+nonisolated struct RuntimeIssue: Sendable, Equatable {
     let kind: RuntimeIssueKind
     let message: String
     let primaryAction: RuntimeRecoveryAction
@@ -261,7 +261,7 @@ struct RuntimeIssue: Sendable, Equatable {
     }
 }
 
-enum AttachError: LocalizedError {
+nonisolated enum AttachError: LocalizedError {
     case unreachable
     case unauthorized
     case protocolIncompatible

@@ -25,7 +25,6 @@ struct BodyThemeLifecycleTests {
     }
 
     @Test
-    @MainActor
     func failedSelectionRetriesTheDesiredTheme() async {
         let client = SettingsClientStub(
             settings: SettingsClientStub.document(theme: .warmLedge),
@@ -49,7 +48,6 @@ struct BodyThemeLifecycleTests {
     }
 
     @Test
-    @MainActor
     func stalePollCannotOverwriteCompletedSelection() async {
         let initial = SettingsClientStub.document(theme: .warmLedge)
         let client = SettingsClientStub(
@@ -74,7 +72,6 @@ struct BodyThemeLifecycleTests {
     }
 
     @Test
-    @MainActor
     func authoritySwitchCancelsQueuedSettingsAndReloads() async {
         var selection = SettingsClientStub.selection(generation: 1)
         let client = SettingsClientStub(settings: SettingsClientStub.document(theme: .warmLedge))
@@ -91,7 +88,6 @@ struct BodyThemeLifecycleTests {
     }
 
     @Test
-    @MainActor
     func previousAuthorityLoadCannotReplaceNewAuthority() async {
         var selection = SettingsClientStub.selection(generation: 1)
         let client = SettingsClientStub(settings: SettingsClientStub.document(theme: .warmLedge))
@@ -107,7 +103,6 @@ struct BodyThemeLifecycleTests {
     }
 
     @Test
-    @MainActor
     func previousAuthoritySaveCannotPublishCompletion() async {
         var selection = SettingsClientStub.selection(generation: 1)
         let client = SettingsClientStub(
@@ -129,7 +124,6 @@ struct BodyThemeLifecycleTests {
     }
 
     @Test
-    @MainActor
     func daemonRestartRequirementsAreAuthoritative() async {
         let client = SettingsClientStub(
             settings: SettingsClientStub.document(theme: .warmLedge),
@@ -145,7 +139,6 @@ struct BodyThemeLifecycleTests {
     }
 
     @Test
-    @MainActor
     func refreshAdoptsDaemonSettingsButLeavesBodyThemeFlow() async {
         let client = SettingsClientStub(settings: SettingsClientStub.document(theme: .warmLedge))
         let store = SettingsStore(client: client)
@@ -165,7 +158,6 @@ struct BodyThemeLifecycleTests {
     }
 
     @Test
-    @MainActor
     func refreshKeepsUnsavedLocalEdit() async {
         let client = SettingsClientStub(settings: SettingsClientStub.document(theme: .warmLedge))
         let store = SettingsStore(client: client)
@@ -179,7 +171,6 @@ struct BodyThemeLifecycleTests {
     }
 
     @Test
-    @MainActor
     func editDuringRefreshWins() async {
         let client = SettingsClientStub(settings: SettingsClientStub.document(theme: .warmLedge))
         let store = SettingsStore(client: client)

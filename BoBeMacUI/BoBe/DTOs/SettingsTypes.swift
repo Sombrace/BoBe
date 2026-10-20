@@ -1,6 +1,6 @@
 import Foundation
 
-enum PhysicalBodyTheme: String, Codable, CaseIterable, Identifiable, Sendable {
+nonisolated enum PhysicalBodyTheme: String, Codable, CaseIterable, Identifiable, Sendable {
     case warmAperture = "warm-aperture"
     case warmLintel = "warm-lintel"
     case warmLedge = "warm-ledge"
@@ -16,7 +16,7 @@ enum PhysicalBodyTheme: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
-struct DaemonSettings: Codable, Sendable, Equatable {
+nonisolated struct DaemonSettings: Codable, Sendable, Equatable {
     var bodyTheme: PhysicalBodyTheme
     var bodyConnected: Bool
     var captureEnabled: Bool
@@ -56,7 +56,7 @@ struct DaemonSettings: Codable, Sendable, Equatable {
     }
 }
 
-struct SettingsUpdateRequest: Codable, Sendable, Equatable {
+nonisolated struct SettingsUpdateRequest: Codable, Sendable, Equatable {
     var bodyTheme: PhysicalBodyTheme?
     var captureEnabled: Bool?
     var captureIntervalSeconds: Int?
@@ -94,7 +94,7 @@ struct SettingsUpdateRequest: Codable, Sendable, Equatable {
     }
 }
 
-struct SettingsUpdateResponse: Codable, Sendable {
+nonisolated struct SettingsUpdateResponse: Codable, Sendable {
     let message: String
     let restartRequiredFields: [String]
     var persistFailed: Bool?
@@ -108,7 +108,7 @@ struct SettingsUpdateResponse: Codable, Sendable {
     }
 }
 
-struct SendMessageRequest: Codable, Sendable {
+nonisolated struct SendMessageRequest: Codable, Sendable {
     let content: String
     let requestId: UUID
 
@@ -118,7 +118,7 @@ struct SendMessageRequest: Codable, Sendable {
     }
 }
 
-struct SendMessageResponse: Codable, Sendable {
+nonisolated struct SendMessageResponse: Codable, Sendable {
     let messageId: String
     let replayed: Bool
 
@@ -128,7 +128,7 @@ struct SendMessageResponse: Codable, Sendable {
     }
 }
 
-enum InitializationStateWire: String, Codable, Sendable, Equatable {
+nonisolated enum InitializationStateWire: String, Codable, Sendable, Equatable {
     case providerRequired = "provider_required"
     case personalizationRequired = "personalization_required"
     case ready
@@ -139,7 +139,7 @@ enum InitializationStateWire: String, Codable, Sendable, Equatable {
     }
 }
 
-struct ReadinessResponse: Codable, Sendable {
+nonisolated struct ReadinessResponse: Codable, Sendable {
     let runtimeIncarnationId: UUID
 
     enum CodingKeys: String, CodingKey {
@@ -147,7 +147,7 @@ struct ReadinessResponse: Codable, Sendable {
     }
 }
 
-struct InitializationResponse: Codable, Sendable {
+nonisolated struct InitializationResponse: Codable, Sendable {
     let initializationState: InitializationStateWire
 
     enum CodingKeys: String, CodingKey {
@@ -155,7 +155,7 @@ struct InitializationResponse: Codable, Sendable {
     }
 }
 
-struct InitializationAdvanceRequest: Codable, Sendable {
+nonisolated struct InitializationAdvanceRequest: Codable, Sendable {
     let initializationState: InitializationStateWire
 
     enum CodingKeys: String, CodingKey {
@@ -163,15 +163,15 @@ struct InitializationAdvanceRequest: Codable, Sendable {
     }
 }
 
-struct HealthResponse: Codable, Sendable {
+nonisolated struct HealthResponse: Codable, Sendable {
     let services: HealthServices
 }
 
-struct HealthServices: Codable, Sendable {
+nonisolated struct HealthServices: Codable, Sendable {
     let database: String
 }
 
-struct StatusResponse: Codable, Sendable {
+nonisolated struct StatusResponse: Codable, Sendable {
     let indicator: String
     let acceptingUserMessages: Bool
 

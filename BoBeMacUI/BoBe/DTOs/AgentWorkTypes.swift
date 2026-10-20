@@ -1,6 +1,6 @@
 import Foundation
 
-enum AgentToolWire: String, Codable, Sendable, CaseIterable {
+nonisolated enum AgentToolWire: String, Codable, Sendable, CaseIterable {
     case read
     case bash
     case edit
@@ -12,14 +12,14 @@ enum AgentToolWire: String, Codable, Sendable, CaseIterable {
     case backgroundJobs = "background_jobs"
 }
 
-struct AgentToolState: Codable, Identifiable, Sendable {
+nonisolated struct AgentToolState: Codable, Identifiable, Sendable {
     let name: AgentToolWire
     let enabled: Bool
     let active: Bool
     var id: AgentToolWire { self.name }
 }
 
-struct AgentToolSelection: Codable, Sendable {
+nonisolated struct AgentToolSelection: Codable, Sendable {
     let tools: [AgentToolState]
     let restartRequired: Bool
     enum CodingKeys: String, CodingKey {
@@ -28,7 +28,7 @@ struct AgentToolSelection: Codable, Sendable {
     }
 }
 
-enum AgentJobStatusWire: String, Decodable, Sendable {
+nonisolated enum AgentJobStatusWire: String, Decodable, Sendable {
     case queued
     case running
     case cancelRequested = "cancel_requested"
@@ -39,7 +39,7 @@ enum AgentJobStatusWire: String, Decodable, Sendable {
     case awaitingInput = "awaiting_input"
 }
 
-struct AgentJobWire: Decodable, Identifiable, Sendable {
+nonisolated struct AgentJobWire: Decodable, Identifiable, Sendable {
     let id: UUID
     let title: String
     let task: String
@@ -58,7 +58,7 @@ struct AgentJobWire: Decodable, Identifiable, Sendable {
     }
 }
 
-struct AgentScheduleWire: Decodable, Identifiable, Sendable {
+nonisolated struct AgentScheduleWire: Decodable, Identifiable, Sendable {
     let id: UUID
     let title: String
     let task: String
@@ -79,14 +79,14 @@ struct AgentScheduleWire: Decodable, Identifiable, Sendable {
     }
 }
 
-struct AgentRunWire: Decodable, Identifiable, Sendable {
+nonisolated struct AgentRunWire: Decodable, Identifiable, Sendable {
     let id: UUID
     let kind: AgentRunKindWire
     let stopping: Bool
     let queued: Bool
 }
 
-enum AgentRunKindWire: String, Decodable, Sendable {
+nonisolated enum AgentRunKindWire: String, Decodable, Sendable {
     case user
     case proactive
     case background
@@ -94,7 +94,7 @@ enum AgentRunKindWire: String, Decodable, Sendable {
     case voice
 }
 
-enum OwnerInputStatusWire: String, Decodable, Sendable {
+nonisolated enum OwnerInputStatusWire: String, Decodable, Sendable {
     case pending
     case answered
     case declined
@@ -102,13 +102,13 @@ enum OwnerInputStatusWire: String, Decodable, Sendable {
     case expired
 }
 
-struct OwnerInputChoiceWire: Decodable, Identifiable, Sendable {
+nonisolated struct OwnerInputChoiceWire: Decodable, Identifiable, Sendable {
     let value: String
     let label: String
     var id: String { self.value }
 }
 
-struct OwnerInputWire: Decodable, Identifiable, Sendable {
+nonisolated struct OwnerInputWire: Decodable, Identifiable, Sendable {
     let id: UUID
     let question: String
     let action: String

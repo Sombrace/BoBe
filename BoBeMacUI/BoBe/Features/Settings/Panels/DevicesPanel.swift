@@ -124,7 +124,6 @@ struct DevicesPanel: View {
         }
     }
 
-    @MainActor
     private func refresh() async {
         let endpoint = EndpointStore.shared.selection
         do {
@@ -143,7 +142,6 @@ struct DevicesPanel: View {
         self.access = attach.hello.deploymentMode == "networked"
     }
 
-    @MainActor
     private func setAccess(_ reachable: Bool) async {
         let endpoint = EndpointStore.shared.selection
         self.accessTarget = nil
@@ -159,7 +157,6 @@ struct DevicesPanel: View {
         await self.refresh()
     }
 
-    @MainActor
     private func remove(_ device: DeviceWire) async {
         let endpoint = EndpointStore.shared.selection
         do {
@@ -337,7 +334,6 @@ private struct PairPhoneSheet: View {
         }
     }
 
-    @MainActor
     private func create() async {
         self.loading = true
         self.problem = nil
@@ -362,7 +358,6 @@ private struct PairPhoneSheet: View {
         }
     }
 
-    @MainActor
     private func allowAccess() async {
         self.loading = true
         self.problem = nil

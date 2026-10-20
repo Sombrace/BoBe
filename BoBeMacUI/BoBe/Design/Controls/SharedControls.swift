@@ -285,7 +285,6 @@ struct ThemedSplitPane<Left: View, Right: View>: View {
     }
 }
 
-@MainActor
 final class NumberInputDebouncer {
     private struct PendingEdit {
         let text: String
@@ -310,7 +309,7 @@ final class NumberInputDebouncer {
         self.task?.cancel()
         self.pending = PendingEdit(text: text, range: range, commit: commit)
         let delay = self.delay
-        self.task = Task { @MainActor in
+        self.task = Task {
             do {
                 try await Task.sleep(for: delay)
             } catch {

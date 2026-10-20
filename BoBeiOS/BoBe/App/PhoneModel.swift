@@ -2,7 +2,6 @@ import Foundation
 import Observation
 import SwiftUI
 
-@MainActor
 @Observable
 final class PhoneModel {
     enum Step: Int, CaseIterable {

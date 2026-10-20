@@ -1,7 +1,6 @@
 import Foundation
 import Observation
 
-@MainActor
 @Observable
 final class AgentRunMonitor {
     private(set) var runs: [AgentRunWire] = []

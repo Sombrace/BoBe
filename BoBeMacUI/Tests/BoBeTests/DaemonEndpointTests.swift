@@ -484,7 +484,6 @@ struct DaemonEndpointTests {
     }
 
     @Test
-    @MainActor
     func runtimePairingCodeNormalizationKeepsSixASCIIDigits() {
         #expect(RuntimeLocationStepView.normalizedPairingCode(" 12-34 56 78 ") == "123456")
         #expect(RuntimeLocationStepView.normalizedPairingCode("１２٣٤٥٦") == "")
@@ -492,7 +491,6 @@ struct DaemonEndpointTests {
     }
 
     @Test
-    @MainActor
     func runtimePairingFormRequiresModeValidAddressAndCompleteCode() {
         #expect(RuntimeLocationStepView.isValidForm(
             address: "http://127.0.0.1:8766",

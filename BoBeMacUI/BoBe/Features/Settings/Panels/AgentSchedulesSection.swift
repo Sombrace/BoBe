@@ -123,7 +123,6 @@ struct AgentSchedulesSection: View {
         .animation(BobeMotion.standard, value: schedule.enabled)
     }
 
-    @MainActor
     private func refresh() async {
         do {
             let schedules = try await DaemonClient(endpoint: self.selection.endpoint).agentSchedules()
@@ -136,7 +135,6 @@ struct AgentSchedulesSection: View {
         }
     }
 
-    @MainActor
     private func change(_ operation: () async throws -> Void) async {
         guard !self.working, EndpointStore.shared.selection == self.selection else { return }
         self.working = true
@@ -151,19 +149,16 @@ struct AgentSchedulesSection: View {
         }
     }
 
-    @MainActor
     private func setEnabled(_ schedule: AgentScheduleWire, enabled: Bool) async {
         await self.change {
             _ = try await DaemonClient(endpoint: self.selection.endpoint).setScheduleEnabled(schedule.id, enabled: enabled)
         }
     }
 
-    @MainActor
     private func cancel(_ id: UUID) async {
         await self.change { try await DaemonClient(endpoint: self.selection.endpoint).cancelSchedule(id) }
     }
 
-    @MainActor
     private func create() async {
         let signature = "\(self.title):\(self.task):\(self.at.timeIntervalSince1970):\(self.repeats):\(self.minutes)"
         if self.previousCreation != signature {

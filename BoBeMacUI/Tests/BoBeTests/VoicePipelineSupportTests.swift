@@ -177,7 +177,6 @@ struct VoiceWsEndpointTests {
     @Suite("Shared recognition models")
     struct SharedRecognitionModelTests {
         @Test
-        @MainActor
         func uninstallingMultilingualClearsEveryNemotronLanguage() {
             let nemotron = VoiceSttEngineId.fluidAudioNemotron
             let parakeet = VoiceSttEngineId.fluidAudioParakeet
@@ -197,7 +196,6 @@ struct VoiceWsEndpointTests {
         }
 
         @Test
-        @MainActor
         func uninstallingAnotherModelLeavesTheActiveRecognizerReady() {
             let apple = VoiceSttEngineId.appleSpeechAnalyzer
             let unloaded = VoicePipeline.unloading(
@@ -272,7 +270,6 @@ struct VoiceWsEndpointTests {
     @Suite("Voice install outcome")
     struct VoiceInstallOutcomeTests {
         @Test
-        @MainActor
         func inFlightInstallIsNeverSettled() {
             #expect(VoiceInstallOutcome.resolve(
                 installing: true, snapshotRunning: nil,
@@ -281,7 +278,6 @@ struct VoiceWsEndpointTests {
         }
 
         @Test
-        @MainActor
         func missingSnapshotMeansDaemonUnreachable() {
             #expect(VoiceInstallOutcome.resolve(
                 installing: false, snapshotRunning: nil,
@@ -290,7 +286,6 @@ struct VoiceWsEndpointTests {
         }
 
         @Test
-        @MainActor
         func readyModelsWinOverStaleRecognitionFailure() {
             #expect(VoiceInstallOutcome.resolve(
                 installing: false, snapshotRunning: false,
@@ -299,7 +294,6 @@ struct VoiceWsEndpointTests {
         }
 
         @Test
-        @MainActor
         func recognitionFailureEndsInstallEvenWhileVoiceDownloads() {
             #expect(VoiceInstallOutcome.resolve(
                 installing: false, snapshotRunning: true,
@@ -308,7 +302,6 @@ struct VoiceWsEndpointTests {
         }
 
         @Test
-        @MainActor
         func runningDownloadsKeepInstalling() {
             #expect(VoiceInstallOutcome.resolve(
                 installing: false, snapshotRunning: true,
@@ -321,7 +314,6 @@ struct VoiceWsEndpointTests {
         }
 
         @Test
-        @MainActor
         func stoppedDownloadsReturnToTheChoice() {
             #expect(VoiceInstallOutcome.resolve(
                 installing: false, snapshotRunning: false,
@@ -330,7 +322,6 @@ struct VoiceWsEndpointTests {
         }
 
         @Test
-        @MainActor
         func retryAfterFailedDownloadWaitsForStatusFetchedAfterTheRequest() {
             #expect(VoiceInstallOutcome.resolve(
                 installing: false, snapshotRunning: false,
@@ -350,7 +341,6 @@ struct VoiceWsEndpointTests {
         }
 
         @Test
-        @MainActor
         func firstInstallIgnoresIdleStatusFromBeforeTheRequest() {
             #expect(VoiceInstallOutcome.resolve(
                 installing: false, snapshotRunning: false,
@@ -360,7 +350,6 @@ struct VoiceWsEndpointTests {
         }
 
         @Test
-        @MainActor
         func preparationFailureIsReported() {
             #expect(VoiceInstallOutcome.resolve(
                 installing: false, snapshotRunning: false,

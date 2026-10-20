@@ -2,7 +2,6 @@
 import Foundation
 import Testing
 
-@MainActor
 private final class Gate {
     private var continuation: CheckedContinuation<Void, any Error>?
 
@@ -20,7 +19,6 @@ private final class Gate {
     }
 }
 
-@MainActor
 private final class Recorder<Value> {
     var values: [Value] = []
 }
@@ -128,7 +126,6 @@ struct SetupFlowTests {
     }
 
     @Test
-    @MainActor
     func proactivityStepStaysWhenTheDaemonCannotSaveTheChoice() async {
         let navigation = SetupNavigation(initialStep: .proactivity)
         let requests = Recorder<SettingsUpdateRequest>()
@@ -158,14 +155,13 @@ struct SetupFlowTests {
     }
 
     @Test
-    @MainActor
     func leavingTheLocalDownloadWaitsForItsCancellationAndStaysWhenItFails() async {
         let navigation = SetupNavigation(initialStep: .welcome)
         navigation.advance(to: .engineChoice)
         navigation.advance(to: .localSetup)
         let gate = Gate()
 
-        let leaving = Task { @MainActor in
+        let leaving = Task {
             await navigation.goBack(after: {
                 try await LocalRuntimeInstall.cancel { try await gate.wait() }
             })

@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-enum WB12OnboardingError: LocalizedError {
+nonisolated enum WB12OnboardingError: LocalizedError {
     case invalidSSID
     case invalidPassword
     case deviceNotFound
@@ -28,7 +28,7 @@ enum WB12OnboardingError: LocalizedError {
     }
 }
 
-struct WB12OnboardingProtocol {
+nonisolated struct WB12OnboardingProtocol {
     static let prefix = "@BOBE-WIFI/1 "
 
     static func base64URL(_ value: String) -> String {

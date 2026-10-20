@@ -3,7 +3,6 @@ import Observation
 import os
 import Speech
 
-@MainActor
 @Observable
 final class HoldToTalk {
     enum State: Equatable {
@@ -238,11 +237,11 @@ private struct SpeechListener: Sendable {
     }
 }
 
-private enum SpeechFeedError: Error {
+nonisolated private enum SpeechFeedError: Error {
     case unsupportedFormat
 }
 
-private final class SpeechFeed: @unchecked Sendable {
+nonisolated private final class SpeechFeed: @unchecked Sendable {
     private let converter: AVAudioConverter
     private let output: AVAudioFormat
     private let continuation: AsyncStream<AnalyzerInput>.Continuation

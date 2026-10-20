@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct BobePose: Equatable, Sendable, VectorArithmetic {
+nonisolated struct BobePose: Equatable, Sendable, VectorArithmetic {
     private var storage: SIMD16<Double>
 
     init(
@@ -127,7 +127,7 @@ struct BobePose: Equatable, Sendable, VectorArithmetic {
     }
 }
 
-extension BobePose {
+nonisolated extension BobePose {
     static let idle = BobePose()
     static let asleep = BobePose(open: 0, bend: 1, smile: 0.6, mouthWidth: 0.85, blush: 0.7)
     static let waking = BobePose(open: 0.55, eyeHeight: 0.9, smile: 0.8, blush: 0.6)

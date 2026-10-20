@@ -22,7 +22,7 @@ private enum RuntimeSetupPhase: Equatable {
     }
 }
 
-struct PairedRuntime: Equatable, Sendable {
+nonisolated struct PairedRuntime: Equatable, Sendable {
     let profile: EndpointProfile
     let credential: String
 }
@@ -370,7 +370,7 @@ struct RuntimeLocationStepView: View {
         self.setOperation(.working(self.selection == .managedLocal ? .starting : .checking))
         let previousProfile = EndpointStore.shared.profile
         let previousCredential = previousProfile.flatMap(EndpointStore.shared.credential)
-        self.operationTask = Task { @MainActor in
+        self.operationTask = Task {
             do {
                 let initializationState = try await self.selectRuntime(replacing: previousProfile)
                 self.finishOperation()
@@ -402,7 +402,7 @@ struct RuntimeLocationStepView: View {
         }
         self.errorMessage = nil
         self.setOperation(.working(.verifying))
-        self.operationTask = Task { @MainActor in
+        self.operationTask = Task {
             do {
                 let initializationState = try await self.attach(target)
                 self.finishOperation()

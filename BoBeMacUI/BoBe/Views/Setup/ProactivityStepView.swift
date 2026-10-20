@@ -48,7 +48,6 @@ enum ProactivitySetupError: LocalizedError {
 }
 
 extension ProactivityLevel {
-    @MainActor
     func apply(
         using update: (SettingsUpdateRequest) async throws -> SettingsUpdateResponse
     ) async throws {

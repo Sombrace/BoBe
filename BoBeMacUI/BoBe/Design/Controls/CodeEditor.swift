@@ -107,7 +107,6 @@ struct CodeEditor: NSViewRepresentable {
         ]
     }
 
-    @MainActor
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: CodeEditor
         weak var scrollView: NSScrollView?

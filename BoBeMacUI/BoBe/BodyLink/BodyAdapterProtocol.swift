@@ -1,6 +1,6 @@
 import Foundation
 
-struct BodyAdapterAudioFormat: Codable, Equatable, Sendable {
+nonisolated struct BodyAdapterAudioFormat: Codable, Equatable, Sendable {
     let codec: String
     let sampleRateHz: UInt32
     let channels: UInt8
@@ -21,7 +21,7 @@ struct BodyAdapterAudioFormat: Codable, Equatable, Sendable {
     }
 }
 
-struct BodyRoute: Codable, Equatable, Sendable {
+nonisolated struct BodyRoute: Codable, Equatable, Sendable {
     let deviceId: String
     let connectionGeneration: UInt64
     let bodySessionId: UUID
@@ -39,7 +39,7 @@ struct BodyRoute: Codable, Equatable, Sendable {
     }
 }
 
-enum BodyAdapterServerMessage: Decodable {
+nonisolated enum BodyAdapterServerMessage: Decodable {
     case welcome(protocolMajor: UInt8, protocolMinor: UInt8, adapterGeneration: UInt64)
     case captureOpen(route: BodyRoute, format: BodyAdapterAudioFormat)
     case captureClose(route: BodyRoute)
@@ -97,7 +97,7 @@ enum BodyAdapterServerMessage: Decodable {
     }
 }
 
-enum BodyAdapterClientMessage: Encodable {
+nonisolated enum BodyAdapterClientMessage: Encodable {
     case hello
     case transcriptPartial(route: BodyRoute, text: String)
     case transcriptFinal(route: BodyRoute, text: String)
@@ -139,7 +139,7 @@ enum BodyAdapterClientMessage: Encodable {
     }
 }
 
-struct BodyAdapterMediaHeader: Equatable, Sendable {
+nonisolated struct BodyAdapterMediaHeader: Equatable, Sendable {
     enum Kind: UInt8 {
         case microphonePcm = 1
     }
@@ -189,7 +189,7 @@ struct BodyAdapterMediaHeader: Equatable, Sendable {
     }
 }
 
-struct BodyLinkMicrophoneFrame {
+nonisolated struct BodyLinkMicrophoneFrame {
     static let headerLength = 20
     static let payloadLength = 640
     static let discontinuityFlag: UInt16 = 0x0001
@@ -223,10 +223,10 @@ struct BodyLinkMicrophoneFrame {
     }
 }
 
-private func readUInt32BE(_ data: Data, offset: Int) -> UInt32 {
+nonisolated private func readUInt32BE(_ data: Data, offset: Int) -> UInt32 {
     data.dropFirst(offset).prefix(4).reduce(0) { ($0 << 8) | UInt32($1) }
 }
 
-private func readUInt64BE(_ data: Data, offset: Int) -> UInt64 {
+nonisolated private func readUInt64BE(_ data: Data, offset: Int) -> UInt64 {
     data.dropFirst(offset).prefix(8).reduce(0) { ($0 << 8) | UInt64($1) }
 }

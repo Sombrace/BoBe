@@ -32,7 +32,6 @@ enum LocalRuntimeInstallError: LocalizedError {
     }
 }
 
-@MainActor
 enum LocalRuntimeInstall {
     static func cancel() async throws {
         try await self.cancel { try await DaemonClient.shared.cancelLocalRuntimeInstall() }
@@ -191,7 +190,7 @@ struct LocalSetupStepView: View {
 
     private func subscribeToStatus() {
         self.streamTask?.cancel()
-        self.streamTask = Task { @MainActor in
+        self.streamTask = Task {
             do {
                 try await DaemonClient.shared.streamLocalRuntimeStatus { snap in
                     Task { @MainActor in
@@ -210,7 +209,7 @@ struct LocalSetupStepView: View {
         self.isCanceling = true
         self.cancelError = nil
         self.onCriticalOperationChange(true)
-        Task { @MainActor in
+        Task {
             do {
                 try await LocalRuntimeInstall.cancel()
             } catch {

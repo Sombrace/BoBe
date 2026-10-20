@@ -2,7 +2,7 @@ import Foundation
 import MetricKit
 import OSLog
 
-private let diagnosticsLogger = Logger(subsystem: "com.bobe.app", category: "Diagnostics")
+nonisolated private let diagnosticsLogger = Logger(subsystem: "com.bobe.app", category: "Diagnostics")
 
 struct DiagnosticsSummary: Codable, Equatable, Sendable {
     let periodStart: Date
@@ -105,7 +105,6 @@ struct DiagnosticsStore {
     }()
 }
 
-@MainActor
 final class DiagnosticsMetrics: NSObject, MXMetricManagerSubscriber {
     static let shared = DiagnosticsMetrics()
     static let enabledKey = "bobe.diagnostics.enabled"

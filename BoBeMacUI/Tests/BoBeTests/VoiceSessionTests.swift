@@ -212,13 +212,11 @@ struct VoiceSessionSettingsTests {
     }
 }
 
-@MainActor
 private final class LifecycleLog {
     var events: [String] = []
 }
 
 @Suite("Audio lifecycle")
-@MainActor
 struct AudioLifecycleTests {
     @Test
     func configurationWaitsForEarlierTeardownCleanup() async {
@@ -244,7 +242,7 @@ struct AudioLifecycleTests {
             try? await Task.sleep(for: .milliseconds(30))
         }
         let generation = lifecycle.generation
-        let waiting = Task { @MainActor in
+        let waiting = Task {
             await lifecycle.settled()
             return lifecycle.generation == generation
         }

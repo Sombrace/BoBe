@@ -56,15 +56,13 @@ final class ScannerView: UIView, AVCaptureMetadataOutputObjectsDelegate {
         self.capture.halt()
     }
 
-    nonisolated func metadataOutput(
+    func metadataOutput(
         _ output: AVCaptureMetadataOutput,
         didOutput metadataObjects: [AVMetadataObject],
         from connection: AVCaptureConnection
     ) {
         guard let value = (metadataObjects.first as? AVMetadataMachineReadableCodeObject)?.stringValue else { return }
-        MainActor.assumeIsolated {
-            self.found(value)
-        }
+        self.found(value)
     }
 
     private func found(_ value: String) {
@@ -75,7 +73,7 @@ final class ScannerView: UIView, AVCaptureMetadataOutputObjectsDelegate {
     }
 }
 
-private final class CaptureBox: @unchecked Sendable {
+nonisolated private final class CaptureBox: @unchecked Sendable {
     let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "com.bobe.ios.scanner")
 

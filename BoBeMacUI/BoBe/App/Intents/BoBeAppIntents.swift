@@ -1,7 +1,7 @@
 import AppIntents
 import AppKit
 
-let intentLocalizationBundle = LocalizedStringResource.BundleDescription.atURL(
+nonisolated let intentLocalizationBundle = LocalizedStringResource.BundleDescription.atURL(
     Bundle.appResources.bundleURL
 )
 

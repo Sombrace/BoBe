@@ -390,7 +390,7 @@ struct MessageRow: View {
     }
 }
 
-enum MessagePresentation {
+nonisolated enum MessagePresentation {
     static func isPresented(visibleHeight: CGFloat, rowHeight: CGFloat, viewportHeight: CGFloat) -> Bool {
         let required = min(rowHeight, viewportHeight) / 2
         return required > 0 && visibleHeight >= required

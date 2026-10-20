@@ -126,6 +126,6 @@ actor ClientTtsEngine {
     }
 }
 
-enum ClientTtsEngineError: Error {
+nonisolated enum ClientTtsEngineError: Error {
     case audioConversionFailed
 }

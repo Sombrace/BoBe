@@ -3,9 +3,8 @@ import Foundation
 import OSLog
 import Sparkle
 
-private let updaterLogger = Logger(subsystem: "com.bobe.app", category: "Updater")
+nonisolated private let updaterLogger = Logger(subsystem: "com.bobe.app", category: "Updater")
 
-@MainActor
 final class UpdaterManager: NSObject, SPUUpdaterDelegate {
     static let shared = UpdaterManager()
 

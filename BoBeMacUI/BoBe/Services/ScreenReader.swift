@@ -3,7 +3,7 @@ import CoreGraphics
 import ScreenCaptureKit
 import Vision
 
-enum ScreenReader {
+nonisolated enum ScreenReader {
     static let maxCharacters = 6_000
     static let longestSide = 3_200
     static let permissionMissing = "permission_missing"
@@ -23,6 +23,7 @@ enum ScreenReader {
         let bundleIdentifier: String?
     }
 
+    @concurrent
     static func read() async -> BodyReply {
         guard CGPreflightScreenCaptureAccess() else { return .declined(self.permissionMissing) }
         guard !self.screenIsLocked() else { return .declined(self.screenLocked) }

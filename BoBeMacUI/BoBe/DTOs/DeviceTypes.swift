@@ -1,6 +1,6 @@
 import Foundation
 
-struct DeviceWire: Decodable, Identifiable, Sendable, Equatable {
+nonisolated struct DeviceWire: Decodable, Identifiable, Sendable, Equatable {
     let id: String
     let kind: String
     let label: String
@@ -12,7 +12,7 @@ struct DeviceWire: Decodable, Identifiable, Sendable, Equatable {
     }
 }
 
-struct PhoneInvitationWire: Decodable, Sendable, Equatable {
+nonisolated struct PhoneInvitationWire: Decodable, Sendable, Equatable {
     let code: String
     let expiresInSeconds: Int
     let origins: [String]

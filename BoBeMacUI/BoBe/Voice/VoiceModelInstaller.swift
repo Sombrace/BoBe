@@ -57,7 +57,6 @@ enum VoiceInstallOutcome: Equatable, Sendable {
     }
 }
 
-@MainActor
 @Observable
 final class VoiceModelInstaller {
     static let shared = VoiceModelInstaller()
@@ -264,7 +263,7 @@ final class VoiceModelInstaller {
         if self.monitorTask != nil, self.monitorSelection == selection { return }
         self.monitorTask?.cancel()
         self.monitorSelection = selection
-        self.monitorTask = Task { @MainActor [weak self] in
+        self.monitorTask = Task { [weak self] in
             guard let self else { return }
             defer {
                 if self.monitorSelection == selection {

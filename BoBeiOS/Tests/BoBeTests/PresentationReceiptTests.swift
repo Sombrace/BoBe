@@ -4,7 +4,6 @@ import SwiftUI
 import Testing
 import UIKit
 
-@MainActor
 @Suite("iPhone presentation receipts")
 struct PresentationReceiptTests {
     @Test

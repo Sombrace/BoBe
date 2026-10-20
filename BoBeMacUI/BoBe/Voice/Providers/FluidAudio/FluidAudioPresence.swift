@@ -1,14 +1,14 @@
 import FluidAudio
 import Foundation
 
-protocol FluidAudioPresence {
+nonisolated protocol FluidAudioPresence {
     static func isInstalled() -> Bool
 }
 
-extension FluidAudioModelPresence: FluidAudioPresence {}
-extension FluidAudioNemotronModelPresence: FluidAudioPresence {}
+nonisolated extension FluidAudioModelPresence: FluidAudioPresence {}
+nonisolated extension FluidAudioNemotronModelPresence: FluidAudioPresence {}
 
-func voiceSttProgress(_ progress: DownloadProgress) -> VoiceSttLoadProgress {
+nonisolated func voiceSttProgress(_ progress: DownloadProgress) -> VoiceSttLoadProgress {
     let phase: VoiceSttLoadProgress.Phase = switch progress.phase {
     case .listing:
         .listing
@@ -23,7 +23,7 @@ func voiceSttProgress(_ progress: DownloadProgress) -> VoiceSttLoadProgress {
     )
 }
 
-enum FluidAudioCache {
+nonisolated enum FluidAudioCache {
     static var root: URL {
         let appSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,

@@ -58,7 +58,6 @@ enum VoiceSetupPreference {
     }
 }
 
-@MainActor
 extension VoicePipeline {
     var activeSttLanguage: String {
         Self.sttLanguage(from: SettingsStore.shared.settings)
@@ -170,7 +169,7 @@ extension VoicePipeline {
         }
         let selection = self.daemonStateSelection
         let client = DaemonClient(endpoint: selection.endpoint)
-        let task = Task { @MainActor in
+        let task = Task {
             async let install: VoiceInstallSnapshot? = try? await client.voiceInstallStatus()
             async let attach: AttachResult? =
                 try? await EndpointAttachService.shared.attachConfiguredEndpoint(selection: selection)
