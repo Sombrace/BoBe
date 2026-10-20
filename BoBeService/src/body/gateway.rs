@@ -2502,7 +2502,7 @@ impl BodyGateway {
         let requests = crate::runtime::message_requests::MessageRequests::new(
             pool,
             Arc::clone(&session),
-            Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            tokio_util::task::TaskTracker::new(),
             Arc::clone(&session.runs),
             Arc::new(tokio::sync::RwLock::new(())),
         );

@@ -1,7 +1,7 @@
 use arc_swap::ArcSwap;
 use sqlx::sqlite::SqlitePool;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize};
+use std::sync::atomic::AtomicBool;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::agent::PiRuntime;
@@ -54,7 +54,7 @@ pub(crate) struct RuntimeContext {
     pub(crate) agent_workspace: Arc<AgentWorkspace>,
     pub(crate) personal_data_lifecycle: Arc<RwLock<()>>,
     pub(crate) agent_authority_lifecycle: Arc<crate::provider::AgentAuthorityLifecycle>,
-    pub(crate) in_flight_text_turns: Arc<AtomicUsize>,
+    pub(crate) in_flight_text_turns: tokio_util::task::TaskTracker,
     pub(crate) runs: Arc<crate::runtime::run_registry::RunRegistry>,
     pub(crate) message_requests: Arc<crate::runtime::message_requests::MessageRequests>,
     pub(crate) background: Arc<crate::runtime::background_work::BackgroundWork>,

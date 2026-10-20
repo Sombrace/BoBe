@@ -3091,21 +3091,13 @@ async fn drain_background_tasks(tasks: &mut tokio::task::JoinSet<&'static str>) 
     }
 }
 
-async fn drain_in_flight_text_turns(counter: &std::sync::atomic::AtomicUsize) {
-    use std::sync::atomic::Ordering;
-    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
-    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
-    let start = tokio::time::Instant::now();
-    loop {
-        let n = counter.load(Ordering::Acquire);
-        if n == 0 {
-            return;
-        }
-        if start.elapsed() >= DEADLINE {
-            tracing::warn!(in_flight = n, "text_turn_drain_timeout");
-            return;
-        }
-        tokio::time::sleep(POLL_INTERVAL).await;
+async fn drain_in_flight_text_turns(turns: &tokio_util::task::TaskTracker) {
+    turns.close();
+    if tokio::time::timeout(std::time::Duration::from_secs(10), turns.wait())
+        .await
+        .is_err()
+    {
+        tracing::warn!(in_flight = turns.len(), "text_turn_drain_timeout");
     }
 }
 

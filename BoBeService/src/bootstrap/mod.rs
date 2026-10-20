@@ -287,7 +287,7 @@ async fn run_with_config(
         crate::voice::install_service::VoiceInstallService::new(http, models_root, on_complete)
     };
 
-    let in_flight_text_turns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let in_flight_text_turns = tokio_util::task::TaskTracker::new();
 
     let provider_login =
         crate::agent::auth::LoginCoordinator::new(&agent, authority_lifecycle.maintenance_flag());
@@ -311,7 +311,7 @@ async fn run_with_config(
     let message_requests = crate::runtime::message_requests::MessageRequests::new(
         pool.clone(),
         Arc::clone(&wired.runtime_session),
-        Arc::clone(&in_flight_text_turns),
+        in_flight_text_turns.clone(),
         Arc::clone(&runs),
         Arc::clone(&personal_data_lifecycle),
     );
