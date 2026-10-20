@@ -157,7 +157,10 @@ mod tests {
     fn an_enabled_gateway_reports_every_invalid_setting_before_it_starts() {
         let root = std::env::temp_dir().join(format!("bobe-body-config-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).expect("root");
-        assert!(BodyConfig::default().validation_errors().is_empty());
+        assert_eq!(
+            BodyConfig::default().validation_errors(),
+            Vec::<String>::new()
+        );
 
         let broken = BodyConfig {
             enabled: true,

@@ -724,7 +724,7 @@ mod tests {
         );
         server.allowed_hosts = vec!["localhost".into()];
         server.host = "127.0.0.1".into();
-        assert!(phone_origins(&server).is_empty());
+        assert_eq!(phone_origins(&server), Vec::<String>::new());
     }
 
     #[test]

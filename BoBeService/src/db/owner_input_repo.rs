@@ -610,11 +610,11 @@ mod tests {
     async fn owner_input_context_is_one_data_block_or_nothing() {
         let pool = crate::db::test_helpers::in_memory_pool().await;
         let repo = AgentJobRepo::new(pool.clone());
-        assert!(
+        assert_eq!(
             repo.owner_input_context(ConversationChannelId::OWNER, None)
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            ""
         );
         let input = repo
             .ask_owner("request", origin(Uuid::new_v4(), None), question())

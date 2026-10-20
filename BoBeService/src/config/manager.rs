@@ -273,7 +273,7 @@ mod tests {
         let changes = HashMap::from([("capture.enabled".into(), serde_json::json!(false))]);
         let result = manager.update(&changes).unwrap();
         assert_eq!(result.applied_fields, ["capture.enabled"]);
-        assert!(result.restart_required_fields.is_empty());
+        assert_eq!(result.restart_required_fields, Vec::<String>::new());
         assert!(!manager.config.load().capture.enabled);
     }
 
@@ -303,7 +303,7 @@ mod tests {
         let before = manager.config.load().logging.level.clone();
         let changes = HashMap::from([("logging.level".into(), serde_json::json!("debug"))]);
         let result = manager.update(&changes).unwrap();
-        assert!(result.applied_fields.is_empty());
+        assert_eq!(result.applied_fields, Vec::<String>::new());
         assert_eq!(result.restart_required_fields, ["logging.level"]);
         assert_eq!(manager.config.load().logging.level, before);
     }

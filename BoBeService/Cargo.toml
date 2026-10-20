@@ -2,7 +2,7 @@
 name = "bobe"
 version = "0.9.2"
 edition = "2024"
-rust-version = "1.98.1"
+rust-version = "1.99.1"
 license = "MIT"
 authors = ["The BoBe Authors"]
 homepage = "https://www.bobebot.com"
@@ -74,7 +74,7 @@ overflow-checks = true
 [dependencies]
 anyhow = "1.0.104"
 async-stream = "0.3.6"
-arc-swap = "1.9.2"
+arc-swap = "1.9.3"
 axum = { version = "0.8.9", features = ["ws"] }
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 chrono = { version = "0.4.45", features = ["serde"] }
@@ -94,7 +94,7 @@ sqlx = { version = "0.9.0", default-features = false, features = [
     "derive",
 ] }
 thiserror = "2.0"
-tokio = { version = "1.53.3", features = [
+tokio = { version = "1.54.0", features = [
     "fs",
     "io-util",
     "io-std",
@@ -107,7 +107,7 @@ tokio = { version = "1.53.3", features = [
     "time",
 ] }
 tokio-stream = { version = "0.1.19", features = ["sync"] }
-tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["handshake"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = [
     "logging",
     "tls12",
@@ -120,10 +120,10 @@ tracing-appender = "0.2.5"
 uuid = { version = "1.28", features = ["v4", "serde"] }
 url = "2.5.8"
 which = "8.0.6"
-libc = "0.2.190"
+libc = "0.2.191"
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 rand = "0.10.3"
-mdns-sd = { version = "0.21", default-features = false }
+mdns-sd = { version = "0.21.6", default-features = false }
 dashmap = "6.2.1"
 tower = { version = "0.5.3", features = ["limit"] }
 reqwest = { version = "0.13.5", default-features = false, features = [
@@ -138,7 +138,7 @@ rustls = { version = "0.23.46", default-features = false, features = [
 ] }
 flate2 = "1.1.10"
 tar = "0.4.46"
-zstd = "0.14.2"
+zstd = "0.14.3"
 bzip2 = "0.6.1"
 bytes = "1"
 sherpa-onnx = "=1.13.8"

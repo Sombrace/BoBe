@@ -221,7 +221,7 @@ mod tests {
     async fn list_empty_dir_returns_empty() {
         let store = GoalFileStore::new(tempdir());
         let goals = store.list().await.unwrap();
-        assert!(goals.is_empty());
+        assert_eq!(goals, []);
     }
 
     #[tokio::test]

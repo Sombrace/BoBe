@@ -603,7 +603,7 @@ mod tests {
     fn every_guided_service_names_a_wire_kind_and_profile() {
         for service in ONLINE_SERVICES.iter().chain(std::iter::once(&OWN_SERVER)) {
             assert!(crate::provider::ProfileId::parse(service.profile).is_ok());
-            assert!(!service.kind.is_empty());
+            assert_ne!(service.kind, "");
         }
     }
 }

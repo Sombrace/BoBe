@@ -95,7 +95,7 @@ pub(crate) mod memory {
 
         fn write(&self) -> Result<(), SecretError> {
             self.writes_before_failure
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
                     left.checked_sub(1)
                 })
                 .map(drop)

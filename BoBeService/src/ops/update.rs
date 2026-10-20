@@ -904,7 +904,7 @@ mod tests {
         let recovered = recover(&journal, &versions, &host).await.unwrap();
 
         assert_eq!(recovered, Recovered::Finalized);
-        assert!(host.calls().is_empty());
+        assert_eq!(host.calls(), Vec::<String>::new());
         assert!(!journal.exists());
         assert_eq!(current(&versions), PathBuf::from("2.0.0"));
         assert!(versions.join("2.0.0/bin/bobe").is_file());
@@ -952,7 +952,7 @@ mod tests {
             let recovered = recover(&journal, &versions, &host).await.unwrap();
 
             assert_eq!(recovered, Recovered::Finalized, "{phase:?}");
-            assert!(host.calls().is_empty());
+            assert_eq!(host.calls(), Vec::<String>::new());
             assert!(!journal.exists());
             assert_eq!(current(&versions), PathBuf::from("2.0.0"));
             std::fs::remove_dir_all(root).unwrap();
@@ -1120,7 +1120,7 @@ mod tests {
             recover(&journal, &versions, &host).await.unwrap(),
             Recovered::Nothing
         );
-        assert!(host.calls().is_empty());
+        assert_eq!(host.calls(), Vec::<String>::new());
         std::fs::remove_dir_all(root).unwrap();
     }
 

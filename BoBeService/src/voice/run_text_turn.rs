@@ -517,7 +517,10 @@ mod tests {
             Arc::clone(&activity),
         ));
 
-        assert!(pipeline.lock().await.feed("Let me check that.").is_empty());
+        assert_eq!(
+            pipeline.lock().await.feed("Let me check that."),
+            Vec::<String>::new()
+        );
         activity.notify_one();
         tokio::time::sleep(SENTENCE_PAUSE / 3).await;
         assert!(sentence_rx.try_recv().is_err());
