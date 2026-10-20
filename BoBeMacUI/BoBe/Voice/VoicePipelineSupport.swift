@@ -1,6 +1,5 @@
 @preconcurrency import AVFoundation
 import Foundation
-import os
 
 nonisolated struct VoiceLoadTimeout: Error {}
 
@@ -14,13 +13,13 @@ nonisolated enum VoiceError: Error, CustomStringConvertible {
 }
 
 nonisolated func withVoiceLoadTimeout(
-    seconds: TimeInterval,
+    _ timeout: Duration,
     _ operation: @escaping @Sendable () async throws -> Void
 ) async throws {
     try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { try await operation() }
         group.addTask {
-            try await Task.sleep(for: .seconds(seconds))
+            try await Task.sleep(for: timeout)
             throw VoiceLoadTimeout()
         }
         _ = try await group.next()
@@ -95,22 +94,46 @@ nonisolated func convertSingleBuffer(
     source: AVAudioBuffer,
     into output: AVAudioPCMBuffer
 ) -> (status: AVAudioConverterOutputStatus, error: NSError?) {
-    let state = OSAllocatedUnfairLock(initialState: false)
+    var fed = false
     var err: NSError?
     let status = converter.convert(to: output, error: &err) { _, statusPtr in
-        let shouldFeed = state.withLock { fed in
-            guard !fed else { return false }
-            fed = true
-            return true
-        }
-        if !shouldFeed {
+        guard !fed else {
             statusPtr.pointee = .noDataNow
             return nil
         }
+        fed = true
         statusPtr.pointee = .haveData
         return source
     }
     return (status, err)
+}
+
+@available(macOS 27, *)
+nonisolated func computePlaybackRms(_ buffer: AVReadOnlyAudioPCMBuffer) -> Float {
+    let frames = buffer.frameLength
+    guard frames > 0 else { return 0 }
+    let stride = buffer.stride
+    var sumSq: Double = 0
+    switch buffer.channelData(0) {
+    case let .float(span):
+        for frame in 0 ..< frames {
+            let s = Double(span[frame * stride])
+            sumSq += s * s
+        }
+    case let .int16(span):
+        for frame in 0 ..< frames {
+            let s = Double(span[frame * stride]) / 32_768.0
+            sumSq += s * s
+        }
+    case let .int32(span):
+        for frame in 0 ..< frames {
+            let s = Double(span[frame * stride]) / 2_147_483_648.0
+            sumSq += s * s
+        }
+    @unknown default:
+        return 0
+    }
+    return Float(sqrt(sumSq / Double(frames)))
 }
 
 nonisolated func computePlaybackRms(_ buffer: AVAudioPCMBuffer) -> Float {

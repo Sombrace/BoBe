@@ -98,10 +98,10 @@ final class BobeCommandRouter {
     }
 
     @discardableResult
-    func toggleLogicalMicrophoneMute() async -> BobeCommandOutcome {
+    func toggleLogicalMicrophoneMute() -> BobeCommandOutcome {
         guard SetupWindowManager.shared.isOnboardingCompleted else { return .setupRequired }
         let desiredMute = !VoicePipeline.shared.muted
-        guard await VoicePipeline.shared.setMuted(desiredMute),
+        guard VoicePipeline.shared.setMuted(desiredMute),
               VoicePipeline.shared.muted == desiredMute
         else { return .unavailable }
         return .performed

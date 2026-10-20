@@ -1,7 +1,8 @@
 import CryptoKit
 import Foundation
+import Synchronization
 
-nonisolated private final class DaemonSessionCache: @unchecked Sendable {
+nonisolated private final class DaemonSessionCache: Sendable {
     static let shared = DaemonSessionCache()
 
     private struct Key: Hashable {
@@ -16,9 +17,12 @@ nonisolated private final class DaemonSessionCache: @unchecked Sendable {
         let generation: UInt64
     }
 
-    private let lock = NSLock()
-    private var sessions: [Key: Entry] = [:]
-    private var nextGeneration: UInt64 = 0
+    private struct State {
+        var sessions: [Key: Entry] = [:]
+        var nextGeneration: UInt64 = 0
+    }
+
+    private let state = Mutex(State())
     private let maximumSessions = 16
 
     func session(for endpoint: DaemonEndpoint, purpose: DaemonTransportPurpose) -> URLSession {
@@ -29,26 +33,28 @@ nonisolated private final class DaemonSessionCache: @unchecked Sendable {
             purpose: purpose
         )
 
-        self.lock.lock()
-        defer { self.lock.unlock() }
-        if let cached = self.sessions[key] {
-            return cached.session
+        let maximumSessions = self.maximumSessions
+        let (session, evicted) = self.state.withLock { state -> (URLSession, URLSession?) in
+            if let cached = state.sessions[key] {
+                return (cached.session, nil)
+            }
+            let session = DaemonTransportPolicy.makeSession(for: endpoint, purpose: purpose)
+            state.nextGeneration &+= 1
+            state.sessions[key] = Entry(session: session, generation: state.nextGeneration)
+            guard state.sessions.count > maximumSessions,
+                  let oldest = state.sessions.min(by: { $0.value.generation < $1.value.generation })
+            else { return (session, nil) }
+            return (session, state.sessions.removeValue(forKey: oldest.key)?.session)
         }
-        let session = DaemonTransportPolicy.makeSession(for: endpoint, purpose: purpose)
-        self.nextGeneration &+= 1
-        self.sessions[key] = Entry(session: session, generation: self.nextGeneration)
-        if self.sessions.count > self.maximumSessions,
-           let oldest = self.sessions.min(by: { $0.value.generation < $1.value.generation }) {
-            self.sessions.removeValue(forKey: oldest.key)?.session.invalidateAndCancel()
-        }
+        evicted?.invalidateAndCancel()
         return session
     }
 
     func invalidateAll() {
-        self.lock.lock()
-        let stale = self.sessions.values.map(\.session)
-        self.sessions.removeAll(keepingCapacity: true)
-        self.lock.unlock()
+        let stale = self.state.withLock { state in
+            defer { state.sessions.removeAll(keepingCapacity: true) }
+            return state.sessions.values.map(\.session)
+        }
         for session in stale {
             session.invalidateAndCancel()
         }

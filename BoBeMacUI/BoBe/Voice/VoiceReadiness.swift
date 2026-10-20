@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import Speech
 
 public enum VoiceReadiness: Equatable {
     case preparing
@@ -67,81 +68,48 @@ extension VoicePipeline {
         self.sessionSttLanguage ?? self.activeSttLanguage
     }
 
-    var activeStt: any VoiceSttEngine {
-        self.sttEngine(
-            engineId: self.effectiveSttEngineId,
-            language: self.effectiveLanguage
-        )
+    var activeStt: AppleSpeechStt {
+        self.recognizer(for: self.effectiveLanguage)
     }
 
-    func preferredSttEngineId(for language: String) -> String {
-        switch VoiceSttPreferenceStore.shared.preference {
-        case .appleSpeech:
-            VoiceSttEngineId.appleSpeechAnalyzer
-        case .automatic, .fluidAudio, .daemon:
-            self.fluidAudioEngineId(for: language)
+    func recognizer(for language: String) -> AppleSpeechStt {
+        if let recognizer = self.recognizers[language] {
+            return recognizer
         }
+        let pauseMs = Self.eouDelayMs(for: SettingsStore.shared.settings?.voicePauseSensitivity ?? "")
+        let recognizer = AppleSpeechStt(language: language, pauseMs: pauseMs)
+        self.recognizers[language] = recognizer
+        return recognizer
     }
 
-    func fluidAudioEngineId(for language: String) -> String {
-        language == "en"
-            ? VoiceSttEngineId.fluidAudioParakeet
-            : VoiceSttEngineId.fluidAudioNemotron
-    }
-
-    func sttEngine(engineId: String, language: String) -> any VoiceSttEngine {
-        switch engineId {
-        case VoiceSttEngineId.appleSpeechAnalyzer:
-            if let engine = self.appleSttByLanguage[language] {
-                return engine
+    func releaseUnusedRecognizers() {
+        let inUse: Set = [self.activeSttLanguage, self.effectiveLanguage]
+        let unused = self.recognizers.filter { !inUse.contains($0.key) }
+        guard !unused.isEmpty else { return }
+        for language in unused.keys {
+            self.recognizers[language] = nil
+            self.loadedSttLanguages.remove(language)
+        }
+        Task(name: "Release speech recognizers") {
+            for recognizer in unused.values {
+                await recognizer.cleanup()
             }
-            let engine = AppleSpeechStt(language: language)
-            self.appleSttByLanguage[language] = engine
-            return engine
-        case VoiceSttEngineId.fluidAudioParakeet:
-            return self.parakeetStt
-        default:
-            return self.nemotronStt
+            await SpeechModels.endRetention()
         }
     }
 
-    static func sttReadinessKey(engineId: String, language: String) -> String {
-        "\(engineId):\(language)"
+    func daemonRecognizes(_ language: String) -> Bool {
+        VoiceTtsBackend.languageKey(language) == "en"
     }
 
-    func refreshSttPreferenceState() {
-        self.sttStatusLanguage = self.activeSttLanguage
-        if VoiceSttPreferenceStore.shared.preference == .daemon {
-            self.sttStatus = self.daemonSttReady ? .ready : .notLoaded
-            return
-        }
-        let engineId = self.preferredSttEngineId(for: self.activeSttLanguage)
-        let key = Self.sttReadinessKey(engineId: engineId, language: self.activeSttLanguage)
-        if self.loadedSttKeys.contains(key) {
-            self.sttStatus = .ready
-        } else if engineId != VoiceSttEngineId.appleSpeechAnalyzer,
-                  self.modelIsInstalled(for: self.activeSttLanguage) {
-            self.sttStatus = .ready
-        } else {
-            self.sttStatus = .notLoaded
-        }
-    }
-
-    var activeModelIsInstalled: Bool {
-        let engineId = self.preferredSttEngineId(for: self.effectiveLanguage)
-        if engineId == VoiceSttEngineId.appleSpeechAnalyzer {
-            return self.loadedSttKeys.contains(
-                Self.sttReadinessKey(engineId: engineId, language: self.effectiveLanguage)
-            )
-        }
-        return self.modelIsInstalled(for: self.effectiveLanguage)
-    }
-
-    func modelIsInstalled(for language: String) -> Bool {
-        switch language {
-        case "en": FluidAudioModelPresence.isInstalled()
-        default: FluidAudioNemotronModelPresence.isInstalled()
-        }
+    func refreshSttState() async {
+        let language = self.activeSttLanguage
+        self.sttStatusLanguage = language
+        let ready = self.loadedSttLanguages.contains(language)
+            ? true
+            : await AppleSpeechStt.assetsInstalled(for: language)
+        guard language == self.activeSttLanguage, self.sttDownloadLanguage != language else { return }
+        self.sttStatus = ready ? .ready : .notLoaded
     }
 
     public var readiness: VoiceReadiness {
@@ -200,18 +168,16 @@ extension VoicePipeline {
 
     func reconcileVoiceSettings() {
         if self.sttStatusLanguage != self.activeSttLanguage {
-            self.refreshSttPreferenceState()
+            self.sttStatusLanguage = self.activeSttLanguage
+            self.releaseUnusedRecognizers()
+            Task { await self.refreshSttState() }
         }
         guard let settings = SettingsStore.shared.settings else { return }
         let delayMs = Self.eouDelayMs(for: settings.voicePauseSensitivity)
-        let nemotron = self.nemotronStt
-        let parakeet = self.parakeetStt
-        let appleEngines = Array(self.appleSttByLanguage.values)
+        let recognizers = Array(self.recognizers.values)
         Task {
-            await nemotron.setEouDelayMs(delayMs)
-            await parakeet.setEouDebounceMs(delayMs)
-            for engine in appleEngines {
-                await engine.setEouDebounceMs(delayMs)
+            for recognizer in recognizers {
+                await recognizer.setPauseMs(delayMs)
             }
         }
         if !settings.voiceEnabled, self.state != .idle {

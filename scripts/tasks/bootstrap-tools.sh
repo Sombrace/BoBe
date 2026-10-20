@@ -10,7 +10,7 @@ MODE="${1:-install}"
 CARGO_ABOUT_VERSION="0.9.2"
 CARGO_DENY_VERSION="0.20.2"
 CARGO_MACHETE_VERSION="0.9.2"
-SWIFTLINT_VERSION="0.65.0"
+SWIFTLINT_VERSION="0.65.1"
 XCODEGEN_VERSION="2.46.0"
 
 tool_matches() {
@@ -115,7 +115,7 @@ if on_macos && ! tool_matches "$BIN_DIR/swiftlint" "$SWIFTLINT_VERSION" version;
     install_single_binary_zip \
         swiftlint "$SWIFTLINT_VERSION" \
         "https://github.com/realm/SwiftLint/releases/download/$SWIFTLINT_VERSION/portable_swiftlint.zip" \
-        d6cb0aa7a2f5f1ef306fc9e37bcb54dc9a26facc8f7784ac0c3dd3eccf5c6ba6 \
+        c1e429b0599cf1b516f369a2d9ec04eaf0e436f3c12b637df8851fa52ff694d0 \
         swiftlint
 fi
 if on_macos && ! tool_matches "$BIN_DIR/xcodegen" "Version: $XCODEGEN_VERSION" --version; then

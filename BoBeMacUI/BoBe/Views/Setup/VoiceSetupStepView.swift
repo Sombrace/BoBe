@@ -16,7 +16,7 @@ struct VoiceSetupStepView: View {
     }
 
     private var showsVoiceModel: Bool {
-        VoiceTtsPreference.shared.backend == .serverPocket
+        VoiceTtsBackend.best(for: VoicePipeline.shared.effectiveLanguage) == .serverPocket
             && self.installer.status(of: .pocketTts) != .unknown
     }
 

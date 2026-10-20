@@ -42,7 +42,7 @@ struct PrivacyPanel: View {
                     .toggleStyle(BobeLabeledSwitchStyle())
                     .accessibilityIdentifier("settings.privacy.diagnostics.enabled")
                     .onChange(of: self.diagnosticsEnabled) { _, enabled in
-                        Task { await self.updateDiagnosticsEnabled(enabled) }
+                        self.updateDiagnosticsEnabled(enabled)
                     }
 
                     Text(L10n.tr("settings.privacy.diagnostics.excluded"))
@@ -173,9 +173,9 @@ struct PrivacyPanel: View {
         .accessibilityIdentifier("settings.panel.privacy")
     }
 
-    private func updateDiagnosticsEnabled(_ enabled: Bool) async {
+    private func updateDiagnosticsEnabled(_ enabled: Bool) {
         do {
-            try await DiagnosticsMetrics.shared.setEnabled(enabled)
+            try DiagnosticsMetrics.shared.setEnabled(enabled)
             self.diagnosticsStatusIsError = false
             self.diagnosticsStatusMessage = enabled
                 ? L10n.tr("settings.privacy.diagnostics.status.enabled")

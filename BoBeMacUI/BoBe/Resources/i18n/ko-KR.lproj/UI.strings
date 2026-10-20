@@ -213,7 +213,7 @@
 "settings.expert.toggle" = "전문가용 설정 표시";
 "settings.expert.toggle.description" = "기본적으로 꺼져 있습니다. BoBe의 모든 세부 설정을 보려면 켜세요. 다시 꺼도 이미 설정한 값은 계속 적용됩니다.";
 "settings.expert.section.what_changes" = "달라지는 점";
-"settings.expert.section.what_changes.list" = "• 친숙한 이름 옆에 모델 코드명(Pocket TTS, Parakeet, Nemotron)이 함께 표시됩니다\n• 소울, 프로필, 메모리에 Markdown 원문 모드가 추가됩니다\n• 도구 서버(MCP)를 JSON 원문으로 편집할 수 있습니다\n• 완전 오프라인 설정이 표시됩니다\n• 터미널을 통한 대체 로그인 방법을 사용할 수 있습니다";
+"settings.expert.section.what_changes.list" = "• 친숙한 이름 옆에 모델 코드명(Pocket TTS, Apple Speech)이 함께 표시됩니다\n• 소울, 프로필, 메모리에 Markdown 원문 모드가 추가됩니다\n• 도구 서버(MCP)를 JSON 원문으로 편집할 수 있습니다\n• 완전 오프라인 설정이 표시됩니다\n• 터미널을 통한 대체 로그인 방법을 사용할 수 있습니다";
 
 "overlay.error.daemon_disconnected" = "BoBe가 오프라인이에요";
 "overlay.error.daemon_restart" = "다시 시작";
@@ -366,7 +366,7 @@
 "setup.voice.stt_label.progress_format" = "듣기: 다운로드 중 %d%%…";
 "setup.voice.stt_label.ready" = "듣기: 준비 완료";
 "setup.voice.stt_label.failed_format" = "듣기: 불러오지 못했습니다. %@";
-"setup.voice.body" = "약 600 MB를 한 번만 내려받습니다. 다른 언어는 더 필요합니다.";
+"setup.voice.body" = "목소리와 듣기를 위해 한 번만 내려받습니다.";
 "setup.voice.complete" = "대화할 준비가 됐습니다.";
 "setup.voice.failed" = "음성 설정을 마치지 못했습니다.";
 "setup.voice.poll_failure" = "다운로드가 멈췄습니다. 지금 다시 시도하거나 나중에 설정에서 다시 시도하세요.";
@@ -393,7 +393,7 @@
 "settings.voice.description" = "음성 인식, BoBe의 목소리, 그리고 내 말이 끝났는지 판단하는 방식입니다.";
 "settings.voice.section.preferences" = "환경설정";
 "settings.voice.section.models" = "모델";
-"settings.voice.section.models.location_note" = "이 Mac에서 실행되는 듣기 모델은 ~/Library/Application Support/FluidAudio/ 아래의 FluidAudio 캐시를 사용해요. BoBe의 말하는 목소리는 선택한 런타임이 자체 데이터 폴더에 저장해요.";
+"settings.voice.section.models.location_note" = "언어별 음성 인식 모델은 macOS가 저장하고 업데이트해요. BoBe의 영어 목소리는 선택한 런타임이 자체 데이터 폴더에 저장해요.";
 
 "settings.context_editor.mode.guided" = "가이드";
 "settings.context_editor.mode.raw" = "원문";
@@ -417,21 +417,8 @@
 "settings.voice.pause_sensitivity.patient" = "느긋하게";
 "settings.voice.partial_caption" = "실시간 자막 표시";
 "settings.voice.partial_caption.description" = "말하는 동안 받아쓴 내용을 실시간으로 보여 줘요. 계속 바뀌는 글자가 거슬리면 꺼 주세요.";
-"settings.voice.stt_preference" = "음성 인식 엔진";
-"settings.voice.stt_preference.description" = "음성을 어디에서 인식할지 고르세요. 자동은 Apple Speech가 BoBe의 실제 음성 품질 기준을 통과할 때까지 검증된 FluidAudio를 그대로 써요. 바꾼 뒤에는 음성을 다시 연결해 주세요.";
-"settings.voice.stt_preference.automatic" = "자동 (권장)";
-"settings.voice.stt_preference.apple_speech" = "Apple Speech (실험적)";
-"settings.voice.stt_preference.fluid_audio" = "FluidAudio (로컬)";
-"settings.voice.stt_preference.daemon" = "BoBe 데몬";
-"settings.voice.tts_backend" = "음성 합성 백엔드";
-"settings.voice.tts_backend.description" = "실험적인 기능이에요. Supertonic은 다국어 TTS를 앱 안에서 실행하고, 처음 쓸 때 Core ML 모델을 내려받아요. 바꾼 뒤에는 음성을 다시 연결해 주세요.";
-"settings.voice.tts_backend.server_pocket" = "서버 Pocket TTS (영어)";
-"settings.voice.tts_backend.client_supertonic" = "클라이언트 Supertonic-3 (실험적)";
-"settings.voice.tts_backend.best_for_format" = "%1$@ · %2$@에 최적";
-"settings.voice.advice.engine_format" = "%1$@은(는) %2$@을(를) 말할 수 없습니다. %3$@은(는) 가능합니다.";
 "settings.voice.advice.persona_format" = "BoBe의 현재 목소리는 다른 언어용입니다. %@용 목소리로 바꿀까요?";
 "settings.voice.advice.switch" = "전환";
-"settings.voice.language_unsupported" = "%@에는 %@용 목소리가 없습니다. 지원되는 언어나 다른 음성 엔진을 선택하세요.";
 "setup.voice.model.tts" = "목소리";
 "setup.voice.model.stt" = "듣기";
 
@@ -618,17 +605,13 @@
 "settings.voice.model.tts.name_expert" = "Pocket TTS · 영어 · Q8";
 "settings.voice.model.tts.purpose" = "6가지 목소리로 영어를 말해요. 더 많은 언어 팩이 추가될 예정이에요.";
 "settings.voice.model.tts.size" = "약 170 MB";
-"settings.voice.model.supertonic.name" = "FluidAudio Supertonic-3 다국어";
-"settings.voice.model.supertonic.purpose" = "지원되는 언어를 위한 실험적인 앱 내 음성 합성이에요.";
-"settings.voice.model.supertonic.size" = "약 100 MB";
-"settings.voice.model.stt_en.name" = "듣기 — 영어";
-"settings.voice.model.stt_en.name_expert" = "FluidAudio Parakeet EOU (영어)";
-"settings.voice.model.stt_en.purpose" = "언어가 영어로 설정되어 있을 때 말을 알아들어요.";
-"settings.voice.model.stt_en.size" = "약 450 MB";
-"settings.voice.model.stt_multi.name" = "듣기 — 다른 언어";
-"settings.voice.model.stt_multi.name_expert" = "FluidAudio Nemotron 3.5 스트리밍 다국어 + Silero VAD";
-"settings.voice.model.stt_multi.purpose" = "언어가 영어가 아닐 때 말을 알아들어요.";
-"settings.voice.model.stt_multi.size" = "모델 버전에 따라 다름";
+"settings.voice.model.stt.name" = "듣기";
+"settings.voice.model.stt.name_expert_format" = "Apple Speech · %@";
+"settings.voice.model.stt.purpose" = "선택한 언어로 말을 알아들어요. 다운로드와 업데이트는 macOS가 맡아요.";
+"settings.voice.model.managed_by_macos" = "macOS가 관리";
+"settings.voice.model.system_voice.name_format" = "시스템 목소리 · %@";
+"settings.voice.model.system_voice.purpose" = "BoBe는 영어가 아닌 언어를 이 Mac의 가장 좋은 시스템 목소리로 말해요. 더 자연스러운 소리를 원하면 시스템 설정 › 손쉬운 사용에서 향상된 목소리나 프리미엄 목소리를 내려받으세요.";
+"settings.voice.no_system_voice_format" = "이 Mac에는 %@ 목소리가 없어요. 시스템 설정 › 손쉬운 사용에서 추가하세요.";
 "settings.voice.reinstall" = "모두 다시 설치";
 "settings.voice.reinstalling" = "다시 설치하는 중…";
 "settings.voice.reinstall.accessibility" = "모든 음성 모델 다시 설치";

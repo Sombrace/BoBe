@@ -25,8 +25,8 @@ enum SurfacePowerState: Equatable {
 final class SystemPowerObserver {
     static let shared = SystemPowerObserver()
 
-    private var sleepObserver: NSObjectProtocol?
-    private var wakeObserver: NSObjectProtocol?
+    private var sleepObserver: NotificationCenter.ObservationToken?
+    private var wakeObserver: NotificationCenter.ObservationToken?
     private(set) var state: SurfacePowerState = .stopped
 
     private init() {}
@@ -36,23 +36,15 @@ final class SystemPowerObserver {
         self.state = .running
         let center = NSWorkspace.shared.notificationCenter
         if self.sleepObserver == nil {
-            self.sleepObserver = center.addObserver(
-                forName: NSWorkspace.willSleepNotification,
-                object: nil,
-                queue: .main
-            ) { _ in
-                Task { @MainActor in
+            self.sleepObserver = center.addObserver(of: NSWorkspace.shared, for: .willSleep) { _ in
+                Task.immediate(name: "Prepare for sleep") {
                     await SystemPowerObserver.shared.prepareForSleep()
                 }
             }
         }
         if self.wakeObserver == nil {
-            self.wakeObserver = center.addObserver(
-                forName: NSWorkspace.didWakeNotification,
-                object: nil,
-                queue: .main
-            ) { _ in
-                Task { @MainActor in
+            self.wakeObserver = center.addObserver(of: NSWorkspace.shared, for: .didWake) { _ in
+                Task(name: "Resume after wake") {
                     await SystemPowerObserver.shared.resumeAfterWake()
                 }
             }
@@ -94,7 +86,7 @@ final class SystemPowerObserver {
             BobeStore.shared.resumeEventStream()
         }
         await VoicePipeline.shared.refreshDaemonState()
-        VoicePipeline.shared.bootstrapSttPresence()
+        await VoicePipeline.shared.bootstrapSttPresence()
     }
 
     func stop() {

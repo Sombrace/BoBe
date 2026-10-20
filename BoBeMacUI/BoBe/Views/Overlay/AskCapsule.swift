@@ -60,6 +60,7 @@ struct AskCapsule: View {
     }
 
     private var field: some View {
+        // swiftlint:disable:next accessibility_trait_for_button
         HStack(alignment: .bottom, spacing: 6) {
             ZStack(alignment: .leading) {
                 if self.text.isEmpty {

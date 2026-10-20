@@ -179,12 +179,12 @@ nonisolated enum PairingExchange {
         let session = connection.session
         let spki = connection.observedSPKI?.hexEncodedString() ?? ""
         let clientNonce = try self.randomData(count: 32)
-        let started = try PairingClient.start(code: code)
+        let client = try PairingClient(code: code)
         let begin: BeginResponse = try await self.post(
             BeginRequest(
                 origin: target.origin,
                 tlsSpkiSha256: spki,
-                request: started.request.base64URLEncodedString(),
+                request: client.request.base64URLEncodedString(),
                 clientNonce: clientNonce.base64URLEncodedString()
             ),
             to: target.url.appendingPathComponent("v2/pairing/begin"),
@@ -210,7 +210,7 @@ nonisolated enum PairingExchange {
               let response = Data(base64URLEncoded: begin.response)
         else { throw DevicePairingError.identityMismatch }
 
-        let finished = try started.client.finish(code: code, response: response, context: context)
+        let finished = try client.finish(code: code, response: response, context: context)
         let key = SymmetricKey(
             data: HKDF<SHA256>.deriveKey(
                 inputKeyMaterial: SymmetricKey(data: finished.sessionKey),

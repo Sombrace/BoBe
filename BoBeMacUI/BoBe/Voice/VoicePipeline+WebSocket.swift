@@ -7,7 +7,7 @@ extension VoicePipeline {
 
     func startReceiveLoop(socket: URLSessionWebSocketTask, generation: UInt64) {
         self.receiveTask?.cancel()
-        self.receiveTask = Task { [weak self, weak socket] in
+        self.receiveTask = Task(name: "Voice socket receive") { [weak self, weak socket] in
             guard let self, let socket else { return }
             do {
                 while !Task.isCancelled {
@@ -135,7 +135,7 @@ extension VoicePipeline {
             }
             guard offered,
                   self.sttLoaded,
-                  plan.sttEngineId == self.effectiveSttEngineId,
+                  plan.sttEngineId == VoiceEngineId.appleSpeechAnalyzer,
                   plan.uplink == .transcript,
                   plan.eouOwner == .endpoint
             else { return false }
@@ -152,11 +152,11 @@ extension VoicePipeline {
                     && engine.voices.contains(plan.voiceId)
             }
             return offered
-                && self.sessionTtsBackend == .clientSupertonic
-                && plan.ttsEngineId == VoiceTtsBackend.clientSupertonic.rawValue
+                && self.sessionTtsBackend == .systemVoice
+                && plan.ttsEngineId == VoiceEngineId.appleSpeechSynthesizer
                 && plan.downlink == .text
         }
-        return plan.ttsEngineId == VoiceTtsBackend.serverPocket.rawValue
+        return plan.ttsEngineId == VoiceEngineId.serverPocket
             && plan.downlink == .audio
     }
 
@@ -207,9 +207,9 @@ extension VoicePipeline {
 
     func startKeepalive() {
         self.keepaliveTask?.cancel()
-        self.keepaliveTask = Task { [weak self] in
+        self.keepaliveTask = Task(name: "Voice socket keepalive") { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .nanoseconds(self?.keepalivePingIntervalNs ?? 25_000_000_000))
+                try? await Task.sleep(for: self?.keepalivePingInterval ?? .seconds(25))
                 guard !Task.isCancelled else { return }
                 guard let self, let task = self.task else { return }
                 task.sendPing { error in

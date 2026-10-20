@@ -2,10 +2,10 @@ import CryptoKit
 import Foundation
 import PairingClient
 import Security
+import Synchronization
 
-nonisolated final class PairingTrustDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    private let lock = NSLock()
-    private var observedSPKI: Data?
+nonisolated final class PairingTrustDelegate: NSObject, URLSessionTaskDelegate, Sendable {
+    private let observedSPKI = Mutex<Data?>(nil)
     private let expectedSPKI: Data?
     private let acceptsUntrustedPairingCertificate: Bool
 
@@ -15,7 +15,7 @@ nonisolated final class PairingTrustDelegate: NSObject, URLSessionTaskDelegate, 
     }
 
     func observedPin() -> Data? {
-        self.lock.withLock { self.observedSPKI }
+        self.observedSPKI.withLock { $0 }
     }
 
     func urlSession(
@@ -37,7 +37,7 @@ nonisolated final class PairingTrustDelegate: NSObject, URLSessionTaskDelegate, 
 
     private func evaluate(
         _ challenge: URLAuthenticationChallenge,
-        completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+        completionHandler: @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = challenge.protectionSpace.serverTrust,
@@ -64,7 +64,7 @@ nonisolated final class PairingTrustDelegate: NSObject, URLSessionTaskDelegate, 
             completionHandler(.performDefaultHandling, nil)
             return
         }
-        self.lock.withLock { self.observedSPKI = spki }
+        self.observedSPKI.withLock { $0 = spki }
         completionHandler(.useCredential, URLCredential(trust: trust))
     }
 }

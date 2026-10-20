@@ -48,7 +48,7 @@ private struct StardustTextRenderer: TextRenderer, Animatable {
 
 private extension Text.Layout {
     var flattenedRuns: some RandomAccessCollection<Text.Layout.Run> {
-        self.flatMap { $0 }
+        self.flatMap(\.self)
     }
 
     var flattenedRunSlices: some RandomAccessCollection<Text.Layout.RunSlice> {

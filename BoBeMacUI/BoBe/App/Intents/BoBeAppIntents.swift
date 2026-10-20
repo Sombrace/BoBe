@@ -38,7 +38,7 @@ struct ShowBobeIntent: AppIntent {
     static let openAppWhenRun = true
 
     @MainActor
-    func perform() async throws -> some IntentResult {
+    func perform() throws -> some IntentResult {
         NSApp.activate()
         try requirePerformed(BobeCommandRouter.shared.showOverlay())
         return .result()
@@ -53,7 +53,7 @@ struct HideBobeIntent: AppIntent {
     static let openAppWhenRun = false
 
     @MainActor
-    func perform() async throws -> some IntentResult {
+    func perform() throws -> some IntentResult {
         try requirePerformed(BobeCommandRouter.shared.hideOverlay())
         return .result()
     }
@@ -67,7 +67,7 @@ struct OpenBobeSettingsIntent: AppIntent {
     static let openAppWhenRun = false
 
     @MainActor
-    func perform() async throws -> some IntentResult {
+    func perform() throws -> some IntentResult {
         try requirePerformed(BobeCommandRouter.shared.openSettings())
         return .result()
     }
@@ -81,8 +81,8 @@ struct ToggleBobeMicrophoneMuteIntent: AppIntent {
     static let openAppWhenRun = false
 
     @MainActor
-    func perform() async throws -> some IntentResult {
-        try requirePerformed(await BobeCommandRouter.shared.toggleLogicalMicrophoneMute())
+    func perform() throws -> some IntentResult {
+        try requirePerformed(BobeCommandRouter.shared.toggleLogicalMicrophoneMute())
         return .result()
     }
 }
@@ -95,7 +95,7 @@ struct StopBobeSpeakingIntent: AppIntent {
     static let openAppWhenRun = false
 
     @MainActor
-    func perform() async throws -> some IntentResult {
+    func perform() throws -> some IntentResult {
         try requirePerformed(BobeCommandRouter.shared.stopSpeaking())
         return .result()
     }

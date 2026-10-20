@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-extension Notification.Name {
-    static let bobeWelcomeCompleted = Notification.Name("bobe.welcomeCompleted")
+struct WelcomeCompletedMessage: NotificationCenter.MainActorMessage {
+    typealias Subject = SetupWindowManager
+    static var name: Notification.Name { Notification.Name("bobe.welcomeCompleted") }
 }
 
 final class SetupWindowManager: NSObject, NSWindowDelegate {
@@ -82,7 +83,7 @@ final class SetupWindowManager: NSObject, NSWindowDelegate {
                 self?.onComplete = nil
                 guard marksOnboardingComplete else { return }
                 self?.markOnboardingCompleted()
-                NotificationCenter.default.post(name: .bobeWelcomeCompleted, object: nil)
+                NotificationCenter.default.post(WelcomeCompletedMessage(), subject: SetupWindowManager.shared)
             },
             initialStep: initialStep,
             runtimeRepairIssue: runtimeRepairIssue,

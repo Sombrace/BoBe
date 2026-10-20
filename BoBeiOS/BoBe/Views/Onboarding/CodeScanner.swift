@@ -68,7 +68,7 @@ final class ScannerView: UIView, AVCaptureMetadataOutputObjectsDelegate {
     private func found(_ value: String) {
         guard value != self.lastCode else { return }
         self.lastCode = value
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        UINotificationFeedbackGenerator(view: self).notificationOccurred(.success)
         self.onCode?(value)
     }
 }

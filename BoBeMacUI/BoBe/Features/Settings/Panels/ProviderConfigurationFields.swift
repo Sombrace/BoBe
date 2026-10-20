@@ -27,7 +27,7 @@ struct ProviderConfigurationFields: Equatable {
     }
 
     var hasValidProfile: Bool {
-        self.profileID.range(of: "^[a-z0-9][a-z0-9_-]{0,31}$", options: .regularExpression) != nil
+        self.profileID.wholeMatch(of: /[a-z0-9][a-z0-9_-]{0,31}/) != nil
             && (!self.needsBaseURL || Self.validBaseURL(self.baseURL))
     }
 

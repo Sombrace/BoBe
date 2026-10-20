@@ -29,7 +29,7 @@ extension VoicePipeline {
         selector: AudioObjectPropertySelector,
         kind: DeviceKind,
         alreadyRegistered: Bool,
-        markRegistered: @escaping @MainActor () -> Void
+        markRegistered: @MainActor () -> Void
     ) {
         guard !alreadyRegistered else { return }
         var address = AudioObjectPropertyAddress(
@@ -86,7 +86,7 @@ extension VoicePipeline {
 
     private func scheduleDeviceChangeRebuild() {
         self.deviceChangeReconfigureTask?.cancel()
-        self.deviceChangeReconfigureTask = Task { [weak self] in
+        self.deviceChangeReconfigureTask = Task(name: "Reconfigure audio device") { [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
             guard let self, !Task.isCancelled else { return }
             while self.audioRebuildMustWait, !Task.isCancelled {

@@ -1,26 +1,26 @@
 import Foundation
-import os
+import Synchronization
 
 nonisolated struct LocalizationCatalog: Sendable {
     let localeId: String
     let bundle: Bundle
 }
 
-nonisolated private let lock = OSAllocatedUnfairLock<LocalizationCatalog?>(initialState: nil)
+nonisolated private let selectedCatalog = Mutex<LocalizationCatalog?>(nil)
 
 nonisolated enum L10n {
     static func setLocaleOverride(_ localeId: String?) {
         let catalog = localeId.flatMap(self.catalog(for:))
-        lock.withLock { $0 = catalog }
+        selectedCatalog.withLock { $0 = catalog }
     }
 
     static var locale: Locale {
-        let localeId = lock.withLock { $0?.localeId }
+        let localeId = selectedCatalog.withLock { $0?.localeId }
         return Locale(identifier: localeId ?? Bundle.appResources.preferredLocalizations.first ?? "en")
     }
 
     static func tr(_ key: String, _ args: CVarArg...) -> String {
-        let bundle = lock.withLock { $0?.bundle } ?? Bundle.appResources
+        let bundle = selectedCatalog.withLock { $0?.bundle } ?? Bundle.appResources
         var format = NSLocalizedString(
             key,
             tableName: "UI",

@@ -5,6 +5,30 @@ nonisolated struct CapturedVoiceAudio: Sendable {
     let samples: [Float]
     let sampleRate: Double
 
+    @available(macOS 27, *)
+    init?(buffer: AVReadOnlyAudioPCMBuffer) {
+        let frameCount = buffer.frameLength
+        guard frameCount > 0 else { return nil }
+        let stride = buffer.stride
+        switch buffer.channelData(0) {
+        case let .float(span):
+            self.samples = [Float](capacity: frameCount) { samples in
+                for frame in 0 ..< frameCount { samples.append(span[frame * stride]) }
+            }
+        case let .int16(span):
+            self.samples = [Float](capacity: frameCount) { samples in
+                for frame in 0 ..< frameCount { samples.append(Float(span[frame * stride]) / 32_768) }
+            }
+        case let .int32(span):
+            self.samples = [Float](capacity: frameCount) { samples in
+                for frame in 0 ..< frameCount { samples.append(Float(span[frame * stride]) / 2_147_483_648) }
+            }
+        @unknown default:
+            return nil
+        }
+        self.sampleRate = buffer.format.sampleRate
+    }
+
     init?(buffer: AVAudioPCMBuffer) {
         let frameCount = Int(buffer.frameLength)
         guard frameCount > 0 else { return nil }

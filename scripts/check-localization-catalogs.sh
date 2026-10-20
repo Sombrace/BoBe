@@ -326,10 +326,6 @@ else:
         'ContextEditorMode',
     ):
         keys.add(f"settings.context_editor.mode.{value}")
-    for value in enum_values('Voice/VoiceSttPreference.swift', 'VoiceSttPreference'):
-        keys.add(f"settings.voice.stt_preference.{value}")
-    for value in enum_values('Voice/VoiceTtsBackend.swift', 'VoiceTtsBackend'):
-        keys.add(f"settings.voice.tts_backend.{value}")
     for value in enum_values('Views/Setup/ProactivityStepView.swift', 'ProactivityLevel'):
         for suffix in ('title', 'description'):
             keys.add(f"setup.proactivity.{value}.{suffix}")

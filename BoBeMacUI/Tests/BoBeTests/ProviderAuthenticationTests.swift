@@ -246,7 +246,7 @@ struct ProviderAuthenticationTests {
         #expect(runner.state == .canceled)
     }
 
-    @Test(arguments: ["authorization-response", ""])
+    @Test(.timeLimit(.minutes(1)), arguments: ["authorization-response", ""])
     func loginAcceptsInputAndCompletesOnItsPinnedClient(_ value: String) async throws {
         let selection = Self.selection()
         let client = LoginClientFixture()
@@ -254,18 +254,16 @@ struct ProviderAuthenticationTests {
             profile: "openai-oauth", selection: selection, client: client, currentSelection: { selection }
         )
         runner.start()
-        try await self.waitForInput(runner)
+        await self.waitForInput(runner)
         await runner.submit(value)
-        for _ in 0 ..< 100 where runner.state != .completed {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        await self.waitForState(runner) { $0 == .completed }
         #expect(runner.state == .completed)
         let submissions = await client.submissions
         #expect(submissions == ["openai-oauth:\(value)"])
         #expect(await client.startedProfiles == ["openai-oauth"])
     }
 
-    @Test
+    @Test(.timeLimit(.minutes(1)))
     func authorityChangeBlocksInputAndCancelsTheOriginalProfile() async throws {
         var selection = Self.selection()
         let client = LoginClientFixture()
@@ -273,7 +271,7 @@ struct ProviderAuthenticationTests {
             profile: "original-provider", selection: selection, client: client, currentSelection: { selection }
         )
         runner.start()
-        try await self.waitForInput(runner)
+        await self.waitForInput(runner)
         selection = Self.selection()
         await runner.submit("must-not-be-sent")
         #expect(await client.submissions.isEmpty)
@@ -282,13 +280,19 @@ struct ProviderAuthenticationTests {
         #expect(runner.state == .canceled)
     }
 
-    private func waitForInput(_ runner: ProviderLoginRunner) async throws {
-        for _ in 0 ..< 100 {
-            if case .awaitingInput = runner.state { return }
-            try await Task.sleep(for: .milliseconds(10))
+    private func waitForInput(_ runner: ProviderLoginRunner) async {
+        await self.waitForState(runner) { state in
+            if case .awaitingInput = state { true } else { false }
         }
-        Issue.record("Provider login did not request input")
-        await runner.cancel()
+    }
+
+    private func waitForState(
+        _ runner: ProviderLoginRunner,
+        where matches: (ProviderLoginRunner.State) -> Bool
+    ) async {
+        for await state in Observations({ runner.state }) where matches(state) {
+            return
+        }
     }
 
     private static func selection() -> EndpointSelection {

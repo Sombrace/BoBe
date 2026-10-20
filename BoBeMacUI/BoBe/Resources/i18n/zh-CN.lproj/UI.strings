@@ -213,7 +213,7 @@
 "settings.expert.toggle" = "显示专家控制项";
 "settings.expert.toggle.description" = "默认关闭。如果想查看 BoBe 提供的全部调节选项，请开启。再次关闭后，已有的设置仍会继续生效。";
 "settings.expert.section.what_changes" = "会有哪些变化";
-"settings.expert.section.what_changes.list" = "• 模型代号（Pocket TTS、Parakeet、Nemotron）会与易懂的名称一起显示\n• Souls、档案和记忆新增原始 Markdown 模式\n• 工具服务器（MCP）可直接以原始 JSON 编辑\n• 显示严格离线控制项\n• 可改用终端登录作为备用方式";
+"settings.expert.section.what_changes.list" = "• 模型代号（Pocket TTS、Apple Speech）会与易懂的名称一起显示\n• Souls、档案和记忆新增原始 Markdown 模式\n• 工具服务器（MCP）可直接以原始 JSON 编辑\n• 显示严格离线控制项\n• 可改用终端登录作为备用方式";
 
 "overlay.error.daemon_disconnected" = "BoBe 已离线";
 "overlay.error.daemon_restart" = "重启";
@@ -366,7 +366,7 @@
 "setup.voice.stt_label.progress_format" = "她的听觉：正在下载 %d%%…";
 "setup.voice.stt_label.ready" = "她的听觉：已就绪";
 "setup.voice.stt_label.failed_format" = "她的听觉：未能加载。%@";
-"setup.voice.body" = "只需下载一次，约 600 MB，其他语言需要更多。";
+"setup.voice.body" = "只需下载一次，用于她的声音和听觉。";
 "setup.voice.complete" = "她已经可以说话了。";
 "setup.voice.failed" = "语音设置未完成。";
 "setup.voice.poll_failure" = "下载已停止。请现在重试，或稍后在设置中重试。";
@@ -383,7 +383,7 @@
 "settings.voice.description" = "语音识别、BoBe 的声音，以及她如何判断你已经说完。";
 "settings.voice.section.preferences" = "偏好设置";
 "settings.voice.section.models" = "模型";
-"settings.voice.section.models.location_note" = "本机的听觉模型使用 FluidAudio 的缓存，位于 ~/Library/Application Support/FluidAudio/。所选运行时会把 BoBe 的声音保存在它自己的数据根目录下。";
+"settings.voice.section.models.location_note" = "每种语言的语音识别模型由 macOS 存储和更新。所选运行时会把 BoBe 的英语声音保存在它自己的数据根目录下。";
 "settings.voice.language" = "语言";
 "settings.voice.language.description" = "BoBe 聆听时使用的语言。英语最可靠，其他语言仍在完善中。";
 "settings.voice.pause_sensitivity" = "停顿灵敏度";
@@ -599,17 +599,13 @@
 "settings.voice.model.tts.name_expert" = "Pocket TTS · 英语 · Q8";
 "settings.voice.model.tts.purpose" = "英语语音，提供六种声音。更多语言包即将推出。";
 "settings.voice.model.tts.size" = "约 170 MB";
-"settings.voice.model.supertonic.name" = "FluidAudio Supertonic-3 多语种";
-"settings.voice.model.supertonic.purpose" = "实验性的应用内语音合成，适用于受支持的语言。";
-"settings.voice.model.supertonic.size" = "约 100 MB";
-"settings.voice.model.stt_en.name" = "听觉（英语）";
-"settings.voice.model.stt_en.name_expert" = "FluidAudio Parakeet EOU（英语）";
-"settings.voice.model.stt_en.purpose" = "语言设为英语时负责听你说话。";
-"settings.voice.model.stt_en.size" = "约 450 MB";
-"settings.voice.model.stt_multi.name" = "听觉（其他语言）";
-"settings.voice.model.stt_multi.name_expert" = "FluidAudio Nemotron 3.5 流式多语种 + Silero VAD";
-"settings.voice.model.stt_multi.purpose" = "语言不是英语时负责听你说话。";
-"settings.voice.model.stt_multi.size" = "大小因模型版本而异";
+"settings.voice.model.stt.name" = "听觉";
+"settings.voice.model.stt.name_expert_format" = "Apple Speech · %@";
+"settings.voice.model.stt.purpose" = "用你选择的语言听你说话。由 macOS 下载和更新。";
+"settings.voice.model.managed_by_macos" = "由 macOS 管理";
+"settings.voice.model.system_voice.name_format" = "系统声音 · %@";
+"settings.voice.model.system_voice.purpose" = "BoBe 用这台 Mac 上最好的系统声音说英语以外的语言。如需更自然的声音，请在系统设置 › 辅助功能中下载增强版或高级版声音。";
+"settings.voice.no_system_voice_format" = "这台 Mac 没有适用于%@的声音。请在系统设置 › 辅助功能中添加。";
 "settings.voice.reinstall" = "全部重新安装";
 "settings.voice.reinstalling" = "正在重新安装…";
 "settings.voice.reinstall.accessibility" = "重新安装所有语音模型";
@@ -627,21 +623,8 @@
 "settings.voice.model.status.downloading" = "正在下载…";
 "settings.voice.model.status.failed" = "失败";
 "settings.voice.model.status.checking" = "正在检查…";
-"settings.voice.stt_preference" = "语音识别引擎";
-"settings.voice.stt_preference.description" = "选择在哪里识别语音。“自动”会沿用成熟稳定的 FluidAudio，直到 Apple Speech 通过 BoBe 的真实音频质量测试。更改后请重新连接语音。";
-"settings.voice.stt_preference.automatic" = "自动（推荐）";
-"settings.voice.stt_preference.apple_speech" = "Apple Speech（实验性）";
-"settings.voice.stt_preference.fluid_audio" = "FluidAudio（本地）";
-"settings.voice.stt_preference.daemon" = "BoBe 守护进程";
-"settings.voice.tts_backend" = "语音合成后端";
-"settings.voice.tts_backend.description" = "实验性功能。Supertonic 在应用内运行多语种 TTS，首次使用时会下载它的 Core ML 模型。更改后请重新连接语音。";
-"settings.voice.tts_backend.server_pocket" = "服务端 Pocket TTS（英语）";
-"settings.voice.tts_backend.client_supertonic" = "客户端 Supertonic-3（实验性）";
-"settings.voice.tts_backend.best_for_format" = "%1$@ · 最适合%2$@";
-"settings.voice.advice.engine_format" = "%1$@ 不会说%2$@，%3$@ 可以。";
 "settings.voice.advice.persona_format" = "BoBe 当前的声音是为另一种语言设计的。改用适合%@的声音吗？";
 "settings.voice.advice.switch" = "切换";
-"settings.voice.language_unsupported" = "%@ 没有适用于%@的声音。请选择受支持的语言或其他语音引擎。";
 "setup.voice.model.tts" = "她的声音";
 "setup.voice.model.stt" = "她的听觉";
 

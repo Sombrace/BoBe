@@ -203,7 +203,7 @@
 "settings.expert.toggle" = "Εμφάνιση επιλογών για προχωρημένους";
 "settings.expert.toggle.description" = "Απενεργοποιημένο από προεπιλογή. Ενεργοποίησέ το αν θέλεις να βλέπεις κάθε ρύθμιση που προσφέρει η BoBe. Οι υπάρχουσες τιμές συνεχίζουν να ισχύουν όταν το απενεργοποιήσεις ξανά.";
 "settings.expert.section.what_changes" = "Τι αλλάζει";
-"settings.expert.section.what_changes.list" = "• Τα κωδικά ονόματα των μοντέλων (Pocket TTS, Parakeet, Nemotron) εμφανίζονται δίπλα στα φιλικά ονόματα\n• Οι ψυχές, τα προφίλ και η μνήμη αποκτούν λειτουργία απευθείας επεξεργασίας Markdown\n• Οι διακομιστές εργαλείων (MCP) γίνονται επεξεργάσιμοι απευθείας σε JSON\n• Εμφανίζονται οι επιλογές αυστηρής λειτουργίας εκτός σύνδεσης\n• Γίνεται διαθέσιμη η εναλλακτική σύνδεση μέσω Terminal";
+"settings.expert.section.what_changes.list" = "• Τα κωδικά ονόματα των μοντέλων (Pocket TTS, Apple Speech) εμφανίζονται δίπλα στα φιλικά ονόματα\n• Οι ψυχές, τα προφίλ και η μνήμη αποκτούν λειτουργία απευθείας επεξεργασίας Markdown\n• Οι διακομιστές εργαλείων (MCP) γίνονται επεξεργάσιμοι απευθείας σε JSON\n• Εμφανίζονται οι επιλογές αυστηρής λειτουργίας εκτός σύνδεσης\n• Γίνεται διαθέσιμη η εναλλακτική σύνδεση μέσω Terminal";
 
 "overlay.error.daemon_disconnected" = "Η BoBe είναι εκτός σύνδεσης";
 "overlay.error.daemon_restart" = "Επανεκκίνηση";
@@ -356,7 +356,7 @@
 "setup.voice.stt_label.progress_format" = "Η ακοή της: λήψη %d%%…";
 "setup.voice.try_again" = "Δοκίμασε ξανά";
 "setup.voice.continue_without" = "Συνέχεια χωρίς φωνή";
-"setup.voice.body" = "Κατεβαίνει μία φορά, περίπου 600 MB, περισσότερο για άλλες γλώσσες.";
+"setup.voice.body" = "Κατεβαίνει μία φορά, για τη φωνή και την ακοή της.";
 "setup.voice.complete" = "Είναι έτοιμη να μιλήσει.";
 "setup.voice.failed" = "Η ρύθμιση φωνής δεν ολοκληρώθηκε.";
 "setup.voice.poll_failure" = "Η λήψη σταμάτησε. Δοκίμασε ξανά τώρα ή αργότερα από τις Ρυθμίσεις.";
@@ -373,7 +373,7 @@
 "settings.voice.description" = "Αναγνώριση ομιλίας, η φωνή της BoBe και πώς καταλαβαίνει πότε τελείωσες να μιλάς.";
 "settings.voice.section.preferences" = "Προτιμήσεις";
 "settings.voice.section.models" = "Μοντέλα";
-"settings.voice.section.models.location_note" = "Τα τοπικά μοντέλα ακοής χρησιμοποιούν την κρυφή μνήμη του FluidAudio στο ~/Library/Application Support/FluidAudio/. Το επιλεγμένο runtime αποθηκεύει τη φωνή της BoBe στον δικό του φάκελο δεδομένων.";
+"settings.voice.section.models.location_note" = "Το macOS αποθηκεύει και ενημερώνει το μοντέλο αναγνώρισης ομιλίας κάθε γλώσσας. Το επιλεγμένο runtime αποθηκεύει την αγγλική φωνή της BoBe στον δικό του φάκελο δεδομένων.";
 "settings.voice.language" = "Γλώσσα";
 "settings.voice.language.description" = "Σε ποια γλώσσα σε ακούει η BoBe. Τα Αγγλικά είναι η πιο αξιόπιστη επιλογή· οι άλλες γλώσσες βελτιώνονται ακόμη.";
 "settings.voice.pause_sensitivity" = "Ευαισθησία παύσης";
@@ -578,17 +578,13 @@
 "settings.voice.model.tts.name_expert" = "Pocket TTS · Αγγλικά · Q8";
 "settings.voice.model.tts.purpose" = "Αγγλική ομιλία με έξι φωνές. Θα ακολουθήσουν πακέτα για περισσότερες γλώσσες.";
 "settings.voice.model.tts.size" = "~170 MB";
-"settings.voice.model.supertonic.name" = "FluidAudio Supertonic-3 πολυγλωσσικό";
-"settings.voice.model.supertonic.purpose" = "Πειραματική σύνθεση ομιλίας μέσα στην εφαρμογή για τις υποστηριζόμενες γλώσσες.";
-"settings.voice.model.supertonic.size" = "~100 MB";
-"settings.voice.model.stt_en.name" = "Ακοή — Αγγλικά";
-"settings.voice.model.stt_en.name_expert" = "FluidAudio Parakeet EOU (Αγγλικά)";
-"settings.voice.model.stt_en.purpose" = "Σε ακούει όταν η γλώσσα έχει οριστεί στα Αγγλικά.";
-"settings.voice.model.stt_en.size" = "~450 MB";
-"settings.voice.model.stt_multi.name" = "Ακοή — άλλες γλώσσες";
-"settings.voice.model.stt_multi.name_expert" = "FluidAudio Nemotron 3.5 Streaming πολυγλωσσικό + Silero VAD";
-"settings.voice.model.stt_multi.purpose" = "Σε ακούει όταν η γλώσσα δεν είναι τα Αγγλικά.";
-"settings.voice.model.stt_multi.size" = "Διαφέρει ανάλογα με την έκδοση του μοντέλου";
+"settings.voice.model.stt.name" = "Ακοή";
+"settings.voice.model.stt.name_expert_format" = "Apple Speech · %@";
+"settings.voice.model.stt.purpose" = "Σε ακούει στη γλώσσα που διάλεξες. Το macOS το κατεβάζει και το ενημερώνει.";
+"settings.voice.model.managed_by_macos" = "Το διαχειρίζεται το macOS";
+"settings.voice.model.system_voice.name_format" = "Φωνή συστήματος · %@";
+"settings.voice.model.system_voice.purpose" = "Η BoBe μιλά γλώσσες εκτός των Αγγλικών με την καλύτερη φωνή συστήματος αυτού του Mac. Για πιο φυσικό ήχο, κατέβασε Βελτιωμένες ή Premium φωνές στις Ρυθμίσεις συστήματος › Προσβασιμότητα.";
+"settings.voice.no_system_voice_format" = "Αυτό το Mac δεν έχει φωνή για %@. Πρόσθεσε μία στις Ρυθμίσεις συστήματος › Προσβασιμότητα.";
 "settings.voice.reinstall" = "Επανεγκατάσταση όλων";
 "settings.voice.reinstalling" = "Επανεγκατάσταση…";
 "settings.voice.reinstall.accessibility" = "Επανεγκατάσταση όλων των μοντέλων φωνής";
@@ -606,21 +602,8 @@
 "settings.voice.model.status.downloading" = "Λήψη…";
 "settings.voice.model.status.failed" = "Απέτυχε";
 "settings.voice.model.status.checking" = "Έλεγχος…";
-"settings.voice.stt_preference" = "Μηχανή αναγνώρισης ομιλίας";
-"settings.voice.stt_preference.description" = "Επίλεξε πού αναγνωρίζεται η ομιλία. Η αυτόματη επιλογή κρατά το δοκιμασμένο FluidAudio ως προεπιλογή, μέχρι το Apple Speech να περάσει τους ελέγχους ποιότητας της BoBe σε πραγματικό ήχο. Μετά την αλλαγή, σύνδεσε ξανά τη φωνή.";
-"settings.voice.stt_preference.automatic" = "Αυτόματα (προτείνεται)";
-"settings.voice.stt_preference.apple_speech" = "Apple Speech (πειραματικό)";
-"settings.voice.stt_preference.fluid_audio" = "FluidAudio (τοπικά)";
-"settings.voice.stt_preference.daemon" = "Υπηρεσία BoBe";
-"settings.voice.tts_backend" = "Μηχανή σύνθεσης ομιλίας";
-"settings.voice.tts_backend.description" = "Πειραματικό. Το Supertonic-3 εκτελεί πολυγλωσσική σύνθεση ομιλίας μέσα στην εφαρμογή και κατεβάζει το μοντέλο Core ML την πρώτη φορά. Επανασυνδέστε τη φωνή μετά την αλλαγή.";
-"settings.voice.tts_backend.server_pocket" = "Pocket TTS στον διακομιστή (Αγγλικά)";
-"settings.voice.tts_backend.client_supertonic" = "Supertonic-3 στην εφαρμογή (πειραματικό)";
-"settings.voice.tts_backend.best_for_format" = "%1$@ · ιδανικό για %2$@";
-"settings.voice.advice.engine_format" = "Το %1$@ δεν μιλά %2$@. Το %3$@ μιλά.";
 "settings.voice.advice.persona_format" = "Η τρέχουσα φωνή της BoBe είναι φτιαγμένη για άλλη γλώσσα. Να χρησιμοποιηθεί φωνή για %@;";
 "settings.voice.advice.switch" = "Αλλαγή";
-"settings.voice.language_unsupported" = "Το %@ δεν έχει φωνή για %@. Διάλεξε μια υποστηριζόμενη γλώσσα ή άλλη μηχανή ομιλίας.";
 "setup.voice.model.tts" = "Η φωνή της";
 "setup.voice.model.stt" = "Η ακοή της";
 

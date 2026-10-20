@@ -9,7 +9,7 @@ nonisolated private let bodyAdapterLogger = Logger(
 actor BodySpeechAdapter {
     static let shared = BodySpeechAdapter()
 
-    private let stt = FluidAudioStt()
+    private let stt = AppleSpeechStt(language: "en")
     private var baseURL: URL?
     private var token: String?
     private var socket: URLSessionWebSocketTask?
@@ -24,7 +24,7 @@ actor BodySpeechAdapter {
         guard self.connectionLoop == nil else { return }
         self.baseURL = configuration.baseURL
         self.token = configuration.bearerToken
-        self.connectionLoop = Task { [weak self] in
+        self.connectionLoop = Task(name: "Body speech connection") { [weak self] in
             await self?.run()
         }
     }
@@ -76,7 +76,7 @@ actor BodySpeechAdapter {
     }
 
     private func prepareStt() async throws {
-        try await self.stt.loadModels(
+        try await self.stt.load(
             onPartial: { [weak self] text in
                 await self?.handlePartial(text)
             },
@@ -218,7 +218,7 @@ actor BodySpeechAdapter {
     }
 
     private func finishCapture(route: BodyRoute) async throws {
-        let finished = try await self.stt.finish()
+        let finished = await self.stt.finish()
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let transcript = combineBodyTranscriptSegments(
             self.eouSegments,
@@ -251,17 +251,14 @@ actor BodySpeechAdapter {
     }
 
     private static func floatSamples(from pcm: Data) -> [Float] {
-        var samples = [Float]()
-        samples.reserveCapacity(pcm.count / 2)
-        var index = pcm.startIndex
-        while index < pcm.endIndex {
-            let low = UInt16(pcm[index])
-            let highIndex = pcm.index(after: index)
-            let high = UInt16(pcm[highIndex])
-            samples.append(Float(Int16(bitPattern: low | (high << 8))) / 32_768)
-            index = pcm.index(highIndex, offsetBy: 1)
+        let bytes = pcm.bytes
+        let count = bytes.byteCount / MemoryLayout<Int16>.size
+        return [Float](capacity: count) { samples in
+            for index in 0 ..< count {
+                let sample = bytes.load(fromByteOffset: index * MemoryLayout<Int16>.size, as: Int16.self)
+                samples.append(Float(Int16(littleEndian: sample)) / 32_768)
+            }
         }
-        return samples
     }
 }
 

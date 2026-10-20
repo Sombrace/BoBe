@@ -7,18 +7,14 @@ final class RemoteSpeechConsent {
     private static let keyPrefix = "bobe.voice.remote_stt_consent."
 
     private(set) var isEnabled = false
-    private var identityObserver: NSObjectProtocol?
+    private var identityObserver: NotificationCenter.ObservationToken?
 
     private init() {
         self.refresh()
         self.identityObserver = NotificationCenter.default.addObserver(
-            forName: .bobeEndpointIdentityChanged,
-            object: nil,
-            queue: .main
+            for: EndpointIdentityChangedMessage.self
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.refresh()
-            }
+            self?.refresh()
         }
     }
 

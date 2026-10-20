@@ -182,26 +182,19 @@ nonisolated enum ServerVoiceMessage: Decodable {
 nonisolated struct VoiceCaptureFrameEncoder {
     static func encode(streamId: UInt32, sequence: UInt32, samples: ArraySlice<Float>) -> Data? {
         guard streamId != 0, samples.count == VoiceWire.captureFrameSamples else { return nil }
-        var data = Data(capacity: VoiceWire.captureHeaderBytes + VoiceWire.capturePayloadBytes)
-        appendBigEndian(streamId, to: &data)
-        appendBigEndian(sequence, to: &data)
-        data.append(0)
-        data.append(contentsOf: [0, 0, 0, 0])
-        for sample in samples {
-            let scaled = Int32((max(-1, min(1, sample)) * 32_767).rounded())
-            let pcm = Int16(clamping: scaled)
-            let bits = UInt16(bitPattern: pcm)
-            data.append(UInt8(bits & 0xFF))
-            data.append(UInt8(bits >> 8))
+        var data = Data(count: VoiceWire.captureHeaderBytes + VoiceWire.capturePayloadBytes)
+        var bytes = data.mutableBytes
+        bytes.storeBytes(of: streamId.bigEndian, toByteOffset: 0, as: UInt32.self)
+        bytes.storeBytes(of: sequence.bigEndian, toByteOffset: 4, as: UInt32.self)
+        for (index, sample) in samples.enumerated() {
+            let pcm = Int16(clamping: Int32((max(-1, min(1, sample)) * 32_767).rounded()))
+            bytes.storeBytes(
+                of: pcm.littleEndian,
+                toByteOffset: VoiceWire.captureHeaderBytes + index * MemoryLayout<Int16>.size,
+                as: Int16.self
+            )
         }
         return data
-    }
-
-    private static func appendBigEndian(_ value: UInt32, to data: inout Data) {
-        data.append(UInt8((value >> 24) & 0xFF))
-        data.append(UInt8((value >> 16) & 0xFF))
-        data.append(UInt8((value >> 8) & 0xFF))
-        data.append(UInt8(value & 0xFF))
     }
 }
 
@@ -214,14 +207,13 @@ nonisolated struct TtsFrameHeader {
     static let flagFirstOfTurn: UInt8 = 0b0000_0010
 
     static func parse(_ data: Data) -> (header: TtsFrameHeader, payload: Data)? {
-        guard data.count >= self.length else { return nil }
-        var chunkId: UInt64 = 0
-        for i in 0 ..< 8 {
-            chunkId = (chunkId << 8) | UInt64(data[data.startIndex + i])
-        }
-        let flags = data[data.startIndex + 8]
-        let payload = data.subdata(in: (data.startIndex + self.length) ..< data.endIndex)
-        return (TtsFrameHeader(chunkId: chunkId, flags: flags), payload)
+        let bytes = data.bytes
+        guard bytes.byteCount >= self.length else { return nil }
+        let header = TtsFrameHeader(
+            chunkId: UInt64(bigEndian: bytes.load(fromByteOffset: 0, as: UInt64.self)),
+            flags: bytes.load(fromByteOffset: 8, as: UInt8.self)
+        )
+        return (header, data.dropFirst(self.length))
     }
 
     var isFiller: Bool {

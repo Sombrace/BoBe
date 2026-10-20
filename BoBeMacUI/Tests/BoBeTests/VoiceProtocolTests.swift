@@ -28,6 +28,22 @@ struct VoiceCaptureFrameEncoderTests {
     }
 
     @Test
+    func encodesTheWireLayoutByteForByte() throws {
+        let samples = (0 ..< VoiceWire.captureFrameSamples).map { Float($0 % 7 - 3) / 3.5 }
+        let frame = try #require(VoiceCaptureFrameEncoder.encode(
+            streamId: 0xA1B2_C3D4,
+            sequence: 0x0102_0304,
+            samples: samples[...]
+        ))
+        var expected: [UInt8] = [0xA1, 0xB2, 0xC3, 0xD4, 0x01, 0x02, 0x03, 0x04, 0, 0, 0, 0, 0]
+        for sample in samples {
+            let bits = UInt16(bitPattern: Int16(clamping: Int32((max(-1, min(1, sample)) * 32_767).rounded())))
+            expected += [UInt8(bits & 0xFF), UInt8(bits >> 8)]
+        }
+        #expect(Array(frame) == expected)
+    }
+
+    @Test
     func rejectsWrongFrameSizeAndZeroStream() {
         let samples = Array(repeating: Float(0), count: VoiceWire.captureFrameSamples - 1)
         #expect(VoiceCaptureFrameEncoder.encode(streamId: 1, sequence: 0, samples: samples[...]) == nil)
@@ -46,6 +62,19 @@ struct TtsFrameHeaderTests {
         data.append(flags)
         data.append(contentsOf: payload)
         return data
+    }
+
+    @Test(arguments: [0, 1, 3])
+    func parsesAFrameSlicedAtAnyOffset(_ offset: Int) throws {
+        let frame = Data(repeating: 0xEE, count: offset) + self.encode(
+            chunkId: 0x0102_0304_0506_0708,
+            flags: TtsFrameHeader.flagFirstOfTurn,
+            payload: [9, 8, 7]
+        )
+        let parsed = try #require(TtsFrameHeader.parse(frame.dropFirst(offset)))
+        #expect(parsed.header.chunkId == 0x0102_0304_0506_0708)
+        #expect(parsed.header.isFirstOfTurn)
+        #expect(Array(parsed.payload) == [9, 8, 7])
     }
 
     @Test
@@ -113,7 +142,7 @@ struct ServerVoiceMessageTests {
 
     @Test
     func decodesSpeechPlan() throws {
-        let msg = try decode(#"{"type":"speech_plan","plan":{"plan_id":"p1","stt_site":"endpoint","stt_engine_id":"parakeet","tts_site":"daemon","tts_engine_id":"server_pocket","voice_id":"af_bella","uplink":"transcript","downlink":"audio","eou_owner":"endpoint","wake_owner":"endpoint","tts_text_delivery":"none","reason":"voice_v2_endpoint_stt_daemon_tts"}}"#)
+        let msg = try decode(#"{"type":"speech_plan","plan":{"plan_id":"p1","stt_site":"endpoint","stt_engine_id":"apple_speech_analyzer","tts_site":"daemon","tts_engine_id":"server_pocket","voice_id":"af_bella","uplink":"transcript","downlink":"audio","eou_owner":"endpoint","wake_owner":"endpoint","tts_text_delivery":"none","reason":"voice_v2_endpoint_stt_daemon_tts"}}"#)
         guard case let .speechPlan(plan) = msg else {
             Issue.record("expected .speechPlan, got \(msg)")
             return
@@ -196,7 +225,7 @@ struct ClientVoiceMessageEncodingTests {
         language: "en",
         playbackRates: [24_000],
         endpointStt: [SpeechEngineOfferWire(
-            id: "parakeet",
+            id: VoiceEngineId.appleSpeechAnalyzer,
             languages: ["en"],
             partials: true,
             eou: true,
@@ -206,7 +235,6 @@ struct ClientVoiceMessageEncodingTests {
         )],
         endpointTts: [],
         audioUplink: false,
-        overrides: SpeechOverridesWire(stt: .auto, tts: .daemon),
         daemonIsNonLoopback: false,
         remoteAudioConsent: false
     )
@@ -301,22 +329,20 @@ struct ClientVoiceMessageEncodingTests {
         #expect(encodedOffer["language"] as? String == "en")
         #expect(encodedOffer["playback_rates"] as? [Int] == [24_000])
         let stt = encodedOffer["endpoint_stt"] as? [[String: Any]]
-        #expect(stt?.first?["id"] as? String == "parakeet")
+        #expect(stt?.first?["id"] as? String == "apple_speech_analyzer")
+        #expect(encodedOffer["overrides"] == nil)
     }
 
-    @Test
-    func builtOfferNamesThisMacAndARemoteDaemon() throws {
+    private func builtOffer(
+        language: String,
+        recognizerReady: Bool,
+        systemVoice: String? = nil
+    ) throws -> [String: Any] {
         let surface = try #require(UUID(uuidString: "00000000-0000-0000-0000-0000000000AB"))
         let offer = VoicePipeline.speechOffer(
-            settings: VoiceSessionSettings(
-                language: "en",
-                persona: "alba",
-                speed: 1,
-                ttsBackend: .serverPocket,
-                sttPreference: .fluidAudio,
-                remoteAudioConsent: false
-            ),
-            endpointSttEngineId: VoiceSttEngineId.fluidAudioParakeet,
+            settings: VoiceSessionSettings(language: language, persona: "alba", speed: 1, remoteAudioConsent: false),
+            recognizerReady: recognizerReady,
+            systemVoice: systemVoice,
             endpointId: surface,
             daemonIsNonLoopback: true
         )
@@ -325,8 +351,34 @@ struct ClientVoiceMessageEncodingTests {
         #expect(encodedOffer["endpoint_id"] as? String == surface.uuidString)
         #expect(encodedOffer["endpoint_kind"] as? String == "mac_app")
         #expect(encodedOffer["daemon_is_non_loopback"] as? Bool == true)
-        #expect(encodedOffer["audio_uplink"] as? Bool == false)
-        #expect((encodedOffer["overrides"] as? [String: Any])?["stt"] as? String == "endpoint")
+        return encodedOffer
+    }
+
+    @Test
+    func englishOffersAppleSpeechAndKeepsTheDaemonAsFallback() throws {
+        let offer = try self.builtOffer(language: "en", recognizerReady: true)
+        let stt = try #require(offer["endpoint_stt"] as? [[String: Any]])
+        #expect(stt.map { $0["id"] as? String } == ["apple_speech_analyzer"])
+        #expect(offer["audio_uplink"] as? Bool == true)
+        #expect((offer["endpoint_tts"] as? [Any])?.isEmpty == true)
+    }
+
+    @Test
+    func englishWithoutAppleSpeechAssetsRecognizesOnTheDaemon() throws {
+        let offer = try self.builtOffer(language: "en", recognizerReady: false)
+        #expect((offer["endpoint_stt"] as? [Any])?.isEmpty == true)
+        #expect(offer["audio_uplink"] as? Bool == true)
+    }
+
+    @Test
+    func greekNeverUploadsAudioAndSpeaksWithTheSystemVoice() throws {
+        let voice = "com.apple.voice.super-compact.el-GR.Melina"
+        let offer = try self.builtOffer(language: "el", recognizerReady: true, systemVoice: voice)
+        #expect(offer["audio_uplink"] as? Bool == false)
+        let tts = try #require((offer["endpoint_tts"] as? [[String: Any]])?.first)
+        #expect(tts["id"] as? String == "apple_speech_synthesizer")
+        #expect(tts["voices"] as? [String] == [voice])
+        #expect(tts["sample_rates"] as? [Int] == [24_000])
     }
 
     @Test
@@ -335,12 +387,6 @@ struct ClientVoiceMessageEncodingTests {
         let second = UUID(uuidString: "00000000-0000-0000-0000-000000000002") ?? UUID()
         #expect(RemoteSpeechConsent.storageKey(authorityId: first)
             != RemoteSpeechConsent.storageKey(authorityId: second))
-    }
-
-    @Test
-    func supertonicVoiceIdentityReflectsActualStyle() {
-        #expect(VoicePipeline.supertonicVoiceId(for: "am_michael") == "supertonic_m1")
-        #expect(VoicePipeline.supertonicVoiceId(for: "af_bella") == "supertonic_f1")
     }
 
     @Test

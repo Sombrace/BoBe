@@ -54,13 +54,7 @@ extension VoicePipeline {
             return
         }
         do {
-            try parsed.payload.withUnsafeBytes { raw in
-                let typed = UnsafeBufferPointer(
-                    start: raw.bindMemory(to: UInt8.self).baseAddress,
-                    count: raw.count
-                )
-                try decoder.decode(typed, to: outBuffer)
-            }
+            try decoder.decode(parsed.payload.bytes, to: outBuffer)
         } catch {
             self.dropUndecodableFrame(isFiller: parsed.header.isFiller, reason: error.localizedDescription)
             return
@@ -154,7 +148,7 @@ extension VoicePipeline {
             return
         }
         self.serverDrainTask?.cancel()
-        self.serverDrainTask = Task { [weak self] in
+        self.serverDrainTask = Task(name: "Drain server speech") { [weak self] in
             guard let self else { return }
             let drained = await self.waitForPlaybackDrain()
             guard !Task.isCancelled,
@@ -274,7 +268,7 @@ extension VoicePipeline {
         self.nextScheduleFrame = played
         self.turnFrameBase = played
         self.sampleTimeBase = self.currentPlayerSampleTime()
-        self.playerNode.play()
+        self.restartPlayerNode()
     }
 
     func handlePlaybackRms(_ rms: Float) {

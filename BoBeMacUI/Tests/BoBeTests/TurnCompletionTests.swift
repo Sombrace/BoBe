@@ -3,18 +3,14 @@ import Testing
 
 @Suite("Turn completion")
 struct TurnCompletionTests {
-    @Test
-    func trailingOffSoundsUnfinished() {
-        for text in ["can you check the", "I was thinking that maybe", "open the file and", "so, um", "remind me to,"] {
-            #expect(TurnCompletion.looksUnfinished(text), "\(text)")
-        }
+    @Test(arguments: ["can you check the", "I was thinking that maybe", "open the file and", "so, um", "remind me to,"])
+    func trailingOffSoundsUnfinished(text: String) {
+        #expect(TurnCompletion.looksUnfinished(text))
     }
 
-    @Test
-    func completeThoughtsAreNotHeld() {
-        for text in ["what time is it", "Open the calendar.", "is that right?", "thanks", ""] {
-            #expect(!TurnCompletion.looksUnfinished(text), "\(text)")
-        }
+    @Test(arguments: ["what time is it", "Open the calendar.", "is that right?", "thanks", ""])
+    func completeThoughtsAreNotHeld(text: String) {
+        #expect(!TurnCompletion.looksUnfinished(text))
     }
 
     @Test

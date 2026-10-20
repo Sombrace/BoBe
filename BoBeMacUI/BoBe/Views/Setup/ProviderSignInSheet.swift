@@ -227,7 +227,7 @@ struct ProviderSignInSheet: View {
             return L10n.tr("setup.cloud_auth.sheet.error.network")
         }
         if lower.contains("pkce") || lower.contains("device_code")
-            || lower.range(of: "(^|[^0-9])400([^0-9]|$)", options: .regularExpression) != nil {
+            || lower.contains(/(^|[^0-9])400([^0-9]|$)/) {
             return L10n.tr("setup.cloud_auth.sheet.error.handshake")
         }
         return L10n.tr("setup.cloud_auth.sheet.error.generic")

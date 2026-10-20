@@ -361,11 +361,11 @@ final class PhoneModel {
 
     private func connect() {
         guard self.paired != nil, self.streamTask == nil else { return }
-        self.streamTask = Task { [weak self] in
+        self.streamTask = Task(name: "Phone event stream") { [weak self] in
             await self?.runStream()
         }
         self.pollTask?.cancel()
-        self.pollTask = Task { [weak self] in
+        self.pollTask = Task(name: "Phone status poll") { [weak self] in
             var tick = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(5))

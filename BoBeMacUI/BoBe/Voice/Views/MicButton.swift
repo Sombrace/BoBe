@@ -51,7 +51,7 @@ struct MicButton: View {
                 AVCaptureDevice.authorizationStatus(for: .audio)
             )
             await self.pipeline.refreshDaemonState()
-            self.pipeline.bootstrapSttPresence()
+            await self.pipeline.bootstrapSttPresence()
             if self.pipeline.readiness == .ready {
                 await self.pipeline.prewarmSttOnly()
             }

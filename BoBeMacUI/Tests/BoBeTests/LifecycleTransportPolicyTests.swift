@@ -35,65 +35,41 @@ struct LifecycleTransportPolicyTests {
         #expect(!terminatingWake)
     }
 
-    @Test
-    func loopbackNeverWaitsForConnectivity() throws {
+    @Test(arguments: [
+        DaemonTransportPurpose.interactiveHTTP,
+        .persistentEventStream,
+        .finiteEventStream,
+        .attach,
+        .readinessProbe,
+        .realtimeWebSocket,
+        .bodyLoopbackWebSocket,
+    ])
+    func loopbackNeverWaitsForConnectivity(purpose: DaemonTransportPurpose) throws {
         let endpoint = DaemonEndpoint.attachedLocal(
             baseURL: try #require(URL(string: "http://127.0.0.1:8766")),
             bearerToken: nil
         )
-
-        for purpose in [
-            DaemonTransportPurpose.interactiveHTTP,
-            .persistentEventStream,
-            .finiteEventStream,
-            .attach,
-            .readinessProbe,
-            .realtimeWebSocket,
-            .bodyLoopbackWebSocket,
-        ] {
-            let configuration = DaemonTransportPolicy.configuration(
-                for: endpoint,
-                purpose: purpose
-            )
-            #expect(!configuration.waitsForConnectivity)
-            #expect(configuration.allowsConstrainedNetworkAccess)
-            #expect(configuration.allowsExpensiveNetworkAccess)
-        }
+        let configuration = DaemonTransportPolicy.configuration(for: endpoint, purpose: purpose)
+        #expect(!configuration.waitsForConnectivity)
+        #expect(configuration.allowsConstrainedNetworkAccess)
+        #expect(configuration.allowsExpensiveNetworkAccess)
     }
 
-    @Test
-    func remoteLongLivedTransportsWaitForConnectivity() throws {
+    @Test(arguments: [
+        (DaemonTransportPurpose.persistentEventStream, true),
+        (.finiteEventStream, true),
+        (.realtimeWebSocket, true),
+        (.interactiveHTTP, false),
+        (.attach, false),
+        (.readinessProbe, false),
+        (.bodyLoopbackWebSocket, false),
+    ])
+    func remoteLongLivedTransportsWaitForConnectivity(purpose: DaemonTransportPurpose, waits: Bool) throws {
         let endpoint = DaemonEndpoint.remote(
             baseURL: try #require(URL(string: "https://bobe.example.test")),
             bearerToken: "secret"
         )
-
-        for purpose in [
-            DaemonTransportPurpose.persistentEventStream,
-            .finiteEventStream,
-            .realtimeWebSocket,
-        ] {
-            #expect(
-                DaemonTransportPolicy.configuration(
-                    for: endpoint,
-                    purpose: purpose
-                ).waitsForConnectivity
-            )
-        }
-
-        for purpose in [
-            DaemonTransportPurpose.interactiveHTTP,
-            .attach,
-            .readinessProbe,
-            .bodyLoopbackWebSocket,
-        ] {
-            #expect(
-                !DaemonTransportPolicy.configuration(
-                    for: endpoint,
-                    purpose: purpose
-                ).waitsForConnectivity
-            )
-        }
+        #expect(DaemonTransportPolicy.configuration(for: endpoint, purpose: purpose).waitsForConnectivity == waits)
     }
 
     @Test

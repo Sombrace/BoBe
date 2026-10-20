@@ -3,23 +3,18 @@ import Observation
 
 enum VoiceModel: Hashable, Sendable {
     case pocketTts
-    case supertonicTts
-    case englishStt
-    case multilingualStt
+    case speechRecognition
+    case systemVoice
 
-    var installPath: String {
+    var installPath: String? {
         switch self {
         case .pocketTts:
             DaemonConfig.managedDataDirectory
                 .appendingPathComponent("models", isDirectory: true)
                 .appendingPathComponent(VoiceWire.pocketTtsModelDir, isDirectory: true)
                 .path
-        case .supertonicTts:
-            "~/.cache/fluidaudio/Models/supertonic-3/"
-        case .englishStt:
-            "~/Library/Application Support/FluidAudio/Models/parakeet-eou-streaming/"
-        case .multilingualStt:
-            "~/Library/Application Support/FluidAudio/Models/nemotron-multilingual/"
+        case .speechRecognition, .systemVoice:
+            nil
         }
     }
 }
@@ -63,7 +58,6 @@ final class VoiceModelInstaller {
 
     private(set) var isInstalling = false
     private(set) var isPreparingTts = false
-    private(set) var supertonicInstalled = FluidAudioSupertonicModelPresence.isInstalled()
     private var staleSnapshotRevision: UInt64?
 
     @ObservationIgnored private var installGeneration: UInt64 = 0
@@ -76,30 +70,28 @@ final class VoiceModelInstaller {
 
     private init() {}
 
+    var systemVoice: SystemVoiceChoice? {
+        SystemVoiceChoice.best(for: self.pipeline.effectiveLanguage)
+    }
+
     var selectedTtsReady: Bool {
-        switch VoiceTtsPreference.shared.backend {
+        switch VoiceTtsBackend.best(for: self.pipeline.effectiveLanguage) {
         case .serverPocket: self.pipeline.installSnapshot?.ttsReady == true
-        case .clientSupertonic: self.supertonicInstalled
+        case .systemVoice: self.systemVoice != nil
         }
     }
 
     var preparation: VoiceModelPreparation {
         let pipeline = self.pipeline
-        let backend = VoiceTtsPreference.shared.backend
-        let preference = VoiceSttPreferenceStore.shared.preference
+        let language = pipeline.effectiveLanguage
+        let backend = VoiceTtsBackend.best(for: language)
         let snapshot = pipeline.installSnapshot
-        guard backend.speaks(pipeline.effectiveLanguage) else {
-            return .failed(L10n.tr(
-                "settings.voice.language_unsupported",
-                backend.shortName,
-                VoiceLanguages.displayName(for: pipeline.effectiveLanguage)
-            ))
+        if backend == .systemVoice, self.systemVoice == nil {
+            return .failed(L10n.tr("settings.voice.no_system_voice_format", VoiceLanguages.displayName(for: language)))
         }
         let ttsReady = self.selectedTtsReady
-        let sttReady = preference.speechRecognitionReady(
-            endpointReady: preference.usesEndpointEngine && pipeline.sttStatus == .ready,
-            daemonReady: pipeline.daemonSttReady
-        )
+        let sttReady = pipeline.sttStatus == .ready
+            || (pipeline.daemonRecognizes(language) && pipeline.daemonSttReady)
         let failure: String?
         if case let .failed(message) = pipeline.sttStatus, !sttReady {
             failure = message
@@ -113,7 +105,7 @@ final class VoiceModelInstaller {
             ttsReady: ttsReady,
             sttReady: sttReady,
             installing: (backend == .serverPocket && snapshot?.isRunning == true)
-                || (preference.usesEndpointEngine && pipeline.sttStatus == .downloading),
+                || pipeline.sttStatus == .downloading,
             failure: failure
         )
     }
@@ -146,16 +138,14 @@ final class VoiceModelInstaller {
     func status(of model: VoiceModel) -> VoiceModelStatus {
         switch model {
         case .pocketTts: self.pocketStatus
-        case .supertonicTts: self.supertonicInstalled ? .installed : .missing
-        case .englishStt: self.sttStatus(FluidAudioModelPresence.self, english: true)
-        case .multilingualStt: self.sttStatus(FluidAudioNemotronModelPresence.self, english: false)
+        case .speechRecognition: self.selectedSttStatus
+        case .systemVoice: self.systemVoice == nil ? .missing : .installed
         }
     }
 
     func refresh() async {
         await self.pipeline.refreshDaemonState()
-        if self.pipeline.sttStatus == .notLoaded { self.pipeline.bootstrapSttPresence() }
-        self.supertonicInstalled = FluidAudioSupertonicModelPresence.isInstalled()
+        await self.pipeline.bootstrapSttPresence()
     }
 
     func installSelected() async throws {
@@ -179,32 +169,14 @@ final class VoiceModelInstaller {
             switch model {
             case .pocketTts:
                 try await self.startDaemonTts()
-            case .supertonicTts:
-                try await self.prepareSupertonic()
-            case .englishStt:
-                await self.pipeline.ensureSttLoaded(for: "en")
-            case .multilingualStt:
-                let language = self.pipeline.activeSttLanguage
-                await self.pipeline.ensureSttLoaded(for: language == "en" ? "zh" : language)
+            case .speechRecognition:
+                await self.pipeline.ensureSttLoaded()
+            case .systemVoice:
+                break
             }
         } catch {
             await self.refresh()
             throw error
-        }
-        await self.refresh()
-    }
-
-    func uninstall(_ model: VoiceModel) async {
-        let engineId: String
-        switch model {
-        case .englishStt: engineId = VoiceSttEngineId.fluidAudioParakeet
-        case .multilingualStt: engineId = VoiceSttEngineId.fluidAudioNemotron
-        case .pocketTts, .supertonicTts: return
-        }
-        await self.pipeline.unloadSttEngine(engineId)
-        let path = NSString(string: model.installPath).expandingTildeInPath
-        if FileManager.default.fileExists(atPath: path) {
-            try? FileManager.default.removeItem(at: URL(fileURLWithPath: path, isDirectory: true))
         }
         await self.refresh()
     }
@@ -263,7 +235,7 @@ final class VoiceModelInstaller {
         if self.monitorTask != nil, self.monitorSelection == selection { return }
         self.monitorTask?.cancel()
         self.monitorSelection = selection
-        self.monitorTask = Task { [weak self] in
+        self.monitorTask = Task(name: "Monitor voice models") { [weak self] in
             guard let self else { return }
             defer {
                 if self.monitorSelection == selection {
@@ -283,14 +255,10 @@ final class VoiceModelInstaller {
     }
 
     private func prepareSelectedTts() async throws {
+        guard VoiceTtsBackend.best(for: self.pipeline.effectiveLanguage) == .serverPocket else { return }
         self.isPreparingTts = true
         defer { self.isPreparingTts = false }
-        switch VoiceTtsPreference.shared.backend {
-        case .serverPocket:
-            try await self.startDaemonTts()
-        case .clientSupertonic:
-            try await self.prepareSupertonic()
-        }
+        try await self.startDaemonTts()
     }
 
     private func startDaemonTts() async throws {
@@ -304,11 +272,6 @@ final class VoiceModelInstaller {
         await pipeline.refreshDaemonState()
         guard EndpointStore.shared.selection == selection else { return }
         self.monitor()
-    }
-
-    private func prepareSupertonic() async throws {
-        defer { self.supertonicInstalled = FluidAudioSupertonicModelPresence.isInstalled() }
-        try await self.pipeline.clientTtsEngine.prepare()
     }
 
     private var pocketStatus: VoiceModelStatus {
@@ -327,22 +290,6 @@ final class VoiceModelInstaller {
             return .failed(snapshot.error ?? L10n.tr("setup.voice.poll_failure"))
         }
         return .missing
-    }
-
-    private func sttStatus<P: FluidAudioPresence>(_ presence: P.Type, english: Bool) -> VoiceModelStatus {
-        let pipeline = self.pipeline
-        if let downloading = pipeline.sttDownloadLanguage, (downloading == "en") == english {
-            return .downloading(percent: pipeline.sttLoadProgress?.percent)
-        }
-        if (pipeline.activeSttLanguage == "en") == english {
-            switch pipeline.sttStatus {
-            case .ready: return .installed
-            case let .failed(message): return .failed(message)
-            case .downloading: return .downloading(percent: nil)
-            case .notLoaded: break
-            }
-        }
-        return P.isInstalled() ? .installed : .missing
     }
 }
 

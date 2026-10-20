@@ -3,30 +3,103 @@ import Foundation
 import OSLog
 import Speech
 
-actor AppleSpeechStt: VoiceSttEngine {
+nonisolated struct VoiceSttLoadProgress: Sendable, Equatable {
+    let fractionCompleted: Double
+
+    var percent: Int {
+        max(0, min(100, Int((self.fractionCompleted * 100).rounded())))
+    }
+}
+
+nonisolated struct SpeechRecognitionModel: Sendable, Equatable {
+    let locale: Locale
+    let dictation: Bool
+
+    static func resolve(for language: String) async -> Self? {
+        let requested = Locale(identifier: language)
+        if SpeechTranscriber.isAvailable,
+           let locale = SpeechRecognitionModule.closest(to: requested, in: await SpeechTranscriber.supportedLocales) {
+            return Self(locale: locale, dictation: false)
+        }
+        if let locale = SpeechRecognitionModule.closest(to: requested, in: await DictationTranscriber.supportedLocales) {
+            return Self(locale: locale, dictation: true)
+        }
+        return nil
+    }
+
+    func makeModule() -> SpeechRecognitionModule {
+        guard self.dictation else {
+            return .transcriber(SpeechTranscriber(
+                locale: self.locale,
+                transcriptionOptions: [],
+                reportingOptions: [.volatileResults, .fastResults],
+                attributeOptions: []
+            ))
+        }
+        return .dictation(DictationTranscriber(
+            locale: self.locale,
+            contentHints: [.shortForm],
+            transcriptionOptions: [.punctuation],
+            reportingOptions: [.volatileResults, .frequentFinalization],
+            attributeOptions: []
+        ))
+    }
+}
+
+nonisolated enum SpeechRecognitionModule: Sendable {
+    case transcriber(SpeechTranscriber)
+    case dictation(DictationTranscriber)
+
+    var module: any SpeechModule {
+        switch self {
+        case let .transcriber(module): module
+        case let .dictation(module): module
+        }
+    }
+
+    static func closest(to requested: Locale, in supported: [Locale]) -> Locale? {
+        let candidates = supported.filter { $0.language.languageCode == requested.language.languageCode }
+        let region = requested.region ?? Locale.Language(identifier: requested.language.maximalIdentifier).region
+        return candidates.first { $0.region == region } ?? candidates.first
+    }
+
+    func forEachResult(_ body: (String, Bool) async -> Void) async throws {
+        switch self {
+        case let .transcriber(module):
+            for try await result in module.results {
+                await body(String(result.text.characters), result.isFinal)
+            }
+        case let .dictation(module):
+            for try await result in module.results {
+                await body(String(result.text.characters), result.isFinal)
+            }
+        }
+    }
+}
+
+actor AppleSpeechStt {
+    private static let heldSampleLimit = VoiceWire.captureSampleRate * 10
+
     private let logger = Logger(subsystem: "com.bobe.app", category: "AppleSpeechStt")
-    private let requestedLocale: Locale
-    private var eouDebounce: Duration
+    let language: String
+    private var pauseDuration: Duration
 
-    private var resolvedLocale: Locale?
-    private var transcriber: SpeechTranscriber?
-    private var detector: SpeechDetector?
+    private var model: SpeechRecognitionModel?
+    private var reservedLocale: Locale?
     private var analyzer: SpeechAnalyzer?
-    private var analyzerInputContinuation: AsyncStream<AnalyzerInput>.Continuation?
-    private var analysisTask: Task<Void, Never>?
-    private var transcriberTask: Task<Void, Never>?
-    private var detectorTask: Task<Void, Never>?
-    private var eouTask: Task<Void, Never>?
-    private var loadTask: Task<Void, Error>?
-
+    private var analyzerInput: AsyncStream<AnalyzerInput>.Continuation?
     private var analyzerFormat: AVAudioFormat?
     private var inputConverter: AVAudioConverter?
-    private var savedOnPartial: (@Sendable (String) async -> Void)?
-    private var savedOnEou: (@Sendable (String) async -> Void)?
-    private var savedOnFailure: (@Sendable (String) async -> Void)?
+    private var runtime: Task<Void, Never>?
+    private var loadTask: Task<Void, any Error>?
+
+    private var onPartial: (@Sendable (String) async -> Void)?
+    private var onEou: (@Sendable (String) async -> Void)?
+    private var onFailure: (@Sendable (String) async -> Void)?
     private var committedText = ""
     private var volatileText = ""
-    private var loaded = false
+    private var pause = SpeechPause()
+    private var heldSamples: [Float] = []
     private var finishing = false
     private var generation: UInt64 = 0
 
@@ -37,469 +110,376 @@ actor AppleSpeechStt: VoiceSttEngine {
         interleaved: false
     )
 
-    init(
-        language: String,
-        eouDebounceMs: Int = PauseSensitivityMs.balanced
-    ) {
-        self.requestedLocale = Locale(identifier: language)
-        self.eouDebounce = .milliseconds(max(100, min(5_000, eouDebounceMs)))
+    init(language: String, pauseMs: Int = PauseSensitivityMs.balanced) {
+        self.language = language
+        self.pauseDuration = Self.pause(ms: pauseMs)
     }
 
-    func setEouDebounceMs(_ value: Int) {
-        self.eouDebounce = .milliseconds(max(100, min(5_000, value)))
+    var isLoaded: Bool {
+        self.model != nil
     }
 
-    func loadModels(
+    func setPauseMs(_ value: Int) {
+        self.pauseDuration = Self.pause(ms: value)
+    }
+
+    nonisolated static func assetsInstalled(for language: String) async -> Bool {
+        guard let model = await SpeechRecognitionModel.resolve(for: language) else { return false }
+        return await AssetInventory.status(forModules: [model.makeModule().module]) == .installed
+    }
+
+    func load(
         onPartial: @escaping @Sendable (String) async -> Void,
         onEou: @escaping @Sendable (String) async -> Void,
         onFailure: @escaping @Sendable (String) async -> Void,
         onProgress: @escaping @Sendable (VoiceSttLoadProgress) -> Void
     ) async throws {
-        self.savedOnPartial = onPartial
-        self.savedOnEou = onEou
-        self.savedOnFailure = onFailure
-        if self.loaded { return }
+        self.onPartial = onPartial
+        self.onEou = onEou
+        self.onFailure = onFailure
+        if self.model != nil { return }
         if let loadTask = self.loadTask {
             try await loadTask.value
             return
         }
-
-        let task = Task<Void, Error> { [weak self] in
-            guard let self else { return }
+        let task = Task<Void, any Error>(name: "Apple Speech load \(self.language)") {
             try await self.performLoad(onProgress: onProgress)
         }
         self.loadTask = task
-        do {
-            try await task.value
-        } catch {
-            self.loadTask = nil
-            await self.stopRuntime()
-            throw error
-        }
+        defer { self.loadTask = nil }
+        try await task.value
     }
 
     func cancelLoading() async {
         guard let loadTask = self.loadTask else { return }
         loadTask.cancel()
         _ = try? await loadTask.value
-        self.loadTask = nil
     }
 
-    func acceptSamples(_ samples: [Float]) async throws {
-        guard self.loaded,
-              let inputFormat,
-              let analyzerFormat,
-              let continuation = self.analyzerInputContinuation
-        else {
-            throw AppleSpeechSttError.notLoaded
-        }
+    func acceptSamples(_ samples: [Float]) async throws(AppleSpeechSttError) {
+        guard self.model != nil else { throw .notLoaded }
         guard !samples.isEmpty else { return }
-        guard let source = AVAudioPCMBuffer(
-            pcmFormat: inputFormat,
-            frameCapacity: AVAudioFrameCount(samples.count)
-        ), let channel = source.floatChannelData?[0]
-        else {
-            throw AppleSpeechSttError.audioBufferCreationFailed
+        guard let analyzerInput = self.analyzerInput, !self.finishing else {
+            self.hold(samples)
+            return
         }
-        source.frameLength = AVAudioFrameCount(samples.count)
-        samples.withUnsafeBufferPointer { pointer in
-            guard let baseAddress = pointer.baseAddress else { return }
-            channel.update(from: baseAddress, count: pointer.count)
+        try self.feed(samples, to: analyzerInput)
+        self.pause.observe(samples)
+        if self.pause.reached(self.pauseDuration), !self.transcript.isEmpty {
+            await self.endUtterance()
         }
-
-        let buffer: AVAudioPCMBuffer
-        if let inputConverter = self.inputConverter {
-            let ratio = analyzerFormat.sampleRate / inputFormat.sampleRate
-            let capacity = AVAudioFrameCount(ceil(Double(samples.count) * ratio) + 32)
-            guard let converted = AVAudioPCMBuffer(
-                pcmFormat: analyzerFormat,
-                frameCapacity: capacity
-            ) else {
-                throw AppleSpeechSttError.audioBufferCreationFailed
-            }
-            let conversion = convertSingleBuffer(inputConverter, source: source, into: converted)
-            guard conversion.status != .error, conversion.error == nil else {
-                throw AppleSpeechSttError.audioConversionFailed(
-                    conversion.error?.localizedDescription ?? "unknown conversion error"
-                )
-            }
-            buffer = converted
-        } else {
-            buffer = source
-        }
-
-        guard case .terminated = continuation.yield(AnalyzerInput(buffer: buffer)) else { return }
-        throw AppleSpeechSttError.analyzerStopped
     }
 
-    func reset() async throws {
-        guard self.loaded,
-              let transcriber = self.transcriber,
-              let detector = self.detector
-        else { return }
+    func finish() async -> String {
+        guard self.model != nil else { return "" }
+        let transcript = await self.finalizeUtterance()
+        await self.restartRuntime()
+        return transcript
+    }
+
+    func reset() async throws(AppleSpeechSttError) {
+        guard self.model != nil else { return }
         await self.stopRuntime()
-        self.clearTranscript()
-        try await self.prepareRuntime(transcriber: transcriber, detector: detector)
+        self.heldSamples.removeAll()
+        try await self.startRuntime()
     }
 
     func cleanup() async {
         await self.cancelLoading()
         await self.stopRuntime()
-        if let resolvedLocale = self.resolvedLocale {
-            _ = await AssetInventory.release(reservedLocale: resolvedLocale)
+        self.heldSamples.removeAll()
+        if let reservedLocale = self.reservedLocale {
+            await AssetInventory.release(reservedLocale: reservedLocale)
         }
-        self.resolvedLocale = nil
-        self.transcriber = nil
-        self.detector = nil
-        self.analyzerFormat = nil
-        self.inputConverter = nil
-        self.savedOnPartial = nil
-        self.savedOnEou = nil
-        self.savedOnFailure = nil
-        self.clearTranscript()
-        self.loaded = false
+        self.reservedLocale = nil
+        self.model = nil
+        self.onPartial = nil
+        self.onEou = nil
+        self.onFailure = nil
     }
 
-    private func performLoad(
-        onProgress: @escaping @Sendable (VoiceSttLoadProgress) -> Void
-    ) async throws {
-        await self.stopRuntime()
-        onProgress(VoiceSttLoadProgress(fractionCompleted: 0, phase: .listing))
-        guard await appleSpeechAuthorizationStatus() == .authorized else {
-            throw AppleSpeechSttError.permissionDenied
-        }
-        guard SpeechTranscriber.isAvailable else {
-            throw AppleSpeechSttError.unavailable
-        }
-        guard let locale = await SpeechTranscriber.supportedLocale(
-            equivalentTo: self.requestedLocale
-        ) else {
-            throw AppleSpeechSttError.unsupportedLocale(self.requestedLocale.identifier)
-        }
+    private var transcript: String {
+        (self.committedText + self.volatileText).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
-        let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
-        let detector = SpeechDetector(
-            detectionOptions: .init(sensitivityLevel: .medium),
-            reportResults: true
-        )
-        let modules: [any SpeechModule] = [transcriber, detector]
-        switch await AssetInventory.status(forModules: modules) {
-        case .unsupported:
-            throw AppleSpeechSttError.unsupportedLocale(locale.identifier)
-        case .supported:
-            guard let request = try await AssetInventory.assetInstallationRequest(
-                supporting: modules
-            ) else {
-                throw AppleSpeechSttError.assetRequestUnavailable
-            }
-            onProgress(VoiceSttLoadProgress(
-                fractionCompleted: request.progress.fractionCompleted,
-                phase: .downloading(completedFiles: 0, totalFiles: 1)
-            ))
-            try await request.downloadAndInstall()
-            onProgress(VoiceSttLoadProgress(
-                fractionCompleted: 1,
-                phase: .downloading(completedFiles: 1, totalFiles: 1)
-            ))
-        case .downloading:
-            guard let request = try await AssetInventory.assetInstallationRequest(
-                supporting: modules
-            ) else {
-                throw AppleSpeechSttError.assetRequestUnavailable
-            }
-            onProgress(VoiceSttLoadProgress(
-                fractionCompleted: request.progress.fractionCompleted,
-                phase: .downloading(completedFiles: 0, totalFiles: 1)
-            ))
-            try await request.downloadAndInstall()
-        case .installed:
-            break
-        @unknown default:
-            throw AppleSpeechSttError.unknownAssetStatus
+    private func performLoad(onProgress: @escaping @Sendable (VoiceSttLoadProgress) -> Void) async throws {
+        onProgress(VoiceSttLoadProgress(fractionCompleted: 0))
+        guard let model = await SpeechRecognitionModel.resolve(for: self.language) else {
+            throw AppleSpeechSttError.unsupportedLocale(self.language)
         }
-
-        let needsReservation = self.resolvedLocale != locale
-        if needsReservation {
-            guard try await AssetInventory.reserve(locale: locale) else {
-                throw AppleSpeechSttError.localeReservationFailed(locale.identifier)
-            }
+        let locale = model.locale
+        try await Self.installAssets(for: [model.makeModule().module], onProgress: onProgress)
+        try Task.checkCancellation()
+        if self.reservedLocale != locale {
+            try await Self.reserve(locale)
+            self.reservedLocale = locale
         }
+        self.model = model
         do {
-            self.resolvedLocale = locale
-            self.transcriber = transcriber
-            self.detector = detector
-            try await self.prepareRuntime(transcriber: transcriber, detector: detector)
-            self.loaded = true
-            self.loadTask = nil
-            self.logger.info("Apple Speech loaded locale=\(locale.identifier, privacy: .public)")
+            try await self.startRuntime()
         } catch {
-            if needsReservation {
-                _ = await AssetInventory.release(reservedLocale: locale)
-                self.resolvedLocale = nil
-            }
+            self.model = nil
             throw error
         }
+        onProgress(VoiceSttLoadProgress(fractionCompleted: 1))
+        self.logger.info("Apple Speech loaded locale=\(locale.identifier, privacy: .public)")
     }
 
-    private func prepareRuntime(
-        transcriber: SpeechTranscriber,
-        detector: SpeechDetector
+    nonisolated private static func installAssets(
+        for modules: [any SpeechModule],
+        onProgress: @escaping @Sendable (VoiceSttLoadProgress) -> Void
     ) async throws {
-        let modules: [any SpeechModule] = [transcriber, detector]
-        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(
-            compatibleWith: modules
-        ) else {
-            throw AppleSpeechSttError.noCompatibleAudioFormat
+        switch await AssetInventory.status(forModules: modules) {
+        case .installed:
+            return
+        case .unsupported:
+            throw AppleSpeechSttError.assetsUnsupported
+        case .supported, .downloading:
+            break
+        @unknown default:
+            throw AppleSpeechSttError.assetsUnsupported
         }
-        guard let inputFormat = self.inputFormat else {
-            throw AppleSpeechSttError.audioBufferCreationFailed
+        guard let request = try await AssetInventory.assetInstallationRequest(supporting: modules) else { return }
+        let observation = request.progress.observe(\.fractionCompleted, options: [.initial, .new]) { progress, _ in
+            onProgress(VoiceSttLoadProgress(fractionCompleted: progress.fractionCompleted))
+        }
+        defer { observation.invalidate() }
+        try await request.downloadAndInstall()
+    }
+
+    nonisolated private static func reserve(_ locale: Locale) async throws {
+        let reserved = await AssetInventory.reservedLocales
+        if reserved.contains(locale) { return }
+        if reserved.count >= AssetInventory.maximumReservedLocales, let oldest = reserved.first {
+            await AssetInventory.release(reservedLocale: oldest)
+        }
+        do {
+            try await AssetInventory.reserve(locale: locale)
+        } catch {
+            throw AppleSpeechSttError.localeReservationFailed(locale.identifier)
+        }
+    }
+
+    private func startRuntime() async throws(AppleSpeechSttError) {
+        guard let model = self.model, let inputFormat = self.inputFormat else { throw .notLoaded }
+        let recognition = model.makeModule()
+        self.generation &+= 1
+        let generation = self.generation
+        let modules = [recognition.module]
+        guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(
+            compatibleWith: modules,
+            considering: inputFormat
+        ) else {
+            throw .noCompatibleAudioFormat
         }
         let converter: AVAudioConverter?
         if format == inputFormat {
             converter = nil
         } else {
             guard let created = AVAudioConverter(from: inputFormat, to: format) else {
-                throw AppleSpeechSttError.audioConverterCreationFailed
+                throw .audioConverterCreationFailed
             }
             converter = created
         }
-
         let analyzer = SpeechAnalyzer(
             modules: modules,
             options: .init(priority: .userInitiated, modelRetention: .processLifetime)
         )
-        try await analyzer.prepareToAnalyze(in: format)
-
-        let (inputStream, continuation) = AsyncStream.makeStream(
-            of: AnalyzerInput.self,
-            bufferingPolicy: .bufferingNewest(32)
-        )
-        self.generation &+= 1
-        let generation = self.generation
+        do {
+            let context = AnalysisContext()
+            context.contextualStrings[.general] = ["BoBe"]
+            try await analyzer.setContext(context)
+            try await analyzer.prepareToAnalyze(in: format)
+        } catch {
+            throw .analyzerUnavailable(error.localizedDescription)
+        }
+        guard generation == self.generation else {
+            await analyzer.cancelAndFinishNow()
+            return
+        }
+        let (inputStream, analyzerInput) = AsyncStream.makeStream(of: AnalyzerInput.self)
         self.analyzer = analyzer
         self.analyzerFormat = format
         self.inputConverter = converter
-        self.analyzerInputContinuation = continuation
-        self.finishing = false
-
-        self.transcriberTask = Task { [weak self, transcriber] in
+        self.analyzerInput = analyzerInput
+        self.runtime = Task(name: "Apple Speech \(self.language)") { [weak self] in
             do {
-                for try await result in transcriber.results {
-                    guard !Task.isCancelled else { return }
-                    await self?.handleTranscription(result, generation: generation)
+                try await withThrowingDiscardingTaskGroup { group in
+                    group.addTask {
+                        try await analyzer.start(inputSequence: inputStream)
+                    }
+                    group.addTask {
+                        try await recognition.forEachResult { text, isFinal in
+                            await self?.receive(text, isFinal: isFinal, generation: generation)
+                        }
+                    }
                 }
             } catch is CancellationError {
                 return
             } catch {
-                await self?.handleRuntimeFailure(error, generation: generation)
+                await self?.runtimeFailed(error, generation: generation)
             }
         }
-        self.detectorTask = Task { [weak self, detector] in
-            do {
-                for try await result in detector.results {
-                    guard !Task.isCancelled else { return }
-                    await self?.handleDetection(result, generation: generation)
-                }
-            } catch is CancellationError {
-                return
-            } catch {
-                await self?.handleRuntimeFailure(error, generation: generation)
-            }
-        }
-        self.analysisTask = Task { [weak self, analyzer] in
-            do {
-                try await analyzer.start(inputSequence: inputStream)
-            } catch is CancellationError {
-                return
-            } catch {
-                await self?.handleRuntimeFailure(error, generation: generation)
-            }
+        let held = self.heldSamples
+        self.heldSamples.removeAll()
+        if !held.isEmpty {
+            try self.feed(held, to: analyzerInput)
+            self.pause.observe(held)
         }
     }
 
-    private func handleTranscription(
-        _ result: SpeechTranscriber.Result,
-        generation: UInt64
-    ) async {
-        guard generation == self.generation else { return }
-        let text = String(result.text.characters)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
-        if result.isFinal {
-            self.committedText = mergeSpeechTranscript(
-                committed: self.committedText,
-                candidate: text
-            )
-            self.volatileText = ""
-        } else {
-            self.volatileText = text
-        }
-        await self.savedOnPartial?(self.currentTranscript)
-    }
-
-    private func handleDetection(
-        _ result: SpeechDetector.Result,
-        generation: UInt64
-    ) {
-        guard generation == self.generation, !self.finishing else { return }
-        self.eouTask?.cancel()
-        self.eouTask = nil
-        guard !result.speechDetected else { return }
-        let debounce = self.eouDebounce
-        self.eouTask = Task { [weak self] in
-            do {
-                try await Task.sleep(for: debounce)
-                await self?.emitEndOfUtterance(generation: generation)
-            } catch {
-                return
-            }
-        }
-    }
-
-    private func emitEndOfUtterance(generation: UInt64) async {
-        guard generation == self.generation,
-              !self.finishing,
-              !self.currentTranscript.isEmpty,
-              let transcriber = self.transcriber,
-              let detector = self.detector
-        else { return }
-        let transcript = self.currentTranscript
-        self.eouTask = nil
-        await self.stopRuntime()
-        self.clearTranscript()
-        await self.savedOnEou?(transcript)
-        guard self.loaded else { return }
+    private func restartRuntime() async {
         do {
-            try await self.prepareRuntime(transcriber: transcriber, detector: detector)
+            try await self.startRuntime()
         } catch {
-            self.loaded = false
-            let message = error.localizedDescription
-            self.logger.error(
-                "Apple Speech turn reset failed: \(message, privacy: .public)"
-            )
-            await self.savedOnFailure?(message)
+            self.model = nil
+            self.logger.error("Apple Speech restart failed: \(error.localizedDescription, privacy: .public)")
+            await self.onFailure?(error.localizedDescription)
         }
-    }
-
-    private func handleRuntimeFailure(_ error: Error, generation: UInt64) {
-        guard generation == self.generation, !self.finishing else { return }
-        let message = error.localizedDescription
-        self.logger.error(
-            "Apple Speech runtime failed: \(message, privacy: .public)"
-        )
-        self.loaded = false
-        self.generation &+= 1
-        let failedGeneration = self.generation
-        self.analyzerInputContinuation?.finish()
-        self.analyzerInputContinuation = nil
-        Task { [weak self] in
-            guard let self else { return }
-            await self.finishRuntimeFailure(
-                generation: failedGeneration,
-                message: message
-            )
-        }
-    }
-
-    private func finishRuntimeFailure(
-        generation: UInt64,
-        message: String
-    ) async {
-        guard generation == self.generation else { return }
-        await self.stopRuntime()
-        await self.savedOnFailure?(message)
     }
 
     private func stopRuntime() async {
         self.generation &+= 1
-        self.finishing = true
-        self.eouTask?.cancel()
-        self.eouTask = nil
-        self.analyzerInputContinuation?.finish()
-        self.analyzerInputContinuation = nil
+        self.analyzerInput?.finish()
+        self.analyzerInput = nil
         if let analyzer = self.analyzer {
             await analyzer.cancelAndFinishNow()
         }
-        self.analysisTask?.cancel()
-        self.transcriberTask?.cancel()
-        self.detectorTask?.cancel()
-        await self.awaitRuntimeTasks()
+        let runtime = self.runtime
+        runtime?.cancel()
+        await runtime?.value
+        self.discardRuntime()
+    }
+
+    private func discardRuntime() {
         self.analyzer = nil
+        self.runtime = nil
         self.analyzerFormat = nil
         self.inputConverter = nil
-        self.finishing = false
-    }
-
-    private func awaitRuntimeTasks() async {
-        let analysisTask = self.analysisTask
-        let transcriberTask = self.transcriberTask
-        let detectorTask = self.detectorTask
-        self.analysisTask = nil
-        self.transcriberTask = nil
-        self.detectorTask = nil
-        await analysisTask?.value
-        await transcriberTask?.value
-        await detectorTask?.value
-    }
-
-    private var currentTranscript: String {
-        mergeSpeechTranscript(committed: self.committedText, candidate: self.volatileText)
-    }
-
-    private func clearTranscript() {
         self.committedText = ""
         self.volatileText = ""
+        self.pause.reset()
     }
-}
 
-nonisolated func appleSpeechAuthorizationStatus() async -> SFSpeechRecognizerAuthorizationStatus {
-    let status = SFSpeechRecognizer.authorizationStatus()
-    guard status == .notDetermined else { return status }
-    return await withCheckedContinuation { continuation in
-        SFSpeechRecognizer.requestAuthorization { grantedStatus in
-            continuation.resume(returning: grantedStatus)
+    private func finalizeUtterance() async -> String {
+        guard let analyzer = self.analyzer, !self.finishing else { return self.transcript }
+        self.finishing = true
+        defer { self.finishing = false }
+        self.analyzerInput?.finish()
+        self.analyzerInput = nil
+        do {
+            try await analyzer.finalizeAndFinishThroughEndOfInput()
+        } catch {
+            self.logger.warning("Apple Speech finalize failed: \(error.localizedDescription, privacy: .public)")
+        }
+        await self.runtime?.value
+        let transcript = self.transcript
+        self.generation &+= 1
+        self.discardRuntime()
+        return transcript
+    }
+
+    private func endUtterance() async {
+        let transcript = await self.finalizeUtterance()
+        if !transcript.isEmpty {
+            await self.onEou?(transcript)
+        }
+        await self.restartRuntime()
+    }
+
+    private func receive(_ text: String, isFinal: Bool, generation: UInt64) async {
+        guard generation == self.generation else { return }
+        if isFinal {
+            self.committedText += text
+            self.volatileText = ""
+        } else {
+            self.volatileText = text
+        }
+        let transcript = self.transcript
+        guard !transcript.isEmpty else { return }
+        await self.onPartial?(transcript)
+    }
+
+    private func runtimeFailed(_ error: any Error, generation: UInt64) async {
+        guard generation == self.generation, !self.finishing else { return }
+        let message = error.localizedDescription
+        self.logger.error("Apple Speech runtime failed: \(message, privacy: .public)")
+        await self.stopRuntime()
+        self.model = nil
+        await self.onFailure?(message)
+    }
+
+    private func hold(_ samples: [Float]) {
+        self.heldSamples.append(contentsOf: samples)
+        let overflow = self.heldSamples.count - Self.heldSampleLimit
+        if overflow > 0 {
+            self.heldSamples.removeFirst(overflow)
         }
     }
-}
 
-nonisolated func mergeSpeechTranscript(committed: String, candidate: String) -> String {
-    let committed = committed.trimmingCharacters(in: .whitespacesAndNewlines)
-    let candidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !committed.isEmpty else { return candidate }
-    guard !candidate.isEmpty else { return committed }
-    if candidate.hasPrefix(committed) { return candidate }
-    if committed.hasSuffix(candidate) { return committed }
-    return "\(committed) \(candidate)"
+    private func feed(
+        _ samples: [Float],
+        to analyzerInput: AsyncStream<AnalyzerInput>.Continuation
+    ) throws(AppleSpeechSttError) {
+        guard let inputFormat = self.inputFormat,
+              let analyzerFormat = self.analyzerFormat,
+              let source = AVAudioPCMBuffer(pcmFormat: inputFormat, frameCapacity: AVAudioFrameCount(samples.count)),
+              let channel = source.floatChannelData?[0]
+        else {
+            throw .audioBufferCreationFailed
+        }
+        source.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { pointer in
+            guard let baseAddress = pointer.baseAddress else { return }
+            channel.update(from: baseAddress, count: pointer.count)
+        }
+        let buffer: AVAudioPCMBuffer
+        if let inputConverter = self.inputConverter {
+            let ratio = analyzerFormat.sampleRate / inputFormat.sampleRate
+            guard let converted = AVAudioPCMBuffer(
+                pcmFormat: analyzerFormat,
+                frameCapacity: AVAudioFrameCount((Double(samples.count) * ratio).rounded(.up)) + 32
+            ) else {
+                throw .audioBufferCreationFailed
+            }
+            let conversion = convertSingleBuffer(inputConverter, source: source, into: converted)
+            guard conversion.status != .error, conversion.error == nil else {
+                throw .audioConversionFailed(conversion.error?.localizedDescription ?? "unknown conversion error")
+            }
+            buffer = converted
+        } else {
+            buffer = source
+        }
+        if case .terminated = analyzerInput.yield(AnalyzerInput(buffer: buffer)) {
+            throw .analyzerStopped
+        }
+    }
+
+    nonisolated private static func pause(ms: Int) -> Duration {
+        .milliseconds(max(100, min(5_000, ms)))
+    }
 }
 
 nonisolated enum AppleSpeechSttError: LocalizedError {
-    case permissionDenied
-    case unavailable
     case unsupportedLocale(String)
-    case assetRequestUnavailable
+    case assetsUnsupported
     case localeReservationFailed(String)
-    case unknownAssetStatus
     case noCompatibleAudioFormat
     case audioConverterCreationFailed
     case audioBufferCreationFailed
     case audioConversionFailed(String)
+    case analyzerUnavailable(String)
     case analyzerStopped
     case notLoaded
 
     var errorDescription: String? {
         switch self {
-        case .permissionDenied:
-            "Speech recognition permission is required for Apple Speech."
-        case .unavailable:
-            "Apple Speech is unavailable on this Mac."
-        case let .unsupportedLocale(locale):
-            "Apple Speech does not support \(locale)."
-        case .assetRequestUnavailable:
-            "Apple Speech could not create a model download request."
+        case let .unsupportedLocale(language):
+            "This Mac can’t recognize speech in \(language)."
+        case .assetsUnsupported:
+            "This Mac can’t download the speech recognition model for this language."
         case let .localeReservationFailed(locale):
-            "Apple Speech could not reserve its \(locale) model."
-        case .unknownAssetStatus:
-            "Apple Speech returned an unknown model status."
+            "macOS couldn’t keep the \(locale) speech recognition model."
         case .noCompatibleAudioFormat:
             "Apple Speech did not provide a compatible audio format."
         case .audioConverterCreationFailed:
@@ -508,6 +488,8 @@ nonisolated enum AppleSpeechSttError: LocalizedError {
             "Apple Speech could not allocate an audio buffer."
         case let .audioConversionFailed(reason):
             "Apple Speech audio conversion failed: \(reason)"
+        case let .analyzerUnavailable(reason):
+            "Apple Speech could not start: \(reason)"
         case .analyzerStopped:
             "Apple Speech stopped accepting audio."
         case .notLoaded:

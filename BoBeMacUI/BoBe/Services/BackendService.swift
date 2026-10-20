@@ -3,6 +3,7 @@ import Foundation
 import os
 import OSLog
 import Security
+import Synchronization
 
 nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "BackendService")
 
@@ -18,9 +19,9 @@ nonisolated private enum ManagedProcessIdentity {
 }
 
 nonisolated private let terminateGrace: Duration = .seconds(45)
-nonisolated private let healthCheckInitialDelay: TimeInterval = 0.2
+nonisolated private let healthCheckInitialDelay: Duration = .milliseconds(200)
 nonisolated private let healthCheckBackoffMultiplier: Double = 1.5
-nonisolated private let healthCheckMaxDelay: TimeInterval = 5.0
+nonisolated private let healthCheckMaxDelay: Duration = .seconds(5)
 nonisolated private let healthCheckMaxAttempts = 30
 nonisolated private let stderrBufferMaxLines = 50
 
@@ -253,9 +254,9 @@ actor BackendService {
                 lastConnectionError = error
                 guard attempt < healthCheckMaxAttempts else { break }
                 logger.debug(
-                    "Enrollment connection attempt \(attempt)/\(healthCheckMaxAttempts) failed, retrying in \(delay)s"
+                    "Enrollment connection attempt \(attempt)/\(healthCheckMaxAttempts) failed, retrying in \(delay, privacy: .public)"
                 )
-                try await Task.sleep(for: .seconds(delay))
+                try await Task.sleep(for: delay)
                 delay = min(delay * healthCheckBackoffMultiplier, healthCheckMaxDelay)
             }
         }
@@ -463,8 +464,8 @@ actor BackendService {
                 }
                 return
             } catch {
-                logger.debug("Health check attempt \(attempt)/\(healthCheckMaxAttempts) failed, retrying in \(delay)s")
-                try await Task.sleep(for: .seconds(delay))
+                logger.debug("Health check attempt \(attempt)/\(healthCheckMaxAttempts) failed, retrying in \(delay, privacy: .public)")
+                try await Task.sleep(for: delay)
                 delay = min(delay * healthCheckBackoffMultiplier, healthCheckMaxDelay)
             }
         }
@@ -508,7 +509,7 @@ actor BackendService {
 
         let generation = self.lifecycleGeneration
         self.restartTask?.cancel()
-        self.restartTask = Task { [weak self] in
+        self.restartTask = Task(name: "Restart runtime") { [weak self] in
             do {
                 try await Task.sleep(for: .seconds(backoffSeconds))
             } catch {
@@ -715,7 +716,7 @@ nonisolated enum BackendServiceError: Error, LocalizedError {
 }
 
 nonisolated private final class StderrBuffer: Sendable {
-    private let lines = OSAllocatedUnfairLock(initialState: [String]())
+    private let lines = Mutex<[String]>([])
 
     func append(_ line: String) {
         self.lines.withLock { lines in

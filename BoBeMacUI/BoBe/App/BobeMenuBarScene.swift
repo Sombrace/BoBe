@@ -6,7 +6,7 @@ final class BobeStatusItemController: NSObject, NSMenuDelegate {
     private let store: BobeStore
     private let menu = NSMenu()
     private(set) var statusItem: NSStatusItem?
-    private var statusObservationGeneration: UInt64 = 0
+    private var statusObservation: Task<Void, Never>?
 
     init(store: BobeStore = .shared) {
         self.store = store
@@ -28,7 +28,8 @@ final class BobeStatusItemController: NSObject, NSMenuDelegate {
     }
 
     func tearDown() {
-        self.statusObservationGeneration &+= 1
+        self.statusObservation?.cancel()
+        self.statusObservation = nil
         guard let statusItem else { return }
         NSStatusBar.system.removeStatusItem(statusItem)
         self.statusItem = nil
@@ -39,21 +40,12 @@ final class BobeStatusItemController: NSObject, NSMenuDelegate {
     }
 
     private func observeStatus() {
-        self.statusObservationGeneration &+= 1
-        self.trackStatus(generation: self.statusObservationGeneration)
-    }
-
-    private func trackStatus(generation: UInt64) {
-        guard generation == self.statusObservationGeneration else { return }
-        withObservationTracking {
-            _ = self.store.stateType
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self,
-                      generation == self.statusObservationGeneration
-                else { return }
+        self.statusObservation?.cancel()
+        let store = self.store
+        self.statusObservation = Task(name: "Status item state") { [weak self] in
+            for await _ in Observations({ store.stateType }) {
+                guard let self else { return }
                 self.configureButton(self.statusItem?.button)
-                self.trackStatus(generation: generation)
             }
         }
     }
