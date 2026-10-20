@@ -21,16 +21,13 @@ pub(crate) fn persist(
 
     let config_path = dir.join("config.toml");
 
-    let existing = if config_path.exists() {
-        match std::fs::read_to_string(&config_path) {
-            Ok(s) => s,
-            Err(e) => {
-                error!(error = %e, "config_persistence.read_failed");
-                return false;
-            }
+    let existing = match std::fs::read_to_string(&config_path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            error!(%error, "config_persistence.read_failed");
+            return false;
         }
-    } else {
-        String::new()
     };
 
     let mut doc: toml_edit::DocumentMut = match existing.parse() {
@@ -107,11 +104,11 @@ fn remove_toml_value_inner(doc: &mut toml_edit::DocumentMut, dotted_key: &str) -
     let Some((field, sections)) = parts.split_last() else {
         return false;
     };
-    let mut table = doc.as_table_mut();
+    let mut table: &mut dyn toml_edit::TableLike = doc.as_table_mut();
     for section in sections {
         let Some(next) = table
             .get_mut(section)
-            .and_then(toml_edit::Item::as_table_mut)
+            .and_then(toml_edit::Item::as_table_like_mut)
         else {
             return false;
         };
@@ -129,25 +126,29 @@ fn set_toml_value(
     let Some((field, sections)) = parts.split_last() else {
         return false;
     };
-    let mut table = doc.as_table_mut();
+    let Some(item) = json_to_toml_item(value) else {
+        error!(
+            key = dotted_key,
+            "config_persistence.value_not_representable"
+        );
+        return false;
+    };
+    let mut table: &mut dyn toml_edit::TableLike = doc.as_table_mut();
     for section in sections {
-        if !table.contains_key(section) {
-            table.insert(section, toml_edit::Item::Table(toml_edit::Table::new()));
-        }
         let Some(next) = table
-            .get_mut(section)
-            .and_then(toml_edit::Item::as_table_mut)
+            .entry(section)
+            .or_insert(toml_edit::table())
+            .as_table_like_mut()
         else {
-            tracing::error!(
+            error!(
                 key = dotted_key,
-                section,
-                "config_persistence.path_is_not_table"
+                section, "config_persistence.path_is_not_table"
             );
             return false;
         };
         table = next;
     }
-    table.insert(field, json_to_toml_item(value));
+    table.insert(field, item);
     true
 }
 
@@ -159,39 +160,25 @@ pub(crate) fn render_config(existing: &str, document: &toml_edit::DocumentMut) -
     }
 }
 
-fn json_to_toml_item(value: &serde_json::Value) -> toml_edit::Item {
+fn json_to_toml_item(value: &serde_json::Value) -> Option<toml_edit::Item> {
+    use serde::Serialize;
     match value {
-        serde_json::Value::Bool(b) => toml_edit::value(*b),
-        serde_json::Value::Number(n) if let Some(i) = n.as_i64() => toml_edit::value(i),
-        serde_json::Value::Number(n) if let Some(f) = n.as_f64() => toml_edit::value(f),
-        serde_json::Value::Number(n) => toml_edit::value(n.to_string()),
-        serde_json::Value::String(s) => toml_edit::value(s.as_str()),
-        serde_json::Value::Array(arr) => {
-            let mut toml_arr = toml_edit::Array::new();
-            for item in arr {
-                match item {
-                    serde_json::Value::String(s) => toml_arr.push(s.as_str()),
-                    serde_json::Value::Number(n) if let Some(i) = n.as_i64() => toml_arr.push(i),
-                    serde_json::Value::Number(n) if let Some(f) = n.as_f64() => toml_arr.push(f),
-                    serde_json::Value::Bool(b) => toml_arr.push(*b),
-                    _ => {}
-                }
-            }
-            toml_edit::value(toml_arr)
-        }
+        serde_json::Value::Null => Some(toml_edit::Item::None),
         serde_json::Value::Object(map) => {
             let mut table = toml_edit::Table::new();
             for (key, value) in map.iter().filter(|(_, value)| !value.is_null()) {
-                table.insert(key, json_to_toml_item(value));
+                table.insert(key, json_to_toml_item(value)?);
             }
-            toml_edit::Item::Table(table)
+            Some(toml_edit::Item::Table(table))
         }
-        serde_json::Value::Null => toml_edit::Item::None,
+        value => value
+            .serialize(toml_edit::ser::ValueSerializer::new())
+            .ok()
+            .map(toml_edit::Item::Value),
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on fixture failures")]
 mod tests {
     use std::collections::BTreeMap;
 
@@ -212,6 +199,29 @@ mod tests {
         let saved = std::fs::read_to_string(root.join("config.toml")).expect("read saved config");
         assert!(!saved.contains("enabled"));
         assert!(saved.contains("persona"));
+        assert!(std::fs::remove_dir_all(root).is_ok());
+    }
+
+    #[test]
+    fn inline_tables_are_edited_in_place() {
+        let root =
+            std::env::temp_dir().join(format!("bobe-config-inline-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create test config directory");
+        std::fs::write(
+            root.join("config.toml"),
+            "voice = { enabled = false, persona = 'marius' }\n",
+        )
+        .expect("write test config");
+
+        let changes = BTreeMap::from([("voice.enabled".into(), serde_json::Value::Bool(true))]);
+        assert!(persist(&root, &changes));
+        let saved = std::fs::read_to_string(root.join("config.toml")).expect("read saved config");
+        assert!(saved.contains("enabled = true"), "{saved}");
+
+        assert!(super::remove(&root, "voice.enabled"));
+        let saved = std::fs::read_to_string(root.join("config.toml")).expect("read saved config");
+        assert!(!saved.contains("enabled"), "{saved}");
+        assert!(saved.contains("persona"), "{saved}");
         assert!(std::fs::remove_dir_all(root).is_ok());
     }
 

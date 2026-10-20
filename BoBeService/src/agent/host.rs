@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{Mutex, Notify, broadcast, mpsc, oneshot};
+use tokio::sync::{Mutex, SetOnce, broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use super::process::{OwnedProcesses, ProcessPurpose, ProcessRequest};
@@ -193,8 +193,7 @@ pub(super) struct Connection {
     request_order: Mutex<()>,
     alive: AtomicBool,
     initialized: AtomicBool,
-    exited: AtomicBool,
-    closed: Notify,
+    exited: SetOnce<()>,
     stop: CancellationToken,
     notifications: broadcast::Sender<(String, Value)>,
     processes: Arc<OwnedProcesses>,
@@ -334,7 +333,7 @@ impl Host {
             self.notifications.clone(),
         )?;
         *process = Some(Arc::clone(&connection));
-        let initializing = connection.stop.clone().drop_guard();
+        let initializing = connection.stop.drop_guard_ref();
         let initialized = connection
             .call("initialize", parameters, CONTROL_TIMEOUT)
             .await;
@@ -428,7 +427,7 @@ impl Host {
         let Some(connection) = process.as_ref().cloned() else {
             return Ok(());
         };
-        let stopping = connection.stop.clone().drop_guard();
+        let stopping = connection.stop.drop_guard_ref();
         for cancellation in lock(&connection.domain_turns).values() {
             cancellation.cancellation.cancel();
         }
@@ -537,8 +536,7 @@ impl Connection {
             request_order: Mutex::new(()),
             alive: AtomicBool::new(true),
             initialized: AtomicBool::new(false),
-            exited: AtomicBool::new(false),
-            closed: Notify::new(),
+            exited: SetOnce::new(),
             stop,
             processes,
             notifications,
@@ -621,8 +619,7 @@ impl Connection {
             reader.abort();
             stderr_task.abort();
             let _settled = tokio::join!(writer, reader, stderr_task);
-            process_connection.exited.store(true, Ordering::Release);
-            process_connection.closed.notify_waiters();
+            drop(process_connection.exited.set(()));
         });
         Ok(connection)
     }
@@ -877,17 +874,10 @@ impl Connection {
 
     pub(super) async fn stop_and_wait(&self) -> Result<(), AppError> {
         self.stop.cancel();
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                let notification = self.closed.notified();
-                if self.exited.load(Ordering::Acquire) {
-                    break;
-                }
-                notification.await;
-            }
-        })
-        .await
-        .map_err(|_| AppError::Internal("pi worker did not stop".into()))
+        tokio::time::timeout(Duration::from_secs(10), self.exited.wait())
+            .await
+            .map(drop)
+            .map_err(|_| AppError::Internal("pi worker did not stop".into()))
     }
 }
 
@@ -1059,11 +1049,19 @@ impl DomainBridge {
                 )
                 .await;
         }
-        tokio::select! {
-            biased;
-            () = authority.cancellation.cancelled() => Err(AppError::Conflict("domain tool was canceled with its owner execution".into())),
-            result = self.invoke_tool(connection, &invocation.name, invocation.arguments) => result,
-        }
+        authority
+            .cancellation
+            .run_until_cancelled(self.invoke_tool(
+                connection,
+                &invocation.name,
+                invocation.arguments,
+            ))
+            .await
+            .unwrap_or_else(|| {
+                Err(AppError::Conflict(
+                    "domain tool was canceled with its owner execution".into(),
+                ))
+            })
     }
 
     async fn invoke_schedule(
@@ -1208,7 +1206,7 @@ impl DomainBridge {
             let params: SkillCreateParams = serde_json::from_value(arguments)?;
             match self
                 .skills
-                .create_activated(params.name, params.description, params.body, || async {
+                .create_activated(params.name, params.description, params.body, async || {
                     connection
                         .call(
                             "reload",
@@ -1266,15 +1264,13 @@ async fn read_line(
 }
 
 fn lock<T>(mutex: &SyncMutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| {
-        tracing::error!("pi state mutex was poisoned");
-        poisoned.into_inner()
-    })
+    crate::util::sync::lock(mutex, "pi state")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn worker_fixture_matches_authoritative_rust_execution_limits() {
@@ -1597,12 +1593,11 @@ input.on("line", line => {
             .await
             .unwrap();
         let mut events = request.events.take().unwrap();
-        assert!(matches!(
+        assert_matches!(
             tokio::time::timeout(Duration::from_secs(5), events.recv())
                 .await
                 .unwrap(),
-            Some(ChatDelta::MessageDelta { text, .. }) if text == "partial"
-        ));
+            Some(ChatDelta::MessageDelta { text, .. }) if text == "partial");
         let reply = tokio::time::timeout(Duration::from_secs(5), request.reply)
             .await
             .unwrap()
@@ -1673,7 +1668,7 @@ input.on("line", line => {
             .expect("starting worker remains owned after cancellation");
         assert!(tracked.stop.is_cancelled());
         assert!(!host.cancel_run(uuid::Uuid::new_v4()).await.unwrap());
-        assert!(tracked.exited.load(Ordering::Acquire));
+        assert!(tracked.exited.initialized());
         assert!(!tracked.initialized.load(Ordering::Acquire));
         host.options.lock().await.profiles = json!({});
         {

@@ -38,32 +38,10 @@ async fn atomic_write_with_mode(
     bytes: &[u8],
     mode: Option<u32>,
 ) -> Result<(), AppError> {
-    let directory = parent(path)?;
-    tokio::fs::create_dir_all(directory).await?;
-    let temporary = temporary_path(path);
-
-    let result = async {
-        use tokio::io::AsyncWriteExt;
-
-        let mut options = tokio::fs::OpenOptions::new();
-        options.create_new(true).write(true);
-        #[cfg(unix)]
-        if let Some(mode) = mode {
-            options.mode(mode);
-        }
-        let mut file = options.open(&temporary).await?;
-        file.write_all(bytes).await?;
-        file.sync_all().await?;
-        drop(file);
-        tokio::fs::rename(&temporary, path).await?;
-        sync_directory(directory).await
-    }
-    .await;
-
-    if result.is_err() {
-        let _ignored = tokio::fs::remove_file(&temporary).await;
-    }
-    result
+    let (path, bytes) = (path.to_owned(), bytes.to_vec());
+    tokio::task::spawn_blocking(move || atomic_write_sync_with_mode(&path, &bytes, mode))
+        .await
+        .map_err(|error| AppError::Internal(format!("durable write stopped: {error}")))?
 }
 
 pub(crate) fn atomic_write_sync(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
@@ -197,7 +175,6 @@ fn sync_directory_sync(path: &Path) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, reason = "tests panic on precondition failures")]
 mod tests {
     use super::*;
 

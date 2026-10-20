@@ -71,8 +71,8 @@ pub(crate) async fn create_live(
         .database_file()
         .ok_or_else(|| AppError::Config("backup requires a file-backed SQLite database".into()))?;
     let snapshot = database.with_extension(format!("bobe-snapshot-{}", uuid::Uuid::new_v4()));
-    let escaped = snapshot.to_string_lossy().replace('\'', "''");
-    sqlx::query(sqlx::AssertSqlSafe(format!("VACUUM INTO '{escaped}'")))
+    sqlx::query("VACUUM INTO ?1")
+        .bind(snapshot.to_string_lossy().as_ref())
         .execute(pool)
         .await?;
     let result = async {
@@ -769,11 +769,9 @@ async fn clean_prepared_replacements(
             failures.push(format!("remove {}: {error}", staged.display()));
         }
     }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(AppError::Internal(failures.join("; ")))
-    }
+    failures
+        .is_empty()
+        .ok_or_else(|| AppError::Internal(failures.join("; ")))
 }
 
 async fn prepare_replacements(
@@ -1521,6 +1519,7 @@ mod tests {
     use crate::bootstrap::database::{
         CURRENT_SCHEMA_VERSION, OLDEST_UPGRADABLE_SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS,
     };
+    use std::assert_matches;
 
     #[tokio::test]
     async fn backup_accepts_the_actual_pi_worker_pointer_contract() {
@@ -2202,13 +2201,13 @@ mod tests {
             .iter()
             .position(|point| *point == RestorePoint::Committed)
             .unwrap();
-        assert!(matches!(
+        assert_matches!(
             points[committed - 1],
             RestorePoint::Installed | RestorePoint::MovedAside
-        ));
+        );
         assert!(points.len() > committed + 1);
 
-        for interrupted_at in 0..points.len() {
+        for (interrupted_at, point) in points.iter().enumerate() {
             let fixture = restore_fixture().await;
             let live = tracked_state(&fixture).await;
             let mut reached = 0;
@@ -2227,8 +2226,7 @@ mod tests {
             assert!(error.to_string().contains("interrupted"), "{error}");
             assert!(
                 fixture.config.with_file_name(RESTORE_JOURNAL).exists(),
-                "step {interrupted_at}: {:?}",
-                points[interrupted_at]
+                "step {interrupted_at}: {point:?}"
             );
 
             reconcile_interrupted_restore(fixture.config.parent().unwrap())
@@ -2241,19 +2239,11 @@ mod tests {
                 let database = expected.pop().unwrap();
                 let mut actual = state.clone();
                 actual.pop();
-                assert_eq!(
-                    actual, expected,
-                    "step {interrupted_at}: {:?}",
-                    points[interrupted_at]
-                );
+                assert_eq!(actual, expected, "step {interrupted_at}: {point:?}");
                 assert!(database.1.is_some());
                 assert_eq!(read_authority(&fixture.database).await.unwrap().1, 8);
             } else {
-                assert_eq!(
-                    state, live,
-                    "step {interrupted_at}: {:?}",
-                    points[interrupted_at]
-                );
+                assert_eq!(state, live, "step {interrupted_at}: {point:?}");
                 assert_eq!(read_authority(&fixture.database).await.unwrap().1, 7);
             }
             assert!(
@@ -2298,7 +2288,7 @@ mod tests {
         let error = reconcile_interrupted_restore(fixture.config.parent().unwrap())
             .await
             .expect_err("a held authority must block reconciliation");
-        assert!(matches!(error, AppError::Conflict(_)), "{error}");
+        assert_matches!(error, AppError::Conflict(_), "{error}");
         assert_eq!(tokio::fs::read(&journal).await.unwrap(), before);
         assert!(
             crate::bootstrap::initialize_storage(&fixture.paths)

@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::error::AppError;
@@ -22,6 +23,13 @@ impl InstallStage {
         match self {
             InstallStage::Text => "chat-model",
             InstallStage::Batch => "batch-model",
+        }
+    }
+
+    fn progress_mut(self, snapshot: &mut InstallSnapshot) -> &mut PullProgress {
+        match self {
+            InstallStage::Text => &mut snapshot.chat_model,
+            InstallStage::Batch => &mut snapshot.batch_model,
         }
     }
 }
@@ -71,7 +79,7 @@ struct ServiceState {
     snapshot_tx: watch::Sender<InstallSnapshot>,
     snapshot_rx: watch::Receiver<InstallSnapshot>,
     in_flight: Option<JoinHandle<()>>,
-    cancel_tx: Option<watch::Sender<bool>>,
+    cancel: Option<CancellationToken>,
 }
 
 impl OllamaInstallService {
@@ -87,7 +95,7 @@ impl OllamaInstallService {
                 snapshot_tx,
                 snapshot_rx,
                 in_flight: None,
-                cancel_tx: None,
+                cancel: None,
             })),
         })
     }
@@ -111,8 +119,8 @@ impl OllamaInstallService {
             return Err(AppError::Conflict("Install already in progress".into()));
         }
 
-        let (cancel_tx, cancel_rx) = watch::channel(false);
-        state.cancel_tx = Some(cancel_tx);
+        let cancel = CancellationToken::new();
+        state.cancel = Some(cancel.clone());
 
         let svc = Arc::clone(self);
         let snapshot_tx = state.snapshot_tx.clone();
@@ -123,7 +131,7 @@ impl OllamaInstallService {
             })
             .ok();
         state.in_flight = Some(tokio::spawn(async move {
-            let result = svc.run(req, snapshot_tx.clone(), cancel_rx).await;
+            let result = svc.run(req, snapshot_tx.clone(), cancel).await;
             let final_status = match result {
                 Ok(()) => InstallStatus::Complete,
                 Err(AppError::Canceled(_)) => InstallStatus::Canceled,
@@ -132,13 +140,7 @@ impl OllamaInstallService {
                     InstallStatus::Failed(e.to_string())
                 }
             };
-            let snap = snapshot_tx.borrow().clone();
-            snapshot_tx
-                .send(InstallSnapshot {
-                    status: final_status,
-                    ..snap
-                })
-                .ok();
+            snapshot_tx.send_modify(|snap| snap.status = final_status);
         }));
 
         Ok(())
@@ -146,8 +148,8 @@ impl OllamaInstallService {
 
     pub(crate) async fn cancel(&self) {
         let state = self.state.lock().await;
-        if let Some(tx) = state.cancel_tx.as_ref() {
-            tx.send(true).ok();
+        if let Some(cancel) = state.cancel.as_ref() {
+            cancel.cancel();
         }
     }
 
@@ -170,20 +172,14 @@ impl OllamaInstallService {
         self: Arc<Self>,
         req: InstallRequest,
         snapshot_tx: watch::Sender<InstallSnapshot>,
-        cancel_rx: watch::Receiver<bool>,
+        cancel: CancellationToken,
     ) -> Result<(), AppError> {
         let (runtime_tx, mut runtime_rx) = watch::channel(DownloadProgress::default());
         let runtime_snapshot_tx = snapshot_tx.clone();
         let runtime_pump = tokio::spawn(async move {
             while runtime_rx.changed().await.is_ok() {
-                let progress = runtime_rx.borrow().clone();
-                let snap = runtime_snapshot_tx.borrow().clone();
-                runtime_snapshot_tx
-                    .send(InstallSnapshot {
-                        runtime: progress,
-                        ..snap
-                    })
-                    .ok();
+                let progress = runtime_rx.borrow_and_update().clone();
+                runtime_snapshot_tx.send_modify(|snap| snap.runtime = progress);
             }
         });
 
@@ -192,7 +188,7 @@ impl OllamaInstallService {
             info!("ollama_install.runtime_missing_downloading");
             Some(
                 self.binary_manager
-                    .ensure_managed_ollama(&runtime_tx, cancel_rx.clone())
+                    .ensure_managed_ollama(&runtime_tx, cancel.clone())
                     .await?,
             )
         } else {
@@ -209,7 +205,7 @@ impl OllamaInstallService {
         drop(runtime_tx);
         drop(runtime_pump.await);
 
-        if *cancel_rx.borrow() {
+        if cancel.is_cancelled() {
             return Err(AppError::Canceled("Install canceled".into()));
         }
 
@@ -219,7 +215,7 @@ impl OllamaInstallService {
                 .await?;
         }
 
-        if *cancel_rx.borrow() {
+        if cancel.is_cancelled() {
             return Err(AppError::Canceled("Install canceled".into()));
         }
 
@@ -229,44 +225,36 @@ impl OllamaInstallService {
             .await
             .unwrap_or_default();
 
-        let snapshot_for_chat = snapshot_tx.clone();
-        let cancel_rx_for_chat = cancel_rx.clone();
         self.maybe_pull_model(
             &req.chat_model,
             &installed,
             InstallStage::Text,
-            &snapshot_for_chat,
-            cancel_rx_for_chat,
+            &snapshot_tx,
+            cancel.clone(),
         )
         .await?;
 
         if req.batch_model == req.chat_model {
-            let snap = snapshot_tx.borrow().clone();
-            snapshot_tx
-                .send(InstallSnapshot {
-                    batch_model: PullProgress {
-                        status: "skipped (same as chat)".into(),
-                        completed_bytes: None,
-                        total_bytes: None,
-                        percent: Some(100),
-                    },
-                    ..snap
-                })
-                .ok();
+            snapshot_tx.send_modify(|snap| {
+                snap.batch_model = PullProgress {
+                    status: "skipped (same as chat)".into(),
+                    completed_bytes: None,
+                    total_bytes: None,
+                    percent: Some(100),
+                };
+            });
         } else {
             let installed_now = self
                 .ollama_manager
                 .list_installed_models()
                 .await
                 .unwrap_or_default();
-            let snapshot_for_batch = snapshot_tx.clone();
-            let cancel_rx_for_batch = cancel_rx.clone();
             self.maybe_pull_model(
                 &req.batch_model,
                 &installed_now,
                 InstallStage::Batch,
-                &snapshot_for_batch,
-                cancel_rx_for_batch,
+                &snapshot_tx,
+                cancel,
             )
             .await?;
         }
@@ -280,7 +268,7 @@ impl OllamaInstallService {
         installed: &[String],
         stage: InstallStage,
         snapshot_tx: &watch::Sender<InstallSnapshot>,
-        cancel_rx: watch::Receiver<bool>,
+        cancel: CancellationToken,
     ) -> Result<(), AppError> {
         let already_installed = installed.iter().any(|m| m == name);
         if already_installed {
@@ -304,29 +292,14 @@ impl OllamaInstallService {
 
         let (pull_tx, mut pull_rx) = watch::channel(PullProgress::default());
         let pump_snapshot_tx = snapshot_tx.clone();
-        let pump_stage = stage;
         let pump = tokio::spawn(async move {
             while pull_rx.changed().await.is_ok() {
-                let progress = pull_rx.borrow().clone();
-                let snap = pump_snapshot_tx.borrow().clone();
-                let updated = match pump_stage {
-                    InstallStage::Text => InstallSnapshot {
-                        chat_model: progress,
-                        ..snap
-                    },
-                    InstallStage::Batch => InstallSnapshot {
-                        batch_model: progress,
-                        ..snap
-                    },
-                };
-                pump_snapshot_tx.send(updated).ok();
+                let progress = pull_rx.borrow_and_update().clone();
+                pump_snapshot_tx.send_modify(|snap| *stage.progress_mut(snap) = progress);
             }
         });
 
-        let result = self
-            .ollama_manager
-            .pull_model(name, &pull_tx, cancel_rx)
-            .await;
+        let result = self.ollama_manager.pull_model(name, &pull_tx, cancel).await;
         pump.abort();
         drop(pump.await);
         result
@@ -338,18 +311,7 @@ impl OllamaInstallService {
         stage: InstallStage,
         progress: PullProgress,
     ) {
-        let snap = snapshot_tx.borrow().clone();
-        let updated = match stage {
-            InstallStage::Text => InstallSnapshot {
-                chat_model: progress,
-                ..snap
-            },
-            InstallStage::Batch => InstallSnapshot {
-                batch_model: progress,
-                ..snap
-            },
-        };
-        snapshot_tx.send(updated).ok();
+        snapshot_tx.send_modify(|snap| *stage.progress_mut(snap) = progress);
     }
 }
 
@@ -369,7 +331,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_runtime_that_was_never_installed_is_not_started() {
-        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
+        crate::util::tls::install_crypto_provider();
         let root =
             std::env::temp_dir().join(format!("bobe-ollama-ensure-{}", uuid::Uuid::new_v4()));
         let client = Arc::new(reqwest::Client::new());

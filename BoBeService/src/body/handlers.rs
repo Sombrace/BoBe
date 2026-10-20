@@ -8,6 +8,7 @@ use axum::response::{IntoResponse, Response};
 use futures::{SinkExt, StreamExt};
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
 
 use super::gateway::{AdapterInputDisposition, BodyGateway};
@@ -32,8 +33,8 @@ fn spawn_writer(
     mut sink: futures::stream::SplitSink<WebSocket, Message>,
     mut receiver: OutboundReceiver,
     disconnect: CancellationToken,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
+) -> AbortOnDropHandle<()> {
+    AbortOnDropHandle::new(tokio::spawn(async move {
         while let Some(outbound) = receiver.recv().await {
             let delivered = matches!(
                 tokio::time::timeout(SEND_TIMEOUT, sink.send(outbound.message)).await,
@@ -48,7 +49,7 @@ fn spawn_writer(
         }
         drop(tokio::time::timeout(SEND_TIMEOUT, sink.close()).await);
         disconnect.cancel();
-    })
+    }))
 }
 
 async fn first_text(stream: &mut futures::stream::SplitStream<WebSocket>) -> Option<String> {
@@ -61,16 +62,15 @@ async fn first_text(stream: &mut futures::stream::SplitStream<WebSocket>) -> Opt
     }
 }
 
-fn select_subprotocol(mut upgrade: WebSocketUpgrade, expected: &str) -> Option<WebSocketUpgrade> {
-    upgrade = upgrade
+fn select_subprotocol(
+    upgrade: WebSocketUpgrade,
+    expected: &'static str,
+) -> Option<WebSocketUpgrade> {
+    let upgrade = upgrade
         .max_message_size(MAX_CONTROL_BYTES)
-        .max_frame_size(MAX_CONTROL_BYTES);
-    let selected = upgrade
-        .requested_protocols()
-        .find(|protocol| protocol.as_bytes() == expected.as_bytes())
-        .cloned()?;
-    upgrade.set_selected_protocol(selected);
-    Some(upgrade)
+        .max_frame_size(MAX_CONTROL_BYTES)
+        .protocols([expected]);
+    upgrade.selected_protocol().is_some().then_some(upgrade)
 }
 
 pub(crate) async fn body_stream(
@@ -185,7 +185,6 @@ async fn handle_body(
         gateway
             .unregister_body(&hello.device_id, registration.generation)
             .await;
-        writer.abort();
         return;
     }
     if capabilities.display.is_some()
@@ -196,7 +195,6 @@ async fn handle_body(
         gateway
             .unregister_body(&hello.device_id, registration.generation)
             .await;
-        writer.abort();
         return;
     }
     info!(
@@ -208,9 +206,11 @@ async fn handle_body(
     );
 
     loop {
-        let next = tokio::select! {
-            () = disconnect.cancelled() => break,
-            next = tokio::time::timeout(BODY_STALE_TIMEOUT, stream.next()) => next,
+        let Some(next) = disconnect
+            .run_until_cancelled(tokio::time::timeout(BODY_STALE_TIMEOUT, stream.next()))
+            .await
+        else {
+            break;
         };
         let Ok(Some(Ok(message))) = next else {
             break;
@@ -577,15 +577,13 @@ async fn handle_adapter(socket: WebSocket, gateway: Arc<BodyGateway>) {
     drop(welcome_guard);
     if !welcome_sent {
         gateway.unregister_adapter(generation).await;
-        writer.abort();
         return;
     }
     info!(adapter_generation = generation, "body.adapter_connected");
 
     loop {
-        let message = tokio::select! {
-            () = disconnect.cancelled() => break,
-            message = stream.next() => message,
+        let Some(message) = disconnect.run_until_cancelled(stream.next()).await else {
+            break;
         };
         let Some(message) = message else {
             break;

@@ -137,9 +137,11 @@ pub(crate) async fn install_status_stream(
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rx = state.services.ollama_install.subscribe().await;
     let stream = WatchStream::new(rx).map(|snap| {
-        let dto = InstallSnapshotDto::from(&snap);
-        let payload = serde_json::to_string(&dto).unwrap_or_else(|_| "{}".into());
-        Ok::<_, Infallible>(Event::default().event("install").data(payload))
+        let event = Event::default()
+            .event("install")
+            .json_data(InstallSnapshotDto::from(&snap))
+            .unwrap_or_else(|_| Event::default().event("install").data("{}"));
+        Ok::<_, Infallible>(event)
     });
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }

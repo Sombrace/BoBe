@@ -26,7 +26,6 @@ mod ops;
 mod owner_token;
 mod provider;
 mod runtime;
-#[allow(unsafe_code)]
 mod secrets;
 mod services;
 mod speech;
@@ -377,7 +376,7 @@ enum ProviderCommands {
         id: String,
         #[arg(long, value_enum)]
         kind: provider::ProviderKind,
-        #[arg(long, value_enum, default_value = "api-key")]
+        #[arg(long, value_enum, default_value_t = provider::ProviderAuthMethod::ApiKey)]
         auth_method: provider::ProviderAuthMethod,
         #[arg(long)]
         base_url: Option<String>,
@@ -396,7 +395,7 @@ enum ProviderCommands {
         id: String,
         #[arg(long, value_enum)]
         kind: provider::ProviderKind,
-        #[arg(long, value_enum, default_value = "api-key")]
+        #[arg(long, value_enum, default_value_t = provider::ProviderAuthMethod::ApiKey)]
         auth_method: provider::ProviderAuthMethod,
         #[arg(long)]
         base_url: Option<String>,
@@ -534,7 +533,7 @@ enum InitializationCommands {
 }
 
 #[tokio::main]
-#[allow(
+#[expect(
     clippy::print_stderr,
     reason = "startup failures must be visible before tracing initializes"
 )]
@@ -553,7 +552,7 @@ async fn main() -> std::process::ExitCode {
 
 async fn run() -> anyhow::Result<ops::exit::ExitCode> {
     let cli = Cli::parse();
-    util::tls::install_crypto_provider()?;
+    util::tls::install_crypto_provider();
 
     match cli.command {
         Commands::Serve {
@@ -606,7 +605,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     "server.automatic_tls_ready"
                 );
             }
-            util::logging::init_tracing(&config);
+            let _log_guard = util::logging::init_tracing(&config);
             if purged_release_0_2 {
                 tracing::info!("data_root.release_0_2_purged");
             }
@@ -625,7 +624,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             validate_server_security(&config)?;
             let local_enrollment = if managed_bootstrap_stdin {
                 use tokio::io::AsyncReadExt;
-                let mut secret = Vec::new();
+                let mut secret = zeroize::Zeroizing::new(Vec::new());
                 tokio::io::stdin()
                     .take(4096)
                     .read_to_end(&mut secret)
@@ -647,7 +646,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             )
             .await?;
             api::handlers::conversation::recover_message_requests(&state).await?;
-            let app = api::router::build_router(std::sync::Arc::clone(&state), shutdown.clone());
+            let app = api::router::build_router(Arc::clone(&state), shutdown.clone());
 
             let mut tasks = spawn_background_tasks(&state, &shutdown);
 
@@ -827,10 +826,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
         }
         Commands::Setup => {
             let loaded = config::Config::load_operational()?;
-            let home = std::env::var_os("HOME")
-                .filter(|value| !value.is_empty())
-                .map(std::path::PathBuf::from)
-                .ok_or_else(|| error::AppError::Config("HOME is unavailable".into()))?;
+            let home = util::paths::home_dir()?;
             let service_paths = ops::service::paths(
                 &home,
                 loaded.paths.root(),
@@ -1709,16 +1705,13 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 }
             }
         }
-        #[allow(
+        #[expect(
             clippy::print_stdout,
             reason = "CLI service commands report operator results"
         )]
         Commands::Service { command } => {
             let loaded = config::Config::load_operational()?;
-            let home = std::env::var_os("HOME")
-                .filter(|value| !value.is_empty())
-                .map(std::path::PathBuf::from)
-                .ok_or_else(|| error::AppError::Config("HOME is unavailable".into()))?;
+            let home = util::paths::home_dir()?;
             let service_paths = ops::service::paths(
                 &home,
                 loaded.paths.root(),
@@ -1773,7 +1766,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 }
             }
         }
-        #[allow(
+        #[expect(
             clippy::print_stdout,
             reason = "backup commands report operator results"
         )]
@@ -1844,10 +1837,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                         &bootstrap::database::SUPPORTED_SCHEMA_VERSIONS,
                     )
                     .await?;
-                    let home = std::env::var_os("HOME")
-                        .filter(|value| !value.is_empty())
-                        .map(std::path::PathBuf::from)
-                        .ok_or_else(|| error::AppError::Config("HOME is unavailable".into()))?;
+                    let home = util::paths::home_dir()?;
                     let service_paths = ops::service::paths(
                         &home,
                         paths.root(),
@@ -1941,7 +1931,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 }
             }
         }
-        #[allow(
+        #[expect(
             clippy::print_stdout,
             reason = "update command reports activation result"
         )]
@@ -1952,10 +1942,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 archive,
             } => {
                 let loaded = config::Config::load_reconciled().await?;
-                let home = std::env::var_os("HOME")
-                    .filter(|value| !value.is_empty())
-                    .map(std::path::PathBuf::from)
-                    .ok_or_else(|| error::AppError::Config("HOME is unavailable".into()))?;
+                let home = util::paths::home_dir()?;
                 let current_executable = std::env::current_exe()?.canonicalize()?;
                 let layout = ops::update::StandaloneLayout::discover(&current_executable)?;
                 let versions = layout.versions_root.clone();
@@ -2216,7 +2203,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 println!("Activated BoBe standalone {}", update.version);
             }
         },
-        #[allow(clippy::print_stdout)]
+        #[expect(clippy::print_stdout, reason = "version is printed for the operator")]
         Commands::Version { json } => {
             if json {
                 let report = serde_json::json!({
@@ -2311,7 +2298,7 @@ fn normalize_config_path(
     config_root: &std::path::Path,
     label: &str,
 ) -> Result<std::path::PathBuf, error::AppError> {
-    let expanded = crate::util::paths::expand_tilde(&path.to_string_lossy());
+    let expanded = util::paths::expand_tilde(&path.to_string_lossy());
     let absolute = if expanded.is_absolute() {
         expanded
     } else {
@@ -2441,13 +2428,11 @@ fn remove_offline_config(loaded: &config::LoadedConfig, key: &str) -> Result<(),
         .config_file
         .parent()
         .ok_or_else(|| error::AppError::Config("config file has no parent directory".into()))?;
-    if config::manager_persistence::remove(config_root, key) {
-        Ok(())
-    } else {
-        Err(error::AppError::Io(std::io::Error::other(
+    config::manager_persistence::remove(config_root, key).ok_or_else(|| {
+        error::AppError::Io(std::io::Error::other(
             "failed to remove persisted configuration override",
-        )))
-    }
+        ))
+    })
 }
 
 fn unset_config_report(
@@ -2509,16 +2494,11 @@ fn persist_offline_config(
         .config_file
         .parent()
         .ok_or_else(|| error::AppError::Config("config file has no parent directory".into()))?;
-    if config::manager_persistence::persist(
+    config::manager_persistence::persist(
         config_root,
         &std::collections::BTreeMap::from([(key.to_owned(), value.clone())]),
-    ) {
-        Ok(())
-    } else {
-        Err(error::AppError::Io(std::io::Error::other(
-            "failed to persist configuration",
-        )))
-    }
+    )
+    .ok_or_else(|| error::AppError::Io(std::io::Error::other("failed to persist configuration")))
 }
 
 async fn wait_for_model_install(
@@ -2599,46 +2579,13 @@ async fn wait_for_provider_login(
     }
 }
 
-#[allow(unsafe_code)]
 fn read_provider_login_line(password: bool) -> Result<String, error::AppError> {
-    use std::io::{BufRead, IsTerminal, Read};
-    #[cfg(unix)]
-    struct EchoGuard {
-        fd: std::os::fd::RawFd,
-        original: libc::termios,
-    }
-    #[cfg(unix)]
-    impl Drop for EchoGuard {
-        fn drop(&mut self) {
-            if unsafe { libc::tcsetattr(self.fd, libc::TCSANOW, &raw const self.original) } != 0 {
-                tracing::error!(error = %std::io::Error::last_os_error(), "provider.login_terminal_restore_failed");
-            }
-        }
-    }
-    #[cfg(unix)]
-    let _echo = if password && std::io::stdin().is_terminal() {
-        use std::os::fd::AsRawFd;
-        let fd = std::io::stdin().as_raw_fd();
-        let mut attributes = std::mem::MaybeUninit::<libc::termios>::uninit();
-        if unsafe { libc::tcgetattr(fd, attributes.as_mut_ptr()) } != 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        let original = unsafe { attributes.assume_init() };
-        let mut hidden = original;
-        hidden.c_lflag &= !libc::ECHO;
-        if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw const hidden) } != 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        Some(EchoGuard { fd, original })
+    use std::io::{BufRead, Read};
+    let _echo = if password {
+        util::terminal::HiddenInput::start()?
     } else {
         None
     };
-    #[cfg(not(unix))]
-    if password && std::io::stdin().is_terminal() {
-        return Err(error::AppError::Validation(
-            "private login input must be piped through stdin".into(),
-        ));
-    }
     let mut bytes = Vec::new();
     let read = std::io::stdin()
         .lock()
@@ -2660,7 +2607,10 @@ fn read_provider_login_line(password: bool) -> Result<String, error::AppError> {
     Ok(value)
 }
 
-#[allow(clippy::print_stderr)]
+#[expect(
+    clippy::print_stderr,
+    reason = "sign-in progress is shown on the terminal"
+)]
 fn print_login_phase(phase: &serde_json::Value) {
     match phase["phase"].as_str() {
         Some("preparing") => eprintln!("Preparing provider sign-in..."),
@@ -2716,20 +2666,13 @@ fn config_value_source(
         .parse()
         .map_err(|error: toml_edit::TomlError| error::AppError::Config(error.to_string()))?;
     let parts: Vec<&str> = key.split('.').collect();
-    let persisted = if let Some((field, sections)) = parts.split_last() {
-        let mut table = doc.as_table();
-        let mut valid_path = true;
-        for section in sections {
-            let Some(next) = table.get(section).and_then(toml_edit::Item::as_table) else {
-                valid_path = false;
-                break;
-            };
-            table = next;
-        }
-        valid_path && table.contains_key(field)
-    } else {
-        false
-    };
+    let persisted = parts.split_last().is_some_and(|(field, sections)| {
+        sections
+            .iter()
+            .try_fold(doc.as_item(), |item, section| item.get(section))
+            .and_then(toml_edit::Item::as_table_like)
+            .is_some_and(|table| table.contains_key(field))
+    });
     Ok(if persisted { "config_file" } else { "default" })
 }
 
@@ -2768,7 +2711,7 @@ fn parse_duration(value: &str) -> Result<std::time::Duration, String> {
     }
 }
 
-#[allow(clippy::print_stdout)]
+#[expect(clippy::print_stdout, reason = "CLI reports are written to stdout")]
 fn emit_report<T: serde::Serialize>(json: bool, report: &T, human: String) {
     if json {
         match serde_json::to_string_pretty(report) {
@@ -2974,7 +2917,7 @@ async fn wait_for_shutdown_signal() {
 }
 
 fn spawn_background_tasks(
-    state: &std::sync::Arc<app_state::AppState>,
+    state: &Arc<app_state::AppState>,
     shutdown: &tokio_util::sync::CancellationToken,
 ) -> tokio::task::JoinSet<&'static str> {
     let mut set = tokio::task::JoinSet::new();
@@ -2987,10 +2930,9 @@ fn spawn_background_tasks(
                 .active_routes
                 .iter()
                 .map(|route| &route.profile);
-            tokio::select! {
-                () = token.cancelled() => {}
-                () = api::handlers::health::start_local_runtime(&state, profiles) => {}
-            }
+            token
+                .run_until_cancelled(api::handlers::health::start_local_runtime(&state, profiles))
+                .await;
             "local_runtime"
         });
     }
@@ -3015,18 +2957,15 @@ fn spawn_background_tasks(
     }
 
     {
-        let session = std::sync::Arc::clone(&state.runtime.runtime_session);
-        let initialization = Arc::clone(&state.infra.initialization);
+        let session = Arc::clone(&state.runtime.runtime_session);
+        let initialization = state.infra.initialization.subscribe();
         let token = shutdown.clone();
         set.spawn(async move {
-            if !wait_for_initialization(&initialization, &token).await {
+            if !wait_for_initialization(initialization, &token).await {
                 return "runtime_session";
             }
-            tokio::select! {
-                () = session.run() => {}
-                () = token.cancelled() => {
-                    session.stop().await;
-                }
+            if token.run_until_cancelled(session.run()).await.is_none() {
+                session.stop().await;
             }
             "runtime_session"
         });
@@ -3034,14 +2973,14 @@ fn spawn_background_tasks(
 
     if state.config().memory.enabled {
         let scheduler = runtime::consolidation::ConsolidationScheduler::new(
-            std::sync::Arc::clone(&state.runtime.workers),
-            std::sync::Arc::clone(&state.runtime.memory_file),
-            std::sync::Arc::clone(&state.runtime.personal_data_lifecycle),
+            Arc::clone(&state.runtime.workers),
+            Arc::clone(&state.runtime.memory_file),
+            Arc::clone(&state.runtime.personal_data_lifecycle),
         );
         let token = shutdown.clone();
-        let initialization = Arc::clone(&state.infra.initialization);
+        let initialization = state.infra.initialization.subscribe();
         set.spawn(async move {
-            if wait_for_initialization(&initialization, &token).await {
+            if wait_for_initialization(initialization, &token).await {
                 scheduler.run(token).await;
             }
             "consolidation"
@@ -3050,14 +2989,19 @@ fn spawn_background_tasks(
 
     {
         let pool = state.infra.db.clone();
-        let config = std::sync::Arc::clone(&state.infra.config);
+        let config = Arc::clone(&state.infra.config);
         let token = shutdown.clone();
         set.spawn(async move {
             loop {
-                crate::services::storage_retention::run(&pool, &config.load()).await;
-                tokio::select! {
-                    () = tokio::time::sleep(crate::services::storage_retention::RETENTION_INTERVAL) => {}
-                    () = token.cancelled() => break,
+                services::storage_retention::run(&pool, &config.load()).await;
+                if token
+                    .run_until_cancelled(tokio::time::sleep(
+                        services::storage_retention::RETENTION_INTERVAL,
+                    ))
+                    .await
+                    .is_none()
+                {
+                    break;
                 }
             }
             "storage_retention"
@@ -3096,21 +3040,17 @@ fn spawn_background_tasks(
 }
 
 async fn wait_for_initialization(
-    initialization: &arc_swap::ArcSwap<db::runtime_initialization_repo::InitializationState>,
+    mut initialization: tokio::sync::watch::Receiver<
+        db::runtime_initialization_repo::InitializationState,
+    >,
     shutdown: &tokio_util::sync::CancellationToken,
 ) -> bool {
-    loop {
-        if shutdown.is_cancelled() {
-            return false;
-        }
-        if **initialization.load() == db::runtime_initialization_repo::InitializationState::Ready {
-            return true;
-        }
-        tokio::select! {
-            () = shutdown.cancelled() => return false,
-            () = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
-        }
-    }
+    shutdown
+        .run_until_cancelled(initialization.wait_for(|state| {
+            *state == db::runtime_initialization_repo::InitializationState::Ready
+        }))
+        .await
+        .is_some_and(|ready| ready.is_ok())
 }
 
 async fn drain_background_tasks(tasks: &mut tokio::task::JoinSet<&'static str>) {
@@ -3139,25 +3079,17 @@ async fn drain_background_tasks(tasks: &mut tokio::task::JoinSet<&'static str>) 
     }
 }
 
-async fn drain_in_flight_text_turns(counter: &std::sync::atomic::AtomicUsize) {
-    use std::sync::atomic::Ordering;
-    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
-    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
-    let start = tokio::time::Instant::now();
-    loop {
-        let n = counter.load(Ordering::Acquire);
-        if n == 0 {
-            return;
-        }
-        if start.elapsed() >= DEADLINE {
-            tracing::warn!(in_flight = n, "text_turn_drain_timeout");
-            return;
-        }
-        tokio::time::sleep(POLL_INTERVAL).await;
+async fn drain_in_flight_text_turns(turns: &tokio_util::task::TaskTracker) {
+    turns.close();
+    if tokio::time::timeout(std::time::Duration::from_secs(10), turns.wait())
+        .await
+        .is_err()
+    {
+        tracing::warn!(in_flight = turns.len(), "text_turn_drain_timeout");
     }
 }
 
-async fn run_graceful_shutdown(state: &std::sync::Arc<app_state::AppState>) {
+async fn run_graceful_shutdown(state: &Arc<app_state::AppState>) {
     tracing::info!("Stopping mDNS...");
     state.infra.mdns_announcer.stop().await;
 
@@ -3183,19 +3115,19 @@ async fn run_graceful_shutdown(state: &std::sync::Arc<app_state::AppState>) {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on invalid CLI fixtures")]
 mod tests {
+    use std::assert_matches;
     #[test]
     fn a_managed_daemon_stops_once_its_app_is_no_longer_its_parent() {
-        assert!(!super::managing_app_is_gone(4_242, 4_242));
-        assert!(super::managing_app_is_gone(4_242, 1));
-        assert!(super::managing_app_is_gone(4_242, 9_000));
-        assert!(super::managing_app_is_gone(1, 1));
+        assert!(!managing_app_is_gone(4_242, 4_242));
+        assert!(managing_app_is_gone(4_242, 1));
+        assert!(managing_app_is_gone(4_242, 9_000));
+        assert!(managing_app_is_gone(1, 1));
     }
 
     #[tokio::test]
     async fn an_unmanaged_daemon_never_watches_a_parent() {
-        let watch = super::wait_for_managing_app_exit(None);
+        let watch = wait_for_managing_app_exit(None);
         let waited = tokio::time::timeout(std::time::Duration::from_millis(50), watch).await;
         assert!(waited.is_err());
     }
@@ -3203,29 +3135,29 @@ mod tests {
     #[tokio::test]
     async fn initialization_defers_companion_schedulers_without_blocking_shutdown() {
         use db::runtime_initialization_repo::InitializationState;
-        let initialization = arc_swap::ArcSwap::from_pointee(InitializationState::ProviderRequired);
+        let initialization = tokio::sync::watch::Sender::new(InitializationState::ProviderRequired);
         let shutdown = tokio_util::sync::CancellationToken::new();
         assert!(
             tokio::time::timeout(
                 std::time::Duration::from_millis(10),
-                wait_for_initialization(&initialization, &shutdown),
+                wait_for_initialization(initialization.subscribe(), &shutdown),
             )
             .await
             .is_err()
         );
-        initialization.store(Arc::new(InitializationState::PersonalizationRequired));
+        initialization.send_replace(InitializationState::PersonalizationRequired);
         assert!(
             tokio::time::timeout(
                 std::time::Duration::from_millis(10),
-                wait_for_initialization(&initialization, &shutdown),
+                wait_for_initialization(initialization.subscribe(), &shutdown),
             )
             .await
             .is_err()
         );
-        initialization.store(Arc::new(InitializationState::Ready));
-        assert!(wait_for_initialization(&initialization, &shutdown).await);
+        initialization.send_replace(InitializationState::Ready);
+        assert!(wait_for_initialization(initialization.subscribe(), &shutdown).await);
         shutdown.cancel();
-        assert!(!wait_for_initialization(&initialization, &shutdown).await);
+        assert!(!wait_for_initialization(initialization.subscribe(), &shutdown).await);
     }
 
     #[test]
@@ -3384,7 +3316,7 @@ mod tests {
             "TLS private key",
         )
         .expect_err("missing key must fail");
-        assert!(matches!(error, error::AppError::Validation(_)));
+        assert_matches!(error, error::AppError::Validation(_));
         let message = error.to_string();
         assert!(message.contains("TLS private key"));
         assert!(message.contains(&root.join("missing-key.pem").to_string_lossy().into_owned()));

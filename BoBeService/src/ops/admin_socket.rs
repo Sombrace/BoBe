@@ -38,19 +38,14 @@ pub(crate) async fn serve(
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
     }
-    loop {
-        tokio::select! {
-            () = shutdown.cancelled() => break,
-            accepted = listener.accept() => {
-                let (stream, _) = accepted?;
-                let state = Arc::clone(&state);
-                tokio::spawn(async move {
-                    if let Err(error) = handle(state, stream).await {
-                        tracing::warn!(%error, "admin.request_failed");
-                    }
-                });
+    while let Some(accepted) = shutdown.run_until_cancelled(listener.accept()).await {
+        let (stream, _) = accepted?;
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            if let Err(error) = handle(state, stream).await {
+                tracing::warn!(%error, "admin.request_failed");
             }
-        }
+        });
     }
     drop(std::fs::remove_file(path));
     Ok(())
@@ -68,9 +63,9 @@ async fn handle(state: Arc<AppState>, stream: UnixStream) -> Result<(), AppError
         Ok(result) => AdminResponse::Ok { result },
         Err(error) => refusal(error),
     };
-    writer
-        .write_all(format!("{}\n", serde_json::to_string(&response)?).as_bytes())
-        .await?;
+    let mut frame = serde_json::to_vec(&response)?;
+    frame.push(b'\n');
+    writer.write_all(&frame).await?;
     writer.shutdown().await?;
     Ok(())
 }
@@ -163,9 +158,9 @@ async fn exchange(
     request: serde_json::Value,
 ) -> Result<serde_json::Value, AppError> {
     let (reader, mut writer) = stream.into_split();
-    writer
-        .write_all(format!("{}\n", serde_json::to_string(&request)?).as_bytes())
-        .await?;
+    let mut frame = serde_json::to_vec(&request)?;
+    frame.push(b'\n');
+    writer.write_all(&frame).await?;
     writer.shutdown().await?;
     let mut line = String::new();
     BufReader::new(reader).read_line(&mut line).await?;
@@ -191,9 +186,9 @@ async fn exchange(
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on fixture failures")]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn unit_requests_reject_unknown_fields() {
@@ -237,20 +232,17 @@ mod tests {
             }
         });
         let pair = serde_json::json!({ "command": "pair", "kind": "phone", "label": "iPhone" });
-        assert!(matches!(
+        assert_matches!(
             request(&socket, pair.clone()).await,
-            Err(AppError::NotNetworked(message)) if message == "A phone cannot reach this BoBe"
-        ));
-        assert!(matches!(
+            Err(AppError::NotNetworked(message)) if message == "A phone cannot reach this BoBe");
+        assert_matches!(
             request(&socket, pair.clone()).await,
             Err(AppError::Validation(message))
-                if message == "device label must contain 1-128 characters"
-        ));
-        assert!(matches!(
+                if message == "device label must contain 1-128 characters");
+        assert_matches!(
             request(&socket, pair).await,
             Err(AppError::ServiceUnavailable(message))
-                if message == "Internal error: database closed"
-        ));
+                if message == "Internal error: database closed");
         daemon.await.expect("admin fixture");
         std::fs::remove_dir_all(root).expect("remove test directory");
     }

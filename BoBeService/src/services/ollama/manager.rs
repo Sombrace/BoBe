@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use serde::Deserialize;
 use tokio::sync::{Mutex, watch};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::error::AppError;
@@ -143,7 +144,7 @@ impl OllamaManager {
         &self,
         name: &str,
         progress_tx: &watch::Sender<PullProgress>,
-        mut cancel_rx: watch::Receiver<bool>,
+        cancel: CancellationToken,
     ) -> Result<(), AppError> {
         let url = format!("{}/api/pull", self.base_url);
         info!(model = name, "ollama_manager.pull_starting");
@@ -157,7 +158,7 @@ impl OllamaManager {
         tokio::pin!(request);
         let resp = tokio::select! {
             biased;
-            () = wait_for_cancel(&mut cancel_rx) => {
+            () = cancel.cancelled() => {
                 info!(model = name, "ollama_manager.pull_canceled");
                 return Err(AppError::Canceled("Model pull canceled".into()));
             }
@@ -182,7 +183,7 @@ impl OllamaManager {
         loop {
             let chunk = tokio::select! {
                 biased;
-                () = wait_for_cancel(&mut cancel_rx) => {
+                () = cancel.cancelled() => {
                     info!(model = name, "ollama_manager.pull_canceled");
                     return Err(AppError::Canceled("Model pull canceled".into()));
                 }
@@ -329,20 +330,8 @@ async fn stop_process_group(mut child: tokio::process::Child, grace: Duration) {
     info!(pid, "ollama_manager.stopped");
 }
 
-async fn wait_for_cancel(cancel_rx: &mut watch::Receiver<bool>) {
-    if *cancel_rx.borrow() {
-        return;
-    }
-    while cancel_rx.changed().await.is_ok() {
-        if *cancel_rx.borrow() {
-            return;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
 
     use std::convert::Infallible;
     use std::sync::Arc;
@@ -381,7 +370,7 @@ mod tests {
 
     #[tokio::test]
     async fn stalled_model_pull_cancels_without_another_chunk() {
-        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
+        crate::util::tls::install_crypto_provider();
         let first_chunk_sent = Arc::new(Notify::new());
         let release_stream = Arc::new(Notify::new());
         let app = Router::new().route(
@@ -389,19 +378,15 @@ mod tests {
             post({
                 let first_chunk_sent = Arc::clone(&first_chunk_sent);
                 let release_stream = Arc::clone(&release_stream);
-                move || {
-                    let first_chunk_sent = Arc::clone(&first_chunk_sent);
-                    let release_stream = Arc::clone(&release_stream);
-                    async move {
-                        let stream = async_stream::stream! {
-                            yield Ok::<_, Infallible>(Bytes::from_static(
-                                b"{\"status\":\"pulling\",\"completed\":1,\"total\":2}\n"
-                            ));
-                            first_chunk_sent.notify_one();
-                            release_stream.notified().await;
-                        };
-                        axum::body::Body::from_stream(stream)
-                    }
+                async move || {
+                    let stream = async_stream::stream! {
+                        yield Ok::<_, Infallible>(Bytes::from_static(
+                            b"{\"status\":\"pulling\",\"completed\":1,\"total\":2}\n"
+                        ));
+                        first_chunk_sent.notify_one();
+                        release_stream.notified().await;
+                    };
+                    axum::body::Body::from_stream(stream)
                 }
             }),
         );
@@ -420,15 +405,16 @@ mod tests {
             &format!("http://{address}"),
         );
         let (progress_tx, _progress_rx) = watch::channel(PullProgress::default());
-        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let pulling = cancel.clone();
         let pull = tokio::spawn(async move {
             manager
-                .pull_model("test-model", &progress_tx, cancel_rx)
+                .pull_model("test-model", &progress_tx, pulling)
                 .await
         });
 
         first_chunk_sent.notified().await;
-        cancel_tx.send(true).expect("cancel receiver should exist");
+        cancel.cancel();
         let error = tokio::time::timeout(Duration::from_secs(1), pull)
             .await
             .expect("cancellation should be prompt")
@@ -459,10 +445,10 @@ mod tests {
 
     #[tokio::test]
     async fn installed_model_names_ignore_catalog_only_metadata() {
-        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
+        crate::util::tls::install_crypto_provider();
         let app = Router::new().route(
             "/api/tags",
-            get(|| async {
+            get(async || {
                 Json(json!({
                     "models": [{
                         "name": "qwen-vl",
@@ -539,8 +525,8 @@ mod tests {
         name: &str,
         ignore_terminate: bool,
     ) -> (OllamaManager, u32, tokio::task::JoinHandle<()>) {
-        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
-        let app = Router::new().route("/api/tags", get(|| async { Json(json!({"models": []})) }));
+        crate::util::tls::install_crypto_provider();
+        let app = Router::new().route("/api/tags", get(async || Json(json!({"models": []}))));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test server should bind");

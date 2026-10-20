@@ -154,8 +154,8 @@ mod tests {
     #[test]
     fn serialized_config_does_not_expose_tokens() {
         let mut config = crate::config::Config::default();
-        config.server.api_token = secrecy::SecretString::from("server-secret".to_owned());
-        config.body.adapter_token = secrecy::SecretString::from("adapter-secret".to_owned());
+        config.server.api_token = secrecy::SecretString::from("server-secret");
+        config.body.adapter_token = secrecy::SecretString::from("adapter-secret");
         let json = serde_json::to_string(&config).expect("serialize");
         assert!(!json.contains("server-secret"));
         assert!(!json.contains("adapter-secret"));

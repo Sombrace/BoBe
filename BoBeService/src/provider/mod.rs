@@ -22,12 +22,7 @@ pub(crate) use context::{
     MemoryContext, TurnChannel, event_block, inert_json, inert_strings, inert_text,
     interruption_context, local_time,
 };
-pub(crate) use domain_tools::{
-    DomainTools, GOAL_CREATE, GOAL_LIST, GOAL_UPDATE, GoalCreateParams, GoalListParams,
-    GoalUpdateParams, MEMORY_APPEND, MEMORY_READ, MEMORY_REMOVE, MEMORY_REPLACE,
-    MemoryAppendParams, MemoryReadParams, MemoryRemoveParams, MemoryReplaceParams, SKILL_CREATE,
-    SKILL_LIST, SKILL_READ, SkillCreateParams, SkillListParams, SkillReadParams, ToolOutcome,
-};
+pub(crate) use domain_tools::{DomainTools, SKILL_CREATE, SkillCreateParams, ToolOutcome};
 pub(crate) use error::WorkerError;
 pub(crate) use job::{JobInput, JobOutput};
 pub(crate) use mcp::{McpRuntimeConfig, McpServerSpec, McpServerStatus, McpToolDescriptor};

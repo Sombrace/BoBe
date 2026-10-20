@@ -1,5 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
-use rand::RngExt;
+use chrono::{DateTime, TimeDelta, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, SqlitePool};
 use uuid::Uuid;
@@ -101,14 +100,14 @@ impl DeviceTrustRepo {
 
         let credential_id = Uuid::new_v4().to_string();
         let lookup_id = Uuid::new_v4().simple().to_string();
-        let mut secret = [0_u8; SECRET_BYTES];
-        rand::rng().fill(&mut secret);
-        let verifier = bearer_verifier(&lookup_id, &secret);
+        let mut secret = zeroize::Zeroizing::new([0_u8; SECRET_BYTES]);
+        rand::fill(secret.as_mut_slice());
+        let verifier = bearer_verifier(&lookup_id, secret.as_slice());
         let token = format!(
             "{ENDPOINT_CREDENTIAL_PREFIX}{lookup_id}_{}",
-            hex_encode(&secret)
+            hex_encode(secret.as_slice())
         );
-        secret.fill(0);
+        drop(secret);
 
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let enrolled_kind: Option<String> =
@@ -249,7 +248,7 @@ impl DeviceTrustRepo {
         let scopes = self.active_scopes(&record.endpoint_id).await?;
         if record
             .last_used_at
-            .is_none_or(|used| used <= Utc::now() - Duration::minutes(5))
+            .is_none_or(|used| used <= Utc::now() - TimeDelta::minutes(5))
         {
             sqlx::query(
                 "UPDATE endpoint_credentials
@@ -376,6 +375,7 @@ fn bearer_verifier(lookup_id: &str, secret: &[u8]) -> [u8; 32] {
 mod tests {
     use super::*;
     use crate::db::endpoint_repo::{EndpointRepo, EndpointUpsert};
+    use std::assert_matches;
 
     fn mac_endpoint(label: &str) -> EndpointUpsert {
         EndpointUpsert {
@@ -517,7 +517,7 @@ mod tests {
     #[tokio::test]
     async fn a_phone_pairing_cannot_take_over_a_mac_endpoint() {
         let repo = repo().await;
-        let mac = enroll(&repo, crate::api::scope::Scope::ALL.as_slice(), 4).await;
+        let mac = enroll(&repo, Scope::ALL.as_slice(), 4).await;
         let mut phone = mac_endpoint("iPhone");
         phone.kind = crate::api::scope::ScopeProfile::Phone
             .endpoint_kind()
@@ -531,7 +531,7 @@ mod tests {
                 None,
             )
             .await;
-        assert!(matches!(refused, Err(AppError::Conflict(_))));
+        assert_matches!(refused, Err(AppError::Conflict(_)));
         let current = repo
             .authenticate_bearer(&mac.token, 4)
             .await

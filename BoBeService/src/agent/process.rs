@@ -174,11 +174,9 @@ impl OwnedProcesses {
                     let writer = tokio::spawn(async move {
                         let mut stdin = stdin;
                         loop {
-                            let input = tokio::select! {
-                                () = io_cancel.cancelled() => return,
-                                value = receiver.recv() => value,
-                            };
-                            let Some((bytes, end)) = input else {
+                            let Some(Some((bytes, end))) =
+                                io_cancel.run_until_cancelled(receiver.recv()).await
+                            else {
                                 return;
                             };
                             let write = async {
@@ -335,16 +333,11 @@ async fn terminate(
 
 async fn wait_finished(entry: &ProcessEntry) -> Result<(), AppError> {
     let mut finished = entry.finished.clone();
-    tokio::time::timeout(Duration::from_secs(8), async {
-        while !*finished.borrow_and_update() {
-            finished.changed().await.map_err(|_| {
-                AppError::Internal("process owner did not report settlement".into())
-            })?;
-        }
-        Ok::<_, AppError>(())
-    })
-    .await
-    .map_err(|_| AppError::Internal("owned process did not settle".into()))?
+    tokio::time::timeout(Duration::from_secs(8), finished.wait_for(|done| *done))
+        .await
+        .map_err(|_| AppError::Internal("owned process did not settle".into()))?
+        .map(drop)
+        .map_err(|_| AppError::Internal("process owner did not report settlement".into()))
 }
 
 async fn pump(
@@ -380,8 +373,5 @@ async fn pump(
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| {
-        tracing::error!("owned process registry mutex was poisoned");
-        poisoned.into_inner()
-    })
+    crate::util::sync::lock(mutex, "owned process registry")
 }

@@ -15,7 +15,7 @@ pub(crate) struct InitializationResponse {
 
 pub(crate) async fn get(State(state): State<Arc<AppState>>) -> Json<InitializationResponse> {
     Json(InitializationResponse {
-        initialization_state: **state.infra.initialization.load(),
+        initialization_state: *state.infra.initialization.borrow(),
     })
 }
 
@@ -33,7 +33,7 @@ pub(crate) async fn advance(
             "Initialization is already being verified; retry when it finishes".into(),
         )
     })?;
-    let current = **state.infra.initialization.load();
+    let current = *state.infra.initialization.borrow();
     validate_transition(current, request.initialization_state)?;
     if matches!(
         (current, request.initialization_state),
@@ -65,7 +65,7 @@ pub(crate) async fn advance(
     state
         .infra
         .initialization
-        .store(Arc::new(request.initialization_state));
+        .send_replace(request.initialization_state);
     Ok(Json(InitializationResponse {
         initialization_state: request.initialization_state,
     }))

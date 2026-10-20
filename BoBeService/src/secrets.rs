@@ -1,4 +1,4 @@
-#[cfg(not(any(target_os = "macos", unix)))]
+#[cfg(not(unix))]
 compile_error!("BoBe daemon supports only macOS and Unix-family OSes (Linux, *BSD).");
 
 use std::sync::{Arc, OnceLock};
@@ -33,13 +33,9 @@ pub(crate) fn default_secret_store(
     if let Some(store) = DEFAULT_STORE.get() {
         return Ok(Arc::clone(store));
     }
-    let store =
-        Arc::new(file::FileSecretStore::at_path(paths.secrets_file())?) as Arc<dyn SecretStore>;
-    drop(DEFAULT_STORE.set(store));
-    DEFAULT_STORE
-        .get()
-        .map(Arc::clone)
-        .ok_or_else(|| SecretError::Backend("default secret store initialization failed".into()))
+    let store: Arc<dyn SecretStore> =
+        Arc::new(file::FileSecretStore::at_path(paths.secrets_file())?);
+    Ok(Arc::clone(DEFAULT_STORE.get_or_init(|| store)))
 }
 
 pub(crate) fn headless_secret_store(
@@ -48,14 +44,10 @@ pub(crate) fn headless_secret_store(
     if let Some(store) = HEADLESS_STORE.get() {
         return Ok(Arc::clone(store));
     }
-    let store = Arc::new(file::FileSecretStore::at_path(
+    let store: Arc<dyn SecretStore> = Arc::new(file::FileSecretStore::at_path(
         paths.headless_secrets_file(),
-    )?) as Arc<dyn SecretStore>;
-    drop(HEADLESS_STORE.set(store));
-    HEADLESS_STORE
-        .get()
-        .map(Arc::clone)
-        .ok_or_else(|| SecretError::Backend("headless secret store initialization failed".into()))
+    )?);
+    Ok(Arc::clone(HEADLESS_STORE.get_or_init(|| store)))
 }
 
 pub(crate) fn read_secret(account: &str) -> Option<String> {
@@ -207,7 +199,7 @@ pub(crate) mod file {
                 path.display()
             )));
         }
-        let expected_uid = effective_uid();
+        let expected_uid = crate::util::paths::effective_uid();
         if metadata.uid() != expected_uid {
             return Err(super::SecretError::Backend(format!(
                 "secret store is owned by uid {}, expected {}: {}",
@@ -223,11 +215,6 @@ pub(crate) mod file {
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
         Ok(serde_json::from_slice(&bytes)?)
-    }
-
-    #[allow(unsafe_code, reason = "geteuid is a side-effect-free libc query")]
-    fn effective_uid() -> u32 {
-        unsafe { libc::geteuid() }
     }
 
     impl super::SecretStore for FileSecretStore {
@@ -267,10 +254,10 @@ pub(crate) mod file {
     }
 
     #[cfg(test)]
-    #[allow(clippy::unwrap_used, clippy::expect_used)]
     mod tests {
         use super::*;
         use crate::secrets::SecretStore;
+        use std::assert_matches;
 
         fn tmpfile() -> PathBuf {
             std::env::temp_dir().join(format!("bobe-secrets-{}.json", uuid::Uuid::new_v4()))
@@ -412,10 +399,7 @@ pub(crate) mod file {
 
             let result = store.store("other", "new");
 
-            assert!(matches!(
-                result,
-                Err(super::super::SecretError::Serialize(_))
-            ));
+            assert_matches!(result, Err(super::super::SecretError::Serialize(_)));
             assert_eq!(std::fs::read(&path).unwrap(), corrupt);
             assert_eq!(store.read("acct").as_deref(), Some("recoverable"));
             drop(std::fs::remove_file(&path));

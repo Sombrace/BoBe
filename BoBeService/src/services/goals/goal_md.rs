@@ -262,7 +262,6 @@ fn parse_iso_8601(value: &str, field: &'static str) -> Result<DateTime<Utc>, Goa
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, reason = "tests panic on precondition failures")]
 mod tests {
     use super::*;
 

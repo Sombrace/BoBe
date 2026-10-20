@@ -1,11 +1,11 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -17,13 +17,14 @@ use crate::runtime::session::RuntimeSession;
 pub(crate) struct MessageRequests {
     pool: sqlx::SqlitePool,
     session: Arc<RuntimeSession>,
-    in_flight: Arc<AtomicUsize>,
+    in_flight: TaskTracker,
     runs: Arc<RunRegistry>,
     personal_data: Arc<tokio::sync::RwLock<()>>,
     submission: tokio::sync::Mutex<()>,
     shutdown: CancellationToken,
 }
 
+#[derive(Debug)]
 enum RequestOutcome {
     Completed,
     Failed,
@@ -59,26 +60,11 @@ struct RequestRecord {
     status: String,
 }
 
-struct InFlight(Arc<AtomicUsize>);
-
-impl InFlight {
-    fn new(counter: Arc<AtomicUsize>) -> Self {
-        counter.fetch_add(1, Ordering::AcqRel);
-        Self(counter)
-    }
-}
-
-impl Drop for InFlight {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
 impl MessageRequests {
     pub(crate) fn new(
         pool: sqlx::SqlitePool,
         session: Arc<RuntimeSession>,
-        in_flight: Arc<AtomicUsize>,
+        in_flight: TaskTracker,
         runs: Arc<RunRegistry>,
         personal_data: Arc<tokio::sync::RwLock<()>>,
     ) -> Arc<Self> {
@@ -206,11 +192,9 @@ impl MessageRequests {
             RunKind::User,
             Some(channel),
         )?;
-        let in_flight = InFlight::new(Arc::clone(&self.in_flight));
         let service = Arc::clone(self);
-        tokio::spawn(async move {
+        self.in_flight.spawn(async move {
             let _registration = registration;
-            let _in_flight = in_flight;
             let mut admission = None;
             let mut personal = None;
             let result: Result<RequestOutcome, AppError> = async {
@@ -257,20 +241,16 @@ impl MessageRequests {
                                 &message_id,
                                 turn_id,
                                 channel,
-                                move |text| {
-                                    let sender = delivery.sender.clone();
-                                    let cancellation = delivery.cancellation.clone();
-                                    async move {
-                                        if !matches!(
-                                            tokio::time::timeout(
-                                                Duration::from_secs(2),
-                                                sender.send(RequestEvent::Text(text))
-                                            )
-                                            .await,
-                                            Ok(Ok(()))
-                                        ) {
-                                            cancellation.cancel();
-                                        }
+                                async move |text| {
+                                    if !matches!(
+                                        tokio::time::timeout(
+                                            Duration::from_secs(2),
+                                            delivery.sender.send(RequestEvent::Text(text))
+                                        )
+                                        .await,
+                                        Ok(Ok(()))
+                                    ) {
+                                        delivery.cancellation.cancel();
                                     }
                                 },
                             )
@@ -412,7 +392,7 @@ async fn prepare_execution(
     shutdown: &CancellationToken,
     cancellation: &CancellationToken,
     request_id: Uuid,
-    bind_answer: impl std::future::Future<Output = Result<(), AppError>>,
+    bind_answer: impl Future<Output = Result<(), AppError>>,
 ) -> Result<Option<RequestOutcome>, AppError> {
     if shutdown.is_cancelled() {
         return Ok(Some(RequestOutcome::Deferred));
@@ -478,6 +458,8 @@ fn unsafe_replay_error() -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
+    use std::sync::atomic::Ordering;
 
     async fn log_status_changes(pool: &sqlx::SqlitePool) {
         sqlx::raw_sql(
@@ -523,11 +505,11 @@ mod tests {
         let root = std::env::temp_dir().join(format!("bobe-message-requests-{}", Uuid::new_v4()));
         let pool = crate::db::test_helpers::in_memory_pool().await;
         let session = RuntimeSession::for_tests(&root, pool.clone()).await;
-        let in_flight = Arc::new(AtomicUsize::new(0));
+        let in_flight = TaskTracker::new();
         let requests = MessageRequests::new(
             pool.clone(),
             Arc::clone(&session),
-            Arc::clone(&in_flight),
+            in_flight.clone(),
             Arc::clone(&session.runs),
             Arc::new(tokio::sync::RwLock::new(())),
         );
@@ -553,13 +535,10 @@ mod tests {
         let_ready_tasks_run().await;
         requests.begin_shutdown();
         drop(connection);
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while in_flight.load(Ordering::Acquire) != 0 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
+        in_flight.close();
+        tokio::time::timeout(Duration::from_secs(5), in_flight.wait())
+            .await
+            .unwrap();
 
         assert_eq!(
             status_history(&pool, request_id).await,
@@ -603,7 +582,7 @@ mod tests {
         drop(connection);
 
         let outcome = preparation.await.unwrap().unwrap();
-        assert!(matches!(outcome, Some(RequestOutcome::Deferred)));
+        assert_matches!(outcome, Some(RequestOutcome::Deferred));
         assert!(!bound.load(Ordering::Acquire));
         assert_eq!(
             status_history(&pool, request_id).await,
@@ -633,7 +612,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(matches!(outcome, Some(RequestOutcome::Deferred)));
+        assert_matches!(outcome, Some(RequestOutcome::Deferred));
         assert_eq!(
             status_history(&pool, request_id).await,
             (
@@ -658,7 +637,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(matches!(outcome, Some(RequestOutcome::Failed)));
+        assert_matches!(outcome, Some(RequestOutcome::Failed));
         assert_eq!(
             status_history(&pool, request_id).await,
             ("running".to_owned(), vec!["running".to_owned()])
@@ -687,7 +666,7 @@ mod tests {
             status_history(&pool, request_id).await,
             ("running".to_owned(), vec!["running".to_owned()])
         );
-        assert!(matches!(
+        assert_matches!(
             prepare_execution(
                 &pool,
                 &shutdown,
@@ -697,7 +676,7 @@ mod tests {
             )
             .await,
             Ok(Some(RequestOutcome::Deferred))
-        ));
+        );
     }
 
     #[tokio::test]

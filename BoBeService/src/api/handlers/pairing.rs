@@ -113,8 +113,7 @@ pub(crate) async fn begin(
         .pairing
         .invitation_profile()
         .ok_or_else(pairing_unavailable)?;
-    let mut server_nonce = [0_u8; 32];
-    rand::RngExt::fill(&mut rand::rng(), &mut server_nonce);
+    let server_nonce: [u8; 32] = rand::random();
     let context = pairing_context(
         &state.infra.identity,
         profile,
@@ -240,8 +239,7 @@ async fn enroll(
         runtime_authority_id: state.infra.identity.runtime_authority_id,
         runtime_authority_epoch: state.infra.identity.runtime_authority_epoch,
     };
-    let mut response_nonce = [0_u8; 12];
-    rand::RngExt::fill(&mut rand::rng(), &mut response_nonce);
+    let response_nonce: [u8; 12] = rand::random();
     let ciphertext = cipher
         .encrypt(
             &Nonce::from(response_nonce),
@@ -531,10 +529,9 @@ fn link_value(value: &str) -> String {
 fn enrollment_cipher(session_key: &[u8]) -> Result<ChaCha20Poly1305, AppError> {
     let mut key = Zeroizing::new([0_u8; 32]);
     Hkdf::<Sha256>::new(None, session_key)
-        .expand(ENROLLMENT_INFO, &mut key[..])
+        .expand(ENROLLMENT_INFO, key.as_mut_slice())
         .map_err(|_| AppError::Internal("derive pairing encryption key".into()))?;
-    ChaCha20Poly1305::new_from_slice(&key[..])
-        .map_err(|_| AppError::Internal("initialize pairing encryption".into()))
+    Ok(ChaCha20Poly1305::new((&*key).into()))
 }
 
 fn encode(bytes: &[u8]) -> String {
@@ -548,12 +545,17 @@ fn decode(value: &str) -> Result<Vec<u8>, AppError> {
 }
 
 fn decode_fixed<const N: usize>(value: &str) -> Result<[u8; N], AppError> {
-    decode(value)?.try_into().map_err(|_| pairing_unavailable())
+    let mut bytes = [0_u8; N];
+    match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode_slice(value, &mut bytes) {
+        Ok(written) if written == N => Ok(bytes),
+        _ => Err(pairing_unavailable()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn canonicalizes_root_origins_and_marks_transport() {
@@ -667,10 +669,10 @@ mod tests {
         );
 
         let loopback = crate::config::ServerConfig::default();
-        assert!(matches!(
+        assert_matches!(
             invitation(&pairing, &loopback, ScopeProfile::Phone, "iPhone").await,
             Err(AppError::NotNetworked(_))
-        ));
+        );
         assert_eq!(pairing.invitation_profile(), Some(ScopeProfile::Phone));
         let mac = serde_json::to_value(
             invitation(&pairing, &loopback, ScopeProfile::MacApp, "Mac")

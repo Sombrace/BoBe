@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 use sqlx::pool::PoolConnection;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use sqlx::{Connection, Sqlite, SqliteConnection};
 use tracing::{info, warn};
 
@@ -53,9 +53,11 @@ async fn connect(db_url: &str) -> Result<SqlitePool, AppError> {
     let options: SqliteConnectOptions = db_url
         .parse::<SqliteConnectOptions>()?
         .create_if_missing(true)
-        .pragma("journal_mode", "WAL")
-        .pragma("foreign_keys", "ON")
-        .pragma("busy_timeout", "5000");
+        .journal_mode(SqliteJournalMode::Wal)
+        .foreign_keys(true)
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .optimize_on_close(true, None)
+        .analysis_limit(400);
     Ok(SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(options)
@@ -410,8 +412,8 @@ fn rename_frontmatter(content: &str, name: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on precondition failures")]
 mod tests {
+    use std::assert_matches;
     use std::collections::BTreeMap;
 
     use super::*;
@@ -945,7 +947,7 @@ mod tests {
 
             let error = open(&fixture.paths).await.expect_err("must refuse");
 
-            assert!(matches!(error, AppError::Conflict(_)));
+            assert_matches!(error, AppError::Conflict(_));
             let mut connection = fixture.connection(true).await;
             assert_eq!(normalized_schema(&mut connection).await, schema_before);
             assert_eq!(

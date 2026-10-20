@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use bobe_pairing_core::{Invitation, ServerStart};
-use rand::RngExt;
 use sha2::Digest;
 use uuid::Uuid;
 
@@ -108,7 +107,7 @@ pub(crate) struct PairingReservation {
     invitation_id: Uuid,
     exchange_id: Uuid,
     attempt: [u8; 32],
-    pub(crate) session_key: Vec<u8>,
+    pub(crate) session_key: zeroize::Zeroizing<Vec<u8>>,
     pub(crate) profile: ScopeProfile,
     pub(crate) label: String,
     settled: bool,
@@ -179,7 +178,7 @@ impl PairingManager {
                 "device label must contain 1-128 characters".into(),
             ));
         }
-        let code = format!("{:06}", rand::rng().random_range(0..1_000_000_u32));
+        let code = format!("{:06}", rand::random_range(0..1_000_000_u32));
         let invitation = Invitation::create(code.as_bytes())
             .map_err(|error| AppError::Internal(format!("create pairing invitation: {error}")))?;
         let mut state = self.lock();
@@ -519,7 +518,7 @@ mod tests {
         )
         .unwrap();
         let reservation = reserve(&manager, &client.attempt(ScopeProfile::MacApp));
-        assert_eq!(reservation.session_key, client.session_key);
+        assert_eq!(*reservation.session_key, client.session_key);
         assert_eq!(reservation.profile, ScopeProfile::MacApp);
         assert_eq!(reservation.label, "Test Mac");
         assert!(manager.has_active_invitation());
@@ -602,8 +601,7 @@ mod tests {
         assert!(manager.finish(&altered).is_err());
         assert!(matches!(
             manager.finish(&client.attempt(ScopeProfile::Phone)),
-            Ok(Finished::Delivered(redelivered)) if redelivered == sealed()
-        ));
+            Ok(Finished::Delivered(redelivered)) if redelivered == sealed()));
         assert!(
             manager
                 .finish(&client.attempt(ScopeProfile::Phone))

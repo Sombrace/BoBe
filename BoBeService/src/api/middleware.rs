@@ -387,7 +387,7 @@ fn required_scope(method: &Method, path: &str) -> RouteScope {
 
 fn request_host(req: &Request<Body>) -> String {
     req.headers()
-        .get(axum::http::header::HOST)
+        .get(header::HOST)
         .and_then(|value| value.to_str().ok())
         .or_else(|| {
             req.uri()
@@ -647,7 +647,7 @@ mod tests {
         use tower::ServiceExt;
 
         axum::Router::new()
-            .fallback(|| async { StatusCode::OK })
+            .fallback(async || StatusCode::OK)
             .layer(axum::middleware::from_fn(scope_enforcement))
             .layer(axum::Extension(principal.clone()))
             .oneshot(

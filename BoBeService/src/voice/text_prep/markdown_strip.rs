@@ -1,28 +1,6 @@
-use std::sync::LazyLock;
+use std::borrow::Cow;
 
-use regex::Regex;
-
-#[allow(
-    clippy::expect_used,
-    reason = "static compile-time regexes; failure is a developer error caught in tests"
-)]
-static MD_RE: LazyLock<MarkdownRegexes> = LazyLock::new(|| MarkdownRegexes {
-    italic_star: Regex::new(r"\*([^*\n]+)\*").expect("static italic-star regex"),
-    italic_underscore: Regex::new(r"_([^_\n]+)_").expect("static italic-underscore regex"),
-    header: Regex::new(r"(?m)^#{1,6}\s+").expect("static header regex"),
-    bullet: Regex::new(r"(?m)^\s*[-*•]\s+").expect("static bullet regex"),
-    numbered: Regex::new(r"(?m)^\s*\d{1,3}\.\s+").expect("static numbered-list regex"),
-    link: Regex::new(r"\[([^\]]+)\]\([^)]+\)").expect("static markdown-link regex"),
-});
-
-struct MarkdownRegexes {
-    italic_star: Regex,
-    italic_underscore: Regex,
-    header: Regex,
-    bullet: Regex,
-    numbered: Regex,
-    link: Regex,
-}
+use regex::regex;
 
 #[derive(Default)]
 pub(crate) struct FenceFilter {
@@ -65,11 +43,16 @@ impl FenceFilter {
 }
 
 pub(crate) fn strip_markdown(text: &str, starts_line: bool) -> String {
-    let re = &*MD_RE;
     let mut out = text.replace("**", "").replace("__", "").replace('`', "");
-    out = re.italic_star.replace_all(&out, "$1").into_owned();
-    out = re.italic_underscore.replace_all(&out, "$1").into_owned();
-    out = re.link.replace_all(&out, "$1").into_owned();
+    for pattern in [
+        regex!(r"\*([^*\n]+)\*"),
+        regex!(r"_([^_\n]+)_"),
+        regex!(r"\[([^\]]+)\]\([^)]+\)"),
+    ] {
+        if let Cow::Owned(replaced) = pattern.replace_all(&out, "$1") {
+            out = replaced;
+        }
+    }
     if starts_line {
         return strip_line_markers(&out);
     }
@@ -80,10 +63,11 @@ pub(crate) fn strip_markdown(text: &str, starts_line: bool) -> String {
 }
 
 fn strip_line_markers(text: &str) -> String {
-    let re = &*MD_RE;
-    let out = re.header.replace_all(text, "");
-    let out = re.bullet.replace_all(&out, "");
-    re.numbered.replace_all(&out, "").into_owned()
+    let out = regex!(r"(?m)^#{1,6}\s+").replace_all(text, "");
+    let out = regex!(r"(?m)^\s*[-*•]\s+").replace_all(&out, "");
+    regex!(r"(?m)^\s*\d{1,3}\.\s+")
+        .replace_all(&out, "")
+        .into_owned()
 }
 
 #[cfg(test)]

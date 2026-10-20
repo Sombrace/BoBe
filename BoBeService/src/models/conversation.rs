@@ -58,7 +58,8 @@ impl Conversation {
     ) -> bool {
         let reference = last_user_at.unwrap_or(self.created_at);
         let elapsed = Utc::now() - reference;
-        elapsed >= chrono::Duration::minutes(auto_close_minutes)
+        elapsed
+            >= chrono::TimeDelta::try_minutes(auto_close_minutes).unwrap_or(chrono::TimeDelta::MAX)
     }
 }
 

@@ -217,8 +217,6 @@ fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
 
     #[test]

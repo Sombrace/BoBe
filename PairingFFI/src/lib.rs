@@ -226,7 +226,7 @@ mod tests {
             unsafe { slice::from_raw_parts(finalization.data, finalization.len) };
         let server_key = server.finish(finalization_bytes, context).unwrap();
         let client_key_bytes = unsafe { slice::from_raw_parts(client_key.data, client_key.len) };
-        assert_eq!(client_key_bytes, server_key);
+        assert_eq!(client_key_bytes, server_key.as_slice());
 
         unsafe {
             bobe_pairing_buffer_destroy(&mut request);

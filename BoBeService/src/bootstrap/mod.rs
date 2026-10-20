@@ -45,7 +45,7 @@ pub(crate) async fn run(
     runtime_locks: crate::util::runtime_lock::RuntimeLocks,
     local_enrollment: Arc<crate::api::handlers::local_enrollment::LocalEnrollmentBootstrap>,
 ) -> Result<Arc<AppState>, AppError> {
-    crate::util::tls::install_crypto_provider()?;
+    crate::util::tls::install_crypto_provider();
     let (pool, identity) = initialize_storage(&paths).await?;
     let initialization = crate::db::runtime_initialization_repo::ensure(&pool).await?;
     let identity = Arc::new(identity);
@@ -287,18 +287,18 @@ async fn run_with_config(
         crate::voice::install_service::VoiceInstallService::new(http, models_root, on_complete)
     };
 
-    let in_flight_text_turns = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let in_flight_text_turns = tokio_util::task::TaskTracker::new();
 
     let provider_login =
         crate::agent::auth::LoginCoordinator::new(&agent, authority_lifecycle.maintenance_flag());
 
-    let initialization = Arc::new(arc_swap::ArcSwap::from_pointee(initialization));
+    let initialization = tokio::sync::watch::Sender::new(initialization);
     let background = crate::runtime::background_work::BackgroundWork::new(
         agent_jobs,
         Arc::clone(&workers),
         Arc::clone(&wired.runtime_session),
         Arc::clone(&personal_data_lifecycle),
-        Arc::clone(&initialization),
+        initialization.clone(),
         Arc::clone(&runs),
         Arc::clone(&infra.connection_manager),
         Arc::clone(&wired.goals_service),
@@ -311,7 +311,7 @@ async fn run_with_config(
     let message_requests = crate::runtime::message_requests::MessageRequests::new(
         pool.clone(),
         Arc::clone(&wired.runtime_session),
-        Arc::clone(&in_flight_text_turns),
+        in_flight_text_turns.clone(),
         Arc::clone(&runs),
         Arc::clone(&personal_data_lifecycle),
     );

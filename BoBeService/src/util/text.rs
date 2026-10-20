@@ -6,7 +6,7 @@ pub(crate) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
             left.get(index).copied().unwrap_or(0) ^ right.get(index).copied().unwrap_or(0),
         );
     }
-    difference == 0
+    std::hint::black_box(difference) == 0
 }
 
 pub(crate) fn hex_encode(bytes: &[u8]) -> String {
@@ -28,38 +28,23 @@ pub(crate) fn hex_decode(input: &str) -> Option<Vec<u8>> {
         .as_chunks::<2>()
         .0
         .iter()
-        .map(|pair| {
-            let high = (pair[0] as char).to_digit(16)?;
-            let low = (pair[1] as char).to_digit(16)?;
+        .map(|&[high, low]| {
+            let high = char::from(high).to_digit(16)?;
+            let low = char::from(low).to_digit(16)?;
             Some(((high << 4) | low) as u8)
         })
         .collect()
 }
 
 pub(crate) fn truncate_str(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
+    &s[..s.floor_char_boundary(max_bytes)]
 }
 
 pub(crate) fn tail_str(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    let mut start = s.len() - max_bytes;
-    while !s.is_char_boundary(start) {
-        start += 1;
-    }
-    &s[start..]
+    &s[s.ceil_char_boundary(s.len().saturating_sub(max_bytes))..]
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::{constant_time_eq, hex_decode, hex_encode, tail_str, truncate_str};
 

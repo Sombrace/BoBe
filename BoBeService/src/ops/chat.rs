@@ -1,4 +1,4 @@
-#![allow(
+#![expect(
     clippy::print_stdout,
     clippy::print_stderr,
     reason = "interactive CLI chat streams assistant and tool events"
@@ -124,7 +124,7 @@ pub(crate) async fn turn(
 
 async fn consume_events(
     target: &OpsTarget,
-    stream: &mut (impl futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin),
+    stream: &mut (impl futures::Stream<Item = Result<axum::body::Bytes, reqwest::Error>> + Unpin),
     message_id: &str,
     request_id: Uuid,
     json: bool,
@@ -314,9 +314,13 @@ fn render_recovered_content(partial: &str, complete: &str, json: bool) -> Result
 
 fn frame_end(buffer: &[u8]) -> Option<usize> {
     buffer
-        .windows(2)
+        .array_windows()
         .position(|window| window == b"\n\n")
-        .or_else(|| buffer.windows(4).position(|window| window == b"\r\n\r\n"))
+        .or_else(|| {
+            buffer
+                .array_windows()
+                .position(|window| window == b"\r\n\r\n")
+        })
 }
 
 fn drain_frame_separator(buffer: &mut Vec<u8>) {
@@ -445,7 +449,7 @@ data: {"type":"text_delta","message_id":"msg_1","timestamp":"now","description":
 
     #[tokio::test]
     async fn subscribes_before_submit_and_does_not_duplicate_terminal_body() {
-        crate::util::tls::install_crypto_provider().unwrap();
+        crate::util::tls::install_crypto_provider();
         let (events, _) = broadcast::channel(8);
         let state = FixtureState {
             subscribed: Arc::new(AtomicBool::new(false)),
@@ -497,7 +501,7 @@ data: {"type":"text_delta","message_id":"msg_1","timestamp":"now","description":
 
     #[tokio::test]
     async fn snapshot_gap_recovery_waits_for_durable_completion() {
-        crate::util::tls::install_crypto_provider().unwrap();
+        crate::util::tls::install_crypto_provider();
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let app = Router::new()
             .route("/conversation/current", get(delayed_snapshot))

@@ -114,14 +114,13 @@ pub(crate) async fn stream_events(
 }
 
 fn to_sse_event(bundle: &StreamBundle) -> Event {
-    let data = match serde_json::to_string(bundle) {
-        Ok(data) => data,
-        Err(error) => {
+    let event = Event::default()
+        .event("message")
+        .json_data(bundle)
+        .unwrap_or_else(|error| {
             tracing::warn!(%error, "sse.serialize_event_failed");
-            String::new()
-        }
-    };
-    let event = Event::default().event("message").data(data);
+            Event::default().event("message").data("")
+        });
     if let Some(event_id) = bundle.event_id {
         event.id(event_id.to_string())
     } else {
@@ -131,7 +130,6 @@ fn to_sse_event(bundle: &StreamBundle) -> Event {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
 
     use crate::util::sse::factories::text_delta_event;
 

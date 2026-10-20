@@ -23,10 +23,11 @@ use secrecy::ExposeSecret;
 use sha2::Digest;
 #[cfg(target_os = "macos")]
 use tokio::process::{Child, Command as TokioCommand};
-#[cfg(target_os = "macos")]
-use tokio::task::JoinHandle;
-#[cfg(target_os = "macos")]
 use tokio_util::sync::CancellationToken;
+#[cfg(target_os = "macos")]
+use tokio_util::sync::DropGuard;
+#[cfg(target_os = "macos")]
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
 
 use super::gateway::BodyGateway;
@@ -200,7 +201,7 @@ enum MdnsRegistration {
 impl MdnsRegistration {
     #[cfg_attr(
         not(target_os = "macos"),
-        allow(
+        expect(
             clippy::unused_async_trait_impl,
             reason = "macOS shutdown awaits native mDNS task completion"
         )
@@ -281,27 +282,16 @@ fn native_mdns_command(config: &BodyConfig, address: Ipv4Addr) -> TokioCommand {
 
 #[cfg(target_os = "macos")]
 struct NativeMdnsRegistration {
-    cancel: CancellationToken,
-    task: Option<JoinHandle<()>>,
+    cancel: DropGuard,
+    task: AbortOnDropHandle<()>,
 }
 
 #[cfg(target_os = "macos")]
 impl NativeMdnsRegistration {
-    async fn shutdown(mut self) {
-        self.cancel.cancel();
-        if let Some(task) = self.task.take() {
-            drop(task.await);
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl Drop for NativeMdnsRegistration {
-    fn drop(&mut self) {
-        self.cancel.cancel();
-        if let Some(task) = self.task.take() {
-            task.abort();
-        }
+    async fn shutdown(self) {
+        let Self { cancel, task } = self;
+        drop(cancel);
+        drop(task.await);
     }
 }
 
@@ -310,7 +300,11 @@ async fn supervise_native_mdns(config: BodyConfig, cancel: CancellationToken) {
     let mut child: Option<Child> = None;
     let mut registered_address = None;
     loop {
-        match primary_ipv4() {
+        match tokio::task::spawn_blocking(primary_ipv4)
+            .await
+            .map_err(anyhow::Error::from)
+            .flatten()
+        {
             Ok(address) => {
                 let stopped = child
                     .as_mut()
@@ -338,9 +332,12 @@ async fn supervise_native_mdns(config: BodyConfig, cancel: CancellationToken) {
             }
         }
 
-        tokio::select! {
-            () = cancel.cancelled() => break,
-            () = tokio::time::sleep(Duration::from_secs(5)) => {}
+        if cancel
+            .run_until_cancelled(tokio::time::sleep(Duration::from_secs(5)))
+            .await
+            .is_none()
+        {
+            break;
         }
     }
     if let Some(mut process) = child {
@@ -352,10 +349,13 @@ async fn supervise_native_mdns(config: BodyConfig, cancel: CancellationToken) {
 #[cfg(target_os = "macos")]
 fn start_mdns(config: &BodyConfig) -> Option<MdnsRegistration> {
     let cancel = CancellationToken::new();
-    let task = tokio::spawn(supervise_native_mdns(config.clone(), cancel.clone()));
+    let task = AbortOnDropHandle::new(tokio::spawn(supervise_native_mdns(
+        config.clone(),
+        cancel.clone(),
+    )));
     Some(MdnsRegistration::Native(NativeMdnsRegistration {
-        cancel,
-        task: Some(task),
+        cancel: cancel.drop_guard(),
+        task,
     }))
 }
 
@@ -382,7 +382,7 @@ pub(crate) async fn run(
     endpoints: Arc<crate::db::endpoint_repo::EndpointRepo>,
     registry_lock: Arc<tokio::sync::Mutex<()>>,
     config: BodyConfig,
-    shutdown: tokio_util::sync::CancellationToken,
+    shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(config.enabled, "BodyLink gateway is disabled");
     if let Some(error) = config.validation_errors().into_iter().next() {
@@ -479,8 +479,8 @@ mod tests {
 
         assert!(
             arguments
-                .windows(2)
-                .any(|pair| { pair == ["bobe-body-hub.local", "192.0.2.10"] })
+                .array_windows()
+                .any(|[host, address]| host == "bobe-body-hub.local" && address == "192.0.2.10")
         );
         assert!(arguments.iter().any(|value| value == "auth=mtls-pinned"));
         assert!(arguments.iter().any(|value| value == "kid=test-kid"));

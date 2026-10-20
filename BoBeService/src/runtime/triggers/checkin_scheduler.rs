@@ -1,5 +1,4 @@
-use chrono::{DateTime, Duration, Local, NaiveTime, Utc};
-use rand::RngExt;
+use chrono::{DateTime, Local, NaiveTime, TimeDelta, Utc};
 use tracing::{debug, info, warn};
 
 pub(crate) struct CheckinScheduler {
@@ -188,7 +187,7 @@ impl CheckinScheduler {
         }
 
         if next_time.is_none() {
-            let tomorrow = today + chrono::Duration::days(1);
+            let tomorrow = today + TimeDelta::days(1);
             let naive_dt = tomorrow.and_time(self.times[0]);
             if let Some(dt) = naive_dt.and_local_timezone(Local).single() {
                 next_time = Some(dt.with_timezone(&Utc));
@@ -199,8 +198,8 @@ impl CheckinScheduler {
         if let Some(ref mut t) = next_time
             && self.jitter_minutes > 0
         {
-            let jitter = rand::rng().random_range(-self.jitter_minutes..=self.jitter_minutes);
-            *t += Duration::minutes(jitter as i64);
+            let jitter = rand::random_range(-self.jitter_minutes..=self.jitter_minutes);
+            *t += TimeDelta::minutes(jitter as i64);
         }
 
         self.next_checkin = next_time;
@@ -215,11 +214,11 @@ impl CheckinScheduler {
             return;
         };
 
-        let mut next_time = after + Duration::minutes(interval as i64);
+        let mut next_time = after + TimeDelta::minutes(interval as i64);
 
         if self.jitter_minutes > 0 {
-            let jitter = rand::rng().random_range(-self.jitter_minutes..=self.jitter_minutes);
-            next_time += Duration::minutes(jitter as i64);
+            let jitter = rand::random_range(-self.jitter_minutes..=self.jitter_minutes);
+            next_time += TimeDelta::minutes(jitter as i64);
         }
 
         self.next_interval_checkin = Some(next_time);

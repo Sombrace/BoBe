@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -78,7 +77,7 @@ mod tests {
 
     #[tokio::test]
     async fn one_port_serves_plain_http_and_tls_to_this_computer() {
-        crate::util::tls::install_crypto_provider().unwrap();
+        crate::util::tls::install_crypto_provider();
         let root = std::env::temp_dir().join(format!("bobe-listener-{}", uuid::Uuid::new_v4()));
         let paths = crate::util::paths::DataPaths::resolve(
             &root,
@@ -100,7 +99,7 @@ mod tests {
         listener.set_nonblocking(true).unwrap();
         let address = listener.local_addr().unwrap();
         let handle = axum_server::Handle::new();
-        let app = axum::Router::new().route("/health", axum::routing::get(|| async { "ok" }));
+        let app = axum::Router::new().route("/health", axum::routing::get(async || "ok"));
         let server = axum_server::from_tcp(listener)
             .unwrap()
             .acceptor(LocalPlainAcceptor::new(RustlsAcceptor::new(tls)))
@@ -118,7 +117,7 @@ mod tests {
 
         let certificate = tokio::fs::read(&identity.certificate_path).await.unwrap();
         let client = reqwest::Client::builder()
-            .add_root_certificate(reqwest::Certificate::from_pem(&certificate).unwrap())
+            .tls_certs_merge([reqwest::Certificate::from_pem(&certificate).unwrap()])
             .build()
             .unwrap();
         let secure = client

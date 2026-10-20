@@ -1,6 +1,6 @@
 use tracing::{debug, error, info, warn};
 
-#[allow(unsafe_code)]
+#[expect(unsafe_code, reason = "gethostname has no stable std wrapper")]
 fn get_hostname() -> String {
     let mut buf = [0u8; 256];
     let ret = unsafe { libc::gethostname(buf.as_mut_ptr().cast::<libc::c_char>(), buf.len()) };
@@ -83,7 +83,7 @@ fn has_flag(flags: u32, flag: libc::c_int) -> bool {
     u32::try_from(flag).is_ok_and(|flag| flags & flag != 0)
 }
 
-#[allow(unsafe_code)]
+#[expect(unsafe_code, reason = "getifaddrs has no std wrapper")]
 fn interface_addresses() -> Vec<(String, bool, std::net::Ipv4Addr)> {
     let mut list: *mut libc::ifaddrs = std::ptr::null_mut();
     if unsafe { libc::getifaddrs(&raw mut list) } != 0 {

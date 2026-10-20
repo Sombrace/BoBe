@@ -98,7 +98,7 @@ pub(super) fn require_enabled(state: &AppState) -> Result<(), AppError> {
             "background work is disabled in the active tool selection".into(),
         ));
     }
-    if **state.infra.initialization.load()
+    if *state.infra.initialization.borrow()
         != crate::db::runtime_initialization_repo::InitializationState::Ready
     {
         return Err(AppError::Conflict(

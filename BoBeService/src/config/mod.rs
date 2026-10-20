@@ -105,7 +105,7 @@ fn validate_persisted_config(source: &str) -> Result<(), crate::error::AppError>
     if source.is_empty() {
         return Ok(());
     }
-    let deserializer = toml_edit::de::Deserializer::parse(source.to_owned())
+    let deserializer = toml_edit::de::Deserializer::parse(source)
         .map_err(|error| crate::error::AppError::Config(error.to_string()))?;
     let mut unknown = Vec::new();
     drop(

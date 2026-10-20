@@ -26,6 +26,7 @@ pub(crate) const SKILL_CREATE: &str = "bobe_skill_create";
 pub(crate) struct ToolSpec {
     pub(crate) name: &'static str,
     pub(crate) description: &'static str,
+    pub(crate) parameters: fn() -> schemars::Schema,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -87,44 +88,44 @@ impl DomainTools {
         let mut specs = Vec::new();
         if self.memory_enabled {
             specs.extend([
-                spec(
-                MEMORY_READ,
+                spec::<MemoryReadParams>(
+MEMORY_READ,
                 "Read BoBe's current memory document and revision before replacing or removing an entry.",
             ),
-            spec(
-                MEMORY_APPEND,
+            spec::<MemoryAppendParams>(
+MEMORY_APPEND,
                 "Append one durable fact to BoBe's structured memory. Never use for transient chat.",
             ),
-                spec(
-                    MEMORY_REPLACE,
+                spec::<MemoryReplaceParams>(
+MEMORY_REPLACE,
                     "Replace one exact current memory line using the revision returned by bobe_memory_read.",
                 ),
-                spec(
-                    MEMORY_REMOVE,
+                spec::<MemoryRemoveParams>(
+MEMORY_REMOVE,
                     "Remove one exact current memory line using the revision returned by bobe_memory_read.",
                 ),
             ]);
         }
         if self.goals_enabled {
             specs.extend([
-                spec(
-                    GOAL_LIST,
+                spec::<GoalListParams>(
+GOAL_LIST,
                     "List the user's BoBe goals before discussing or changing them.",
                 ),
-                spec(
-                    GOAL_CREATE,
+                spec::<GoalCreateParams>(
+GOAL_CREATE,
                     "Create a durable, personally meaningful goal when tracking it will help the user.",
                 ),
-                spec(
-                    GOAL_UPDATE,
+                spec::<GoalUpdateParams>(
+GOAL_UPDATE,
                     "Update an existing goal's living-document fields or lifecycle status.",
                 ),
             ]);
         }
         specs.extend([
-            spec(SKILL_LIST, "List reusable BoBe skills."),
-            spec(SKILL_READ, "Read one reusable skill before applying it."),
-            spec(
+            spec::<SkillListParams>(SKILL_LIST, "List reusable BoBe skills."),
+            spec::<SkillReadParams>(SKILL_READ, "Read one reusable skill before applying it."),
+            spec::<SkillCreateParams>(
                 SKILL_CREATE,
                 "Atomically create or replace a reusable skill and make it available to BoBe.",
             ),
@@ -387,8 +388,12 @@ impl ToolOutcome {
     }
 }
 
-fn spec(name: &'static str, description: &'static str) -> ToolSpec {
-    ToolSpec { name, description }
+fn spec<P: JsonSchema>(name: &'static str, description: &'static str) -> ToolSpec {
+    ToolSpec {
+        name,
+        description,
+        parameters: || schemars::schema_for!(P),
+    }
 }
 
 fn invalid_arguments(name: &str, error: serde_json::Error) -> ToolOutcome {

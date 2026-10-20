@@ -60,10 +60,12 @@ pub(super) fn next_due(
         ));
     }
     let skipped = now.signed_duration_since(due).num_seconds().max(0) / i64::from(interval);
-    due.checked_add_signed(chrono::Duration::seconds(
-        (skipped + 1) * i64::from(interval),
-    ))
-    .ok_or_else(|| AppError::Validation("schedule time is out of range".into()))
+    skipped
+        .checked_add(1)
+        .and_then(|intervals| intervals.checked_mul(i64::from(interval)))
+        .and_then(chrono::TimeDelta::try_seconds)
+        .and_then(|delay| due.checked_add_signed(delay))
+        .ok_or_else(|| AppError::Validation("schedule time is out of range".into()))
 }
 
 impl AgentJobRepo {
@@ -342,7 +344,7 @@ mod tests {
         let pool = crate::db::test_helpers::in_memory_pool().await;
         let repo = AgentJobRepo::new(pool.clone());
         let due = "2026-01-01T10:00:00Z".parse::<DateTime<Utc>>().unwrap();
-        let later = due + chrono::Duration::hours(10);
+        let later = due + chrono::TimeDelta::hours(10);
         for interval in [None, Some(60)] {
             let schedule = repo
                 .create_schedule(
@@ -385,7 +387,7 @@ mod tests {
             if interval.is_some() {
                 assert_eq!(
                     retained.next_run_at,
-                    (later + chrono::Duration::minutes(1))
+                    (later + chrono::TimeDelta::minutes(1))
                         .to_rfc3339_opts(SecondsFormat::Millis, true)
                 );
             }

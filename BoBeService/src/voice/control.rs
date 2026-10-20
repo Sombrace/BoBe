@@ -72,7 +72,7 @@ pub(crate) async fn handle_control_text(
                     send_error(output, "engines_unavailable", "Daemon STT is unavailable").await;
                     return false;
                 };
-                let stream_id = rand::random::<u32>().max(1);
+                let stream_id = rand::random::<std::num::NonZeroU32>().get();
                 let turn_id = new_turn_id();
                 let stt_stream = match stt.create_stream(true) {
                     Ok(stream) => stream,

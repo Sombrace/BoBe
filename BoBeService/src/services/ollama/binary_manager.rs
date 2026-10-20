@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use tokio::io::AsyncReadExt;
 use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::error::AppError;
@@ -55,11 +56,11 @@ impl BinaryManager {
     pub(crate) async fn ensure_managed_ollama(
         &self,
         progress_tx: &watch::Sender<DownloadProgress>,
-        cancel_rx: watch::Receiver<bool>,
+        cancel: CancellationToken,
     ) -> Result<PathBuf, AppError> {
         let artifact =
             download::current_artifact().map_err(|message| AppError::Config(message.into()))?;
-        self.ensure_installation(&artifact, progress_tx, cancel_rx)
+        self.ensure_installation(&artifact, progress_tx, cancel)
             .await
     }
 
@@ -67,11 +68,11 @@ impl BinaryManager {
         &self,
         artifact: &download::OllamaArtifact,
         progress_tx: &watch::Sender<DownloadProgress>,
-        cancel_rx: watch::Receiver<bool>,
+        cancel: CancellationToken,
     ) -> Result<PathBuf, AppError> {
         let install_dir = self.install_dir(artifact);
         if let Some(path) = self.find_installation(artifact) {
-            match self.validate_ollama_binary(&path, cancel_rx.clone()).await {
+            match self.validate_ollama_binary(&path, cancel.clone()).await {
                 Ok(()) => {
                     progress_tx
                         .send(DownloadProgress {
@@ -109,7 +110,7 @@ impl BinaryManager {
             &self.http_client,
             artifact,
             &archive_path,
-            cancel_rx.clone(),
+            cancel.clone(),
             |current, total| {
                 let percent = total.map(|t| {
                     if t > 0 {
@@ -140,7 +141,7 @@ impl BinaryManager {
         let installed = extract::install_ollama_runtime(&archive_path, &install_dir, artifact);
         let _ignored = std::fs::remove_file(&archive_path);
         installed?;
-        if let Err(error) = self.validate_ollama_binary(&target_path, cancel_rx).await {
+        if let Err(error) = self.validate_ollama_binary(&target_path, cancel).await {
             crate::util::durable_fs::durable_remove_entry(&install_dir).await?;
             return Err(error);
         }
@@ -161,7 +162,7 @@ impl BinaryManager {
     pub(crate) async fn validate_ollama_binary(
         &self,
         path: &Path,
-        cancel_rx: watch::Receiver<bool>,
+        cancel: CancellationToken,
     ) -> Result<(), AppError> {
         let metadata = tokio::fs::metadata(path)
             .await
@@ -182,7 +183,7 @@ impl BinaryManager {
             )));
         }
 
-        run_version_check(path, VERSION_TIMEOUT, cancel_rx).await
+        run_version_check(path, VERSION_TIMEOUT, cancel).await
     }
 
     fn prune_stale_runtimes(&self, keep: &Path) {
@@ -240,7 +241,7 @@ impl Drop for GroupKill {
 async fn run_version_check(
     path: &Path,
     timeout: Duration,
-    mut cancel_rx: watch::Receiver<bool>,
+    cancel: CancellationToken,
 ) -> Result<(), AppError> {
     let mut command = tokio::process::Command::new(path);
     command
@@ -268,7 +269,7 @@ async fn run_version_check(
             "Managed Ollama did not answer --version within {}s",
             timeout.as_secs()
         ))),
-        () = wait_for_cancel(&mut cancel_rx) => {
+        () = cancel.cancelled() => {
             Err(AppError::Canceled("Ollama validation canceled".into()))
         }
     };
@@ -297,25 +298,14 @@ async fn run_version_check(
     Ok(())
 }
 
-async fn wait_for_cancel(cancel_rx: &mut watch::Receiver<bool>) {
-    if *cancel_rx.borrow() {
-        return;
-    }
-    while cancel_rx.changed().await.is_ok() {
-        if *cancel_rx.borrow() {
-            return;
-        }
-    }
-    std::future::pending::<()>().await;
-}
-
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp)]
     use super::BinaryManager;
     use super::download::current_artifact;
+    use std::assert_matches;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
@@ -330,7 +320,7 @@ mod tests {
     }
 
     fn test_client() -> Arc<reqwest::Client> {
-        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
+        crate::util::tls::install_crypto_provider();
         Arc::new(reqwest::Client::new())
     }
 
@@ -351,7 +341,7 @@ mod tests {
 
         let manager = BinaryManager::new(&dir, test_client());
         manager
-            .validate_ollama_binary(&binary_path, tokio::sync::watch::channel(false).1)
+            .validate_ollama_binary(&binary_path, CancellationToken::new())
             .await
             .expect("validation should pass");
     }
@@ -369,7 +359,7 @@ mod tests {
 
         let manager = BinaryManager::new(&dir, test_client());
         let error = manager
-            .validate_ollama_binary(&binary_path, tokio::sync::watch::channel(false).1)
+            .validate_ollama_binary(&binary_path, CancellationToken::new())
             .await
             .expect_err("validation should fail");
 
@@ -470,7 +460,7 @@ mod tests {
             super::run_version_check(
                 &binary,
                 std::time::Duration::from_secs(5),
-                tokio::sync::watch::channel(false).1,
+                CancellationToken::new(),
             )
             .await
         });
@@ -491,12 +481,13 @@ mod tests {
     async fn canceling_a_version_check_kills_its_process_group() {
         let dir = temp_dir("canceled");
         let (binary, pid_file) = hanging_binary(&dir);
-        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let cancel = CancellationToken::new();
+        let checking = cancel.clone();
         let check = tokio::spawn(async move {
-            super::run_version_check(&binary, std::time::Duration::from_mins(10), cancel_rx).await
+            super::run_version_check(&binary, std::time::Duration::from_mins(10), checking).await
         });
         let pid = started_pid(&pid_file).await;
-        cancel_tx.send(true).expect("cancel receiver should exist");
+        cancel.cancel();
 
         let error = tokio::time::timeout(std::time::Duration::from_secs(5), check)
             .await
@@ -504,7 +495,7 @@ mod tests {
             .expect("check should join")
             .expect_err("validation should be canceled");
 
-        assert!(matches!(error, crate::error::AppError::Canceled(_)));
+        assert_matches!(error, crate::error::AppError::Canceled(_));
         assert_group_gone(pid).await;
         let _ignored = std::fs::remove_dir_all(dir);
     }
@@ -542,13 +533,8 @@ mod tests {
         let sha256: &'static str = Box::leak(
             crate::util::text::hex_encode(&sha2::Sha256::digest(&archive)).into_boxed_str(),
         );
-        let app = axum::Router::new().route(
-            "/ollama.tgz",
-            axum::routing::get(move || {
-                let archive = archive.clone();
-                async move { archive }
-            }),
-        );
+        let app =
+            axum::Router::new().route("/ollama.tgz", axum::routing::get(async move || archive));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test server should bind");
@@ -587,11 +573,7 @@ mod tests {
                 tokio::sync::watch::channel(super::DownloadProgress::default());
 
             let installed = manager
-                .ensure_installation(
-                    &artifact,
-                    &progress_tx,
-                    tokio::sync::watch::channel(false).1,
-                )
+                .ensure_installation(&artifact, &progress_tx, CancellationToken::new())
                 .await
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
 
@@ -604,11 +586,7 @@ mod tests {
             assert!(install.join("llama-server").is_file());
             assert!(!dir.join("ollama").join("ollama-test.tgz").exists());
             let again = manager
-                .ensure_installation(
-                    &artifact,
-                    &progress_tx,
-                    tokio::sync::watch::channel(false).1,
-                )
+                .ensure_installation(&artifact, &progress_tx, CancellationToken::new())
                 .await
                 .expect("a valid install is reused");
             assert_eq!(again, installed);

@@ -225,7 +225,6 @@ pub(crate) async fn recover_message_requests(state: &Arc<AppState>) -> Result<()
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, reason = "tests panic on failed preconditions")]
 
     use super::*;
     use crate::db::test_helpers::in_memory_pool;

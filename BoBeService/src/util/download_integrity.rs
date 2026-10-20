@@ -50,7 +50,6 @@ impl DownloadIntegrity {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on fixture failures")]
 mod tests {
     use super::*;
 

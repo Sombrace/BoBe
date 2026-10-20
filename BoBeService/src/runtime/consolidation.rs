@@ -58,12 +58,13 @@ impl ConsolidationScheduler {
                 "consolidation.sleeping"
             );
 
-            tokio::select! {
-                () = tokio::time::sleep(wait) => {}
-                () = shutdown.cancelled() => {
-                    tracing::info!("consolidation.stopped");
-                    return;
-                }
+            if shutdown
+                .run_until_cancelled(tokio::time::sleep(wait))
+                .await
+                .is_none()
+            {
+                tracing::info!("consolidation.stopped");
+                return;
             }
 
             let oversized = self
@@ -175,7 +176,7 @@ fn duration_until_next(fire_at: NaiveTime, now_utc: DateTime<Utc>) -> Duration {
             Local
                 .from_local_datetime(&tomorrow.and_time(fire_at))
                 .single()
-                .unwrap_or(now_local + chrono::Duration::hours(24))
+                .unwrap_or(now_local + chrono::TimeDelta::hours(24))
         }
     };
 
@@ -185,10 +186,8 @@ fn duration_until_next(fire_at: NaiveTime, now_utc: DateTime<Utc>) -> Duration {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, reason = "tests panic on precondition failures")]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
     #[test]
     fn duration_until_next_picks_today_when_in_future() {
@@ -196,8 +195,7 @@ mod tests {
         let now_utc = now_local.with_timezone(&Utc);
         let fire = NaiveTime::from_hms_opt(3, 0, 0).unwrap();
         let d = duration_until_next(fire, now_utc);
-        assert!(d.as_secs() <= 2 * 60 * 60 + 1);
-        assert!(d.as_secs() >= 2 * 60 * 60 - 1);
+        assert!(d.abs_diff(Duration::from_hours(2)) <= Duration::from_secs(1));
     }
 
     #[test]
@@ -206,7 +204,6 @@ mod tests {
         let now_utc = now_local.with_timezone(&Utc);
         let fire = NaiveTime::from_hms_opt(3, 0, 0).unwrap();
         let d = duration_until_next(fire, now_utc);
-        assert!(d.as_secs() <= 23 * 60 * 60 + 1);
-        assert!(d.as_secs() >= 23 * 60 * 60 - 1);
+        assert!(d.abs_diff(Duration::from_hours(23)) <= Duration::from_secs(1));
     }
 }

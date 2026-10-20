@@ -105,7 +105,7 @@ pub(crate) async fn complete(
     let Some(reservation) = peer
         .ip()
         .is_loopback()
-        .then(|| state.auth.local_enrollment.reserve(&bootstrap))
+        .then(|| state.auth.local_enrollment.reserve(bootstrap.as_slice()))
         .flatten()
     else {
         return Err(AppError::Unauthorized(
@@ -153,17 +153,15 @@ fn lock_or_recover<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     }
 }
 
-fn decode_bootstrap(value: &str) -> Result<Vec<u8>, AppError> {
+fn decode_bootstrap(value: &str) -> Result<zeroize::Zeroizing<[u8; 32]>, AppError> {
     use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(value)
-        .map_err(|_| AppError::Unauthorized("local enrollment is unavailable".into()))?;
-    if bytes.len() != 32 {
-        return Err(AppError::Unauthorized(
+    let mut bytes = zeroize::Zeroizing::new([0_u8; 32]);
+    match base64::engine::general_purpose::STANDARD.decode_slice(value, bytes.as_mut_slice()) {
+        Ok(32) => Ok(bytes),
+        _ => Err(AppError::Unauthorized(
             "local enrollment is unavailable".into(),
-        ));
+        )),
     }
-    Ok(bytes)
 }
 
 fn secret_verifier(secret: &[u8]) -> [u8; 32] {

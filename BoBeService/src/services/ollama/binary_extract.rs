@@ -135,10 +135,9 @@ pub(super) fn verify_runtime(root: &Path, artifact: &OllamaArtifact) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use std::io::Write;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     use super::*;
 

@@ -71,7 +71,6 @@ pub(crate) async fn send_message_confirmed(sender: &OutboundSender, message: Mes
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, reason = "tests panic on failed preconditions")]
 
     use super::*;
 

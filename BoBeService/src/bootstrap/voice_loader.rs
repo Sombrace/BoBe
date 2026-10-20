@@ -73,7 +73,7 @@ fn load_stt(models_root: &Path) -> Option<Arc<dyn crate::speech::SttEngine>> {
         Ok(engine) => {
             let rtf = crate::speech::SttEngine::health(&engine).real_time_factor;
             info!(path = %dir.display(), provider, rtf, "voice.stt_loaded");
-            Some(Arc::new(engine) as Arc<dyn crate::speech::SttEngine>)
+            Some(Arc::new(engine))
         }
         Err(error) => {
             warn!(%error, "voice.stt_load_failed");
@@ -91,7 +91,7 @@ fn load_tts(models_root: &Path) -> Option<Arc<dyn TtsEngine>> {
     match crate::speech::providers::pocket::PocketTts::load(&dir) {
         Ok(engine) => {
             info!(path = %dir.display(), engine = "pocket_tts", language = "en", "voice.tts_loaded");
-            Some(Arc::new(engine) as Arc<dyn TtsEngine>)
+            Some(Arc::new(engine))
         }
         Err(error) => {
             warn!(%error, "voice.tts_load_failed");

@@ -62,7 +62,6 @@ async fn marker_exists(pool: &sqlx::SqlitePool) -> Result<bool, AppError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, reason = "tests panic on fixture failures")]
 mod tests {
     use super::*;
 

@@ -341,7 +341,7 @@ struct PlaybackState {
 
 fn new_playback_state() -> PlaybackState {
     PlaybackState {
-        stream_id: rand::random::<u32>().max(1),
+        stream_id: rand::random::<std::num::NonZeroU32>().get(),
         next_body_sequence: 0,
         ready_received: false,
         credit_frames: 0,
@@ -1069,7 +1069,7 @@ impl BodyGateway {
     }
 
     pub(crate) async fn preempt_pending_wake(&self) {
-        self.wake_arbitrator.preempt_pending().await;
+        self.wake_arbitrator.preempt_pending();
     }
 
     pub(crate) async fn request_capture(
@@ -2223,11 +2223,7 @@ impl BodyGateway {
             abort.abort();
         }
         if let Some(mut finished) = release.turn_finished {
-            while !*finished.borrow_and_update() {
-                if finished.changed().await.is_err() {
-                    break;
-                }
-            }
+            drop(finished.wait_for(|done| *done).await);
         }
         if let Some(adapter) = release.adapter {
             let terminal = if notify_adapter {
@@ -2506,7 +2502,7 @@ impl BodyGateway {
         let requests = crate::runtime::message_requests::MessageRequests::new(
             pool,
             Arc::clone(&session),
-            Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            tokio_util::task::TaskTracker::new(),
             Arc::clone(&session.runs),
             Arc::new(tokio::sync::RwLock::new(())),
         );
@@ -2561,7 +2557,7 @@ mod tests {
             },
             limits: super::super::capabilities::BodyLimits {
                 max_control_bytes: super::super::protocol::MAX_CONTROL_BYTES as u32,
-                max_playback_credit_ms: super::super::protocol::MAX_PLAYBACK_CREDIT_MS,
+                max_playback_credit_ms: MAX_PLAYBACK_CREDIT_MS,
             },
             interactions: Arc::new(Mutex::new(
                 super::super::interactions::InteractionState::default(),

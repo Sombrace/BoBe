@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
 
@@ -194,15 +193,14 @@ impl StreamAccumulator {
         self.success = false;
     }
 
-    async fn deliver_update<F, Fut>(
+    async fn deliver_update<F>(
         &mut self,
         update: ResponseUpdate,
         event_queue: &EventQueue,
         delivery: StreamDelivery,
         on_text_delta: &mut F,
     ) where
-        F: FnMut(String) -> Fut + Send,
-        Fut: Future<Output = ()> + Send,
+        F: AsyncFnMut(String) + Send,
     {
         let suffix = match update {
             ResponseUpdate::Append(suffix) => suffix,
@@ -258,7 +256,7 @@ impl StreamAccumulator {
     }
 }
 
-pub(crate) async fn stream_chat_delta_response<F, Fut>(
+pub(crate) async fn stream_chat_delta_response<F>(
     stream: Pin<Box<dyn Stream<Item = ChatDelta> + Send>>,
     event_queue: &EventQueue,
     msg_id: Option<&str>,
@@ -266,8 +264,7 @@ pub(crate) async fn stream_chat_delta_response<F, Fut>(
     on_text_delta: F,
 ) -> StreamResult
 where
-    F: FnMut(String) -> Fut + Send,
-    Fut: Future<Output = ()> + Send,
+    F: AsyncFnMut(String) + Send,
 {
     stream_with_deadline(
         stream,
@@ -280,7 +277,7 @@ where
     .await
 }
 
-async fn stream_with_deadline<F, Fut>(
+async fn stream_with_deadline<F>(
     mut stream: Pin<Box<dyn Stream<Item = ChatDelta> + Send>>,
     event_queue: &EventQueue,
     msg_id: Option<&str>,
@@ -289,8 +286,7 @@ async fn stream_with_deadline<F, Fut>(
     timeout: Duration,
 ) -> StreamResult
 where
-    F: FnMut(String) -> Fut + Send,
-    Fut: Future<Output = ()> + Send,
+    F: AsyncFnMut(String) + Send,
 {
     let mut state = StreamAccumulator::new(msg_id);
     let mut messages = ResponseMessages::default();
@@ -418,7 +414,6 @@ where
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
 
     use std::sync::{Arc, Mutex};
 
@@ -481,11 +476,8 @@ mod tests {
                 &queue,
                 Some("turn"),
                 delivery,
-                move |text| {
-                    let sink = Arc::clone(&sink);
-                    async move {
-                        sink.lock().expect("observer").push_str(&text);
-                    }
+                async move |text| {
+                    sink.lock().expect("observer").push_str(&text);
                 },
             )
             .await;
@@ -525,7 +517,7 @@ mod tests {
             &EventQueue::new(16),
             None,
             StreamDelivery::Sse,
-            |_| async {},
+            async |_| {},
         )
         .await;
         assert!(result.success);
@@ -545,7 +537,7 @@ mod tests {
             &EventQueue::new(16),
             None,
             StreamDelivery::Sse,
-            |_| async {},
+            async |_| {},
             Duration::from_secs(1),
         )
         .await;
@@ -566,7 +558,7 @@ mod tests {
             &queue,
             None,
             StreamDelivery::Sse,
-            |_| async {},
+            async |_| {},
             Duration::from_millis(20),
         )
         .await;
@@ -586,7 +578,7 @@ mod tests {
             &EventQueue::new(16),
             None,
             StreamDelivery::EndpointOnly,
-            |_| async {},
+            async |_| {},
         )
         .await;
         assert!(!result.success);
@@ -615,14 +607,11 @@ mod tests {
             &queue,
             Some("msg"),
             StreamDelivery::Sse,
-            move |delta| {
-                let observed = Arc::clone(&observed_for_callback);
-                async move {
-                    observed
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .push_str(&delta);
-                }
+            async move |delta| {
+                observed_for_callback
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push_str(&delta);
             },
         )
         .await;
@@ -661,7 +650,7 @@ mod tests {
             &queue,
             Some("msg"),
             StreamDelivery::EndpointOnly,
-            |_| async {},
+            async |_| {},
         )
         .await;
 
@@ -690,7 +679,7 @@ mod tests {
             &queue,
             Some("msg"),
             StreamDelivery::SseWithLiveObserver,
-            |_| async {},
+            async |_| {},
         )
         .await;
 
@@ -722,7 +711,7 @@ mod tests {
             &queue,
             Some("msg"),
             StreamDelivery::Sse,
-            |_| async {},
+            async |_| {},
         )
         .await;
 
@@ -755,7 +744,7 @@ mod tests {
             &queue,
             Some("msg"),
             StreamDelivery::Sse,
-            |_| async {},
+            async |_| {},
         )
         .await;
 
@@ -787,7 +776,7 @@ mod tests {
             &queue,
             Some("body-turn"),
             StreamDelivery::EndpointOnly,
-            |_| async {},
+            async |_| {},
         )
         .await;
 
@@ -811,7 +800,7 @@ mod tests {
             &queue,
             Some("body-turn"),
             StreamDelivery::EndpointOnly,
-            |_| async {},
+            async |_| {},
         )
         .await;
 
@@ -835,7 +824,7 @@ mod tests {
             &queue,
             Some("msg"),
             StreamDelivery::Sse,
-            |_| async {},
+            async |_| {},
         )
         .await;
 

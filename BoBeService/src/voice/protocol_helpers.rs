@@ -1,18 +1,16 @@
 use axum::extract::ws::{Message, Utf8Bytes, WebSocket};
-use futures::{SinkExt, StreamExt};
 use tracing::{debug, error};
 
 use crate::speech::protocol::{ServerMessage, VoicePhase};
 use crate::voice::output::VoiceOutput;
 
-pub(crate) async fn close_with_error(socket: WebSocket, code: &str, message: &str) {
-    let (mut tx, _rx) = socket.split();
+pub(crate) async fn close_with_error(mut socket: WebSocket, code: &str, message: &str) {
     let payload = ServerMessage::Error {
         code: code.to_string(),
         message: message.to_string(),
     };
     if let Ok(text) = serde_json::to_string(&payload) {
-        if let Err(send_error) = tx.send(Message::Text(Utf8Bytes::from(text))).await {
+        if let Err(send_error) = socket.send(Message::Text(Utf8Bytes::from(text))).await {
             debug!(error = %send_error, "voice.handshake_error_send_failed");
         }
     } else {

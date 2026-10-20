@@ -385,7 +385,7 @@ fn reject_unknown_or_duplicate(keys: &[String], allowed: &[&str]) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
+    use std::assert_matches;
 
     use super::*;
 
@@ -580,9 +580,9 @@ mod tests {
             "https://updates.example/bobe.bin",
             &format!("https://updates.example/{}", "b".repeat(4_000)),
         );
-        assert!(matches!(
+        assert_matches!(
             UpdateOffer::parse(&envelope_with(&manifest, &signature_der())),
             Err(OfferError::TooLarge(_))
-        ));
+        );
     }
 }

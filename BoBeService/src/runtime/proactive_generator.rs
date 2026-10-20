@@ -296,11 +296,15 @@ impl ProactiveGenerator {
         let task = tokio::spawn(async move {
             let _registration = registration;
             let _turn = turn;
-            let decision = tokio::select! {
-                biased;
-                () = cancellation.cancelled() => Decision::Idle,
-                decision = generator.generate_response(&target_conversation, assistant_turn_id, source, &reason) => decision,
-            };
+            let decision = cancellation
+                .run_until_cancelled(generator.generate_response(
+                    &target_conversation,
+                    assistant_turn_id,
+                    source,
+                    &reason,
+                ))
+                .await
+                .unwrap_or(Decision::Idle);
             if let Err(error) = generator.workers.cancel_run(run_id).await {
                 warn!(%error,%run_id,"proactive_generator.run_settlement_failed");
             }
@@ -550,11 +554,8 @@ impl ProactiveGenerator {
             &self.event_queue,
             Some(msg_id),
             crate::runtime::response_streamer::StreamDelivery::Sse.in_channel(channel),
-            move |delta| {
-                let conversation = Arc::clone(&conversation);
-                async move {
-                    conversation.push_assistant_stream_delta(conversation_id, &delta);
-                }
+            async move |delta| {
+                conversation.push_assistant_stream_delta(conversation_id, &delta);
             },
         )
         .await)
@@ -602,7 +603,6 @@ impl ProactiveGenerator {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on invalid fixtures")]
 mod tests {
     use std::sync::Arc;
     use std::time::Duration as StdDuration;
@@ -610,7 +610,7 @@ mod tests {
     use super::{ProactiveStreamGuard, inactivity_timeout_elapsed};
     use crate::db::{SqliteConversationRepo, test_helpers::in_memory_pool};
     use crate::runtime::conversation_service::ConversationService;
-    use chrono::{Duration, Utc};
+    use chrono::{TimeDelta, Utc};
 
     #[test]
     fn activation_decisions_require_an_explicit_boolean() {
@@ -784,7 +784,7 @@ mod tests {
         let now = Utc::now();
         assert!(!inactivity_timeout_elapsed(
             now,
-            now - Duration::seconds(29),
+            now - TimeDelta::seconds(29),
             30
         ));
     }
@@ -794,7 +794,7 @@ mod tests {
         let now = Utc::now();
         assert!(inactivity_timeout_elapsed(
             now,
-            now - Duration::seconds(30),
+            now - TimeDelta::seconds(30),
             30
         ));
     }
@@ -804,7 +804,7 @@ mod tests {
         let now = Utc::now();
         assert!(!inactivity_timeout_elapsed(
             now,
-            now + Duration::seconds(1),
+            now + TimeDelta::seconds(1),
             30
         ));
     }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use tokio::sync::Mutex;
+use std::sync::Mutex;
 use tokio::time::Instant;
 
 const WINDOW: Duration = Duration::from_millis(150);
@@ -40,7 +40,7 @@ impl WakeArbitrator {
     pub(crate) async fn submit(&self, candidate: WakeCandidate) -> WakeDecision {
         let key = candidate_key(&candidate);
         let (round_id, deadline) = {
-            let mut state = self.round.lock().await;
+            let mut state = crate::util::sync::lock(&self.round, "wake round");
             let now = Instant::now();
             if state
                 .as_ref()
@@ -65,7 +65,7 @@ impl WakeArbitrator {
             (round.id, round.deadline)
         };
         tokio::time::sleep_until(deadline).await;
-        let mut state = self.round.lock().await;
+        let mut state = crate::util::sync::lock(&self.round, "wake round");
         let Some(round) = state.as_mut() else {
             return WakeDecision::Lost;
         };
@@ -90,8 +90,8 @@ impl WakeArbitrator {
         }
     }
 
-    pub(crate) async fn preempt_pending(&self) {
-        if let Some(round) = self.round.lock().await.as_mut()
+    pub(crate) fn preempt_pending(&self) {
+        if let Some(round) = crate::util::sync::lock(&self.round, "wake round").as_mut()
             && round.deadline > Instant::now()
         {
             round.preempted = true;
@@ -149,7 +149,7 @@ mod tests {
             tokio::spawn(async move { arbiter.submit(candidate("a", 1.0)).await })
         };
         tokio::time::sleep(Duration::from_millis(10)).await;
-        arbiter.preempt_pending().await;
+        arbiter.preempt_pending();
         assert_eq!(
             pending.await.unwrap(),
             WakeDecision::ExplicitCapturePreempted

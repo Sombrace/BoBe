@@ -15,6 +15,12 @@ unreachable_pub = "warn"
 elided_lifetimes_in_paths = "warn"
 let_underscore_drop = "warn"
 dead_code_pub_in_binary = "warn"
+closure_returning_async_block = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+trivial_casts = "warn"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -28,26 +34,24 @@ print_stderr = "warn"
 clone_on_ref_ptr = "warn"
 unwrap_used = "warn"
 expect_used = "warn"
-undocumented_unsafe_blocks = "allow"
 multiple_unsafe_ops_per_block = "warn"
 exit = "warn"
-
-
-module_name_repetitions = "allow"
-missing_errors_doc = "allow"
-must_use_candidate = "allow"
-doc_markdown = "allow"
-implicit_hasher = "allow"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+as_pointer_underscore = "warn"
+mutex_integer = "warn"
+pointer_format = "warn"
+precedence_bits = "warn"
+return_and_then = "warn"
+unnecessary_rest_pattern = "warn"
 
 struct_excessive_bools = "allow"
 struct_field_names = "allow"
-missing_fields_in_debug = "allow"
 
 unused_async = "allow"
 unused_self = "allow"
 
 needless_pass_by_value = "allow"
-implicit_clone = "allow"
 unnecessary_wraps = "allow"
 
 cast_possible_truncation = "allow"
@@ -56,14 +60,10 @@ cast_precision_loss = "allow"
 cast_possible_wrap = "allow"
 cast_lossless = "allow"
 
-return_self_not_must_use = "allow"
 similar_names = "allow"
-needless_lifetimes = "allow"
 items_after_statements = "allow"
 too_many_lines = "allow"
-incompatible_msrv = "allow"
 trivially_copy_pass_by_ref = "allow"
-unnecessary_literal_bound = "allow"
 
 [profile.release]
 opt-level = 3
@@ -88,7 +88,7 @@ schemars = "1.2.3"
 secrecy = { version = "0.10", features = ["serde"] }
 sqlx = { version = "0.9.0", default-features = false, features = [
     "runtime-tokio",
-    "sqlite",
+    "sqlite-bundled",
     "uuid",
     "chrono",
     "derive",
@@ -124,7 +124,6 @@ libc = "0.2.191"
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 rand = "0.10.3"
 mdns-sd = { version = "0.21.6", default-features = false }
-dashmap = "6.2.1"
 tower = { version = "0.5.3", features = ["limit"] }
 reqwest = { version = "0.13.5", default-features = false, features = [
     "rustls-no-provider",
@@ -138,9 +137,8 @@ rustls = { version = "0.23.46", default-features = false, features = [
 ] }
 flate2 = "1.1.10"
 tar = "0.4.46"
-zstd = "0.14.3"
+zstd = { version = "0.14.3", default-features = false }
 bzip2 = "0.6.1"
-bytes = "1"
 sherpa-onnx = "=1.13.8"
 ptts = { version = "=0.4.0-rc.2", default-features = false, features = ["hf"] }
 signalsmith-stretch = "=0.1.3"

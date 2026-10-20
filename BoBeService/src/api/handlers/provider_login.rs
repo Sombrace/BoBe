@@ -90,14 +90,16 @@ pub(crate) async fn events(
         return Err(AppError::NotFound("no login session in flight".into()));
     };
     let stream = WatchStream::new(rx).map(|phase| {
-        let payload = match serde_json::to_string(&phase) {
-            Ok(payload) => payload,
-            Err(error) => {
+        let event = Event::default()
+            .event("login")
+            .json_data(&phase)
+            .unwrap_or_else(|error| {
                 tracing::error!(%error, "provider.login_event_encode_failed");
-                r#"{"phase":"failed","message":"Could not encode provider login state"}"#.into()
-            }
-        };
-        Ok::<_, Infallible>(Event::default().event("login").data(payload))
+                Event::default()
+                    .event("login")
+                    .data(r#"{"phase":"failed","message":"Could not encode provider login state"}"#)
+            });
+        Ok::<_, Infallible>(event)
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }

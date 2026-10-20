@@ -204,7 +204,7 @@ async fn commit_document(
             &deps.config,
             deps.secret_store.as_ref(),
             &body,
-            move |runtime| async move { workers.apply_mcp_config(runtime).await },
+            async move |runtime| workers.apply_mcp_config(runtime).await,
         )
         .await
     })
@@ -212,16 +212,13 @@ async fn commit_document(
     .map_err(|error| AppError::Internal(format!("MCP configuration update stopped: {error}")))?
 }
 
-async fn save_locked<F>(
+async fn save_locked(
     lock: &Mutex<()>,
     config: &ArcSwap<Config>,
     secret_store: &dyn SecretStore,
     body: &McpConfigMutationRequest,
-    reload: impl FnOnce(McpRuntimeConfig) -> F,
-) -> Result<McpConfigFile, AppError>
-where
-    F: Future<Output = Result<(), AppError>>,
-{
+    reload: impl AsyncFnOnce(McpRuntimeConfig) -> Result<(), AppError>,
+) -> Result<McpConfigFile, AppError> {
     let _guard = lock.lock().await;
     let current = config.load_full();
     let (file, servers) = parse_document(
@@ -305,11 +302,7 @@ fn restore_document(
     let document = match previous {
         Some(bytes) => crate::util::durable_fs::atomic_write_sync_mode(path, bytes, 0o600),
         None => std::fs::remove_file(path).or_else(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                Ok(())
-            } else {
-                Err(AppError::Io(error))
-            }
+            (error.kind() == std::io::ErrorKind::NotFound).ok_or(AppError::Io(error))
         }),
     };
     if let Err(error) = document {
@@ -327,11 +320,7 @@ fn restore_document(
             failures.push(format!("MCP secret {account}: {error}"));
         }
     }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(failures.join("; "))
-    }
+    failures.is_empty().ok_or_else(|| failures.join("; "))
 }
 
 fn read_document(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
@@ -514,10 +503,7 @@ fn load_mcp_file(deps: &McpConfigDeps) -> Result<(PathBuf, McpConfigFile), AppEr
 
 fn resolve_config_path(deps: &McpConfigDeps) -> Result<PathBuf, AppError> {
     let cfg = deps.config.load();
-    mcp_config::ensure_mcp_config_exists(
-        std::path::Path::new(&cfg.data_dir),
-        cfg.mcp.config_file.as_deref(),
-    )
+    mcp_config::ensure_mcp_config_exists(Path::new(&cfg.data_dir), cfg.mcp.config_file.as_deref())
 }
 
 fn blocked_and_dangerous(deps: &McpConfigDeps) -> (Vec<String>, Vec<String>) {
@@ -529,7 +515,9 @@ fn blocked_and_dangerous(deps: &McpConfigDeps) -> (Vec<String>, Vec<String>) {
 }
 
 fn redacted_json(file: &McpConfigFile) -> Result<String, AppError> {
-    Ok(format!("{}\n", serde_json::to_string_pretty(file)?))
+    let mut text = serde_json::to_string_pretty(file)?;
+    text.push('\n');
+    Ok(text)
 }
 
 fn env_metadata(entry: &McpServerEntry) -> (Vec<String>, Vec<String>) {
@@ -572,6 +560,7 @@ fn secret_accounts_in(file: &McpConfigFile) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn validate_only_reports_mcp_policy_errors_as_invalid_documents() {
@@ -585,7 +574,7 @@ mod tests {
     fn validate_only_propagates_operational_errors() {
         let error = invalid_document_response(AppError::Io(std::io::Error::other("disk")))
             .expect_err("I/O errors must propagate");
-        assert!(matches!(error, AppError::Io(_)));
+        assert_matches!(error, AppError::Io(_));
     }
 
     #[test]
@@ -594,7 +583,7 @@ mod tests {
             let raw = r#"{"mcpServers":{"test":{"command":"server","timeout_seconds":$TIMEOUT}}}"#
                 .replace("$TIMEOUT", timeout);
             let error = parse_document(&raw, &[], &[]).expect_err("invalid timeout");
-            assert!(matches!(error, AppError::Validation(_)));
+            assert_matches!(error, AppError::Validation(_));
             assert!(error.to_string().contains("timeout_seconds"));
         }
     }
@@ -607,7 +596,7 @@ mod tests {
 
         let error = parse_document(&raw.replace("$ENABLED", "true"), &[], &[])
             .expect_err("unresolvable enabled server");
-        assert!(matches!(error, AppError::Validation(message) if message.contains(&variable)));
+        assert_matches!(error, AppError::Validation(message) if message.contains(&variable));
 
         let (file, servers) = parse_document(&raw.replace("$ENABLED", "false"), &[], &[])
             .expect("disabled servers are not resolved");
@@ -756,8 +745,10 @@ mod tests {
     async fn a_save_queued_behind_an_mcp_switch_applies_the_switched_state() {
         let root = std::env::temp_dir().join(format!("bobe-mcp-switch-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
-        let mut initial = Config::default();
-        initial.data_dir = root.to_string_lossy().into_owned();
+        let mut initial = Config {
+            data_dir: root.to_string_lossy().into_owned(),
+            ..Config::default()
+        };
         initial.mcp.enabled = true;
         let config = Arc::new(ArcSwap::from_pointee(initial));
         let lock = Arc::new(Mutex::new(()));
@@ -779,9 +770,9 @@ mod tests {
                     &config,
                     &crate::secrets::memory::MemorySecretStore::holding([]),
                     &body,
-                    move |runtime| {
+                    async move |runtime: McpRuntimeConfig| {
                         *reloaded.lock().unwrap() = Some(runtime.servers.len());
-                        async { Ok(()) }
+                        Ok(())
                     },
                 )
                 .await
@@ -806,6 +797,6 @@ mod tests {
     fn a_resolved_blocked_command_is_rejected_before_saving() {
         let raw = r#"{"mcpServers":{"test":{"command":"${BOBE_TEST_COMMAND:-rm}"}}}"#;
         let error = parse_document(raw, &[], &[]).expect_err("blocked after resolution");
-        assert!(matches!(error, AppError::Validation(_)));
+        assert_matches!(error, AppError::Validation(_));
     }
 }
