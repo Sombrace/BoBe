@@ -3289,14 +3289,17 @@ mod tests {
             "services": {"database": "ok", "body_link": "error"},
         });
         assert_eq!(failed_services(&liveness), ["body_link"]);
-        assert!(
+        assert_eq!(
             failed_services(&serde_json::json!({
                 "status": "healthy",
                 "services": {"database": "ok", "body_link": "disabled"},
-            }))
-            .is_empty()
+            })),
+            Vec::<String>::new()
         );
-        assert!(failed_services(&serde_json::Value::Null).is_empty());
+        assert_eq!(
+            failed_services(&serde_json::Value::Null),
+            Vec::<String>::new()
+        );
         let report = serde_json::json!({
             "config": {"valid": true},
             "runtime": {"readiness": {"status": "ready"}},

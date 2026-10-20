@@ -169,13 +169,11 @@ unsafe fn input_slice<'a>(data: *const u8, len: usize) -> Option<&'a [u8]> {
 }
 
 fn into_buffer(bytes: Vec<u8>) -> BobePairingBuffer {
-    let mut bytes = bytes.into_boxed_slice();
-    let buffer = BobePairingBuffer {
-        data: bytes.as_mut_ptr(),
-        len: bytes.len(),
-    };
-    std::mem::forget(bytes);
-    buffer
+    let len = bytes.len();
+    BobePairingBuffer {
+        data: Box::into_raw(bytes.into_boxed_slice()).cast::<u8>(),
+        len,
+    }
 }
 
 fn map_error(error: &PairingError) -> BobePairingStatus {

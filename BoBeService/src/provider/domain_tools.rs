@@ -558,7 +558,7 @@ mod tests {
             .invoke(GOAL_CREATE, json!({"title":"Too urgent","priority":9}))
             .await;
         assert!(!invalid.success);
-        assert!(goals.list_all().await.unwrap().is_empty());
+        assert_eq!(goals.list_all().await.unwrap(), []);
         drop(tokio::fs::remove_dir_all(root).await);
     }
 }

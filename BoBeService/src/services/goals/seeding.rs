@@ -90,14 +90,14 @@ mod tests {
         let (root, pool, service) = fixture().await;
         seed_sample_goal(&pool, &service).await.unwrap();
         assert!(marker_exists(&pool).await.unwrap());
-        assert!(service.list_active().await.unwrap().is_empty());
+        assert_eq!(service.list_active().await.unwrap(), []);
         let seeded = service.list_all().await.unwrap();
         assert_eq!(seeded.len(), 1);
         assert_eq!(seeded[0].id, starter_goal_id());
         assert_eq!(seeded[0].status, crate::models::types::GoalStatus::Paused);
         assert_eq!(service.delete_all().await.unwrap(), 1);
         seed_sample_goal(&pool, &service).await.unwrap();
-        assert!(service.list_all().await.unwrap().is_empty());
+        assert_eq!(service.list_all().await.unwrap(), []);
         pool.close().await;
         tokio::fs::remove_dir_all(root).await.unwrap();
     }
@@ -143,7 +143,7 @@ mod tests {
     async fn a_restart_before_the_goal_was_published_seeds_it() {
         let (root, pool, service) = fixture().await;
         assert!(!marker_exists(&pool).await.unwrap());
-        assert!(service.list_all().await.unwrap().is_empty());
+        assert_eq!(service.list_all().await.unwrap(), []);
 
         seed_sample_goal(&pool, &service).await.unwrap();
 
@@ -166,7 +166,7 @@ mod tests {
 
         assert!(service.delete(starter_goal_id()).await.unwrap());
         seed_sample_goal(&pool, &service).await.unwrap();
-        assert!(service.list_all().await.unwrap().is_empty());
+        assert_eq!(service.list_all().await.unwrap(), []);
         pool.close().await;
         tokio::fs::remove_dir_all(root).await.unwrap();
     }

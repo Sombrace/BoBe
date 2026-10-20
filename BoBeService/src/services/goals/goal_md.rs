@@ -322,7 +322,7 @@ mod tests {
         assert_eq!(doc.title, "Practice piano");
         assert_eq!(doc.id, id);
         assert_eq!(doc.priority, 1);
-        assert!(doc.summary.is_empty());
+        assert_eq!(doc.summary, "");
     }
 
     #[test]

@@ -350,7 +350,7 @@ mod tests {
         assert!(aborted.overlap.is_some());
         assert!(session.current_turn.is_none());
         assert!(session.pending_barge_in.is_none());
-        assert!(session.last_partial_text.is_empty());
+        assert_eq!(session.last_partial_text, "");
         assert_eq!(session.last_acked_played_ms, 0);
         assert!(!session.muted);
         assert!(session.abort_turn().is_none());
@@ -381,7 +381,7 @@ mod tests {
         session.last_partial_text = "yeah".into();
         session.begin_turn(turn("voice_two"));
         assert!(session.pending_barge_in.is_none());
-        assert!(session.last_partial_text.is_empty());
+        assert_eq!(session.last_partial_text, "");
     }
 
     #[test]

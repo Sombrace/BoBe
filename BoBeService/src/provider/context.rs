@@ -231,7 +231,7 @@ mod tests {
             Arc::clone(&memory),
             DomainTools::test_default(memory, skills, false, false),
         );
-        assert!(disabled.body(WorkerClass::Chat).await.unwrap().is_empty());
+        assert_eq!(disabled.body(WorkerClass::Chat).await.unwrap(), "");
         drop(tokio::fs::remove_dir_all(root).await);
     }
 

@@ -120,16 +120,19 @@ mod tests {
     #[test]
     fn a_sentence_before_a_pause_is_spoken_without_waiting_for_more_text() {
         let mut pipeline = SentencePipeline::new();
-        assert!(pipeline.feed("Let me **check** that.").is_empty());
+        assert_eq!(
+            pipeline.feed("Let me **check** that."),
+            Vec::<String>::new()
+        );
         assert_eq!(pipeline.settle(), vec!["Let me check that."]);
-        assert!(pipeline.feed(" Found it.").is_empty());
+        assert_eq!(pipeline.feed(" Found it."), Vec::<String>::new());
         assert_eq!(pipeline.flush(), vec!["Found it."]);
     }
 
     #[test]
     fn flush_returns_unterminated_tail() {
         let mut pipeline = SentencePipeline::new();
-        assert!(pipeline.feed("Still speaking").is_empty());
+        assert_eq!(pipeline.feed("Still speaking"), Vec::<String>::new());
         assert_eq!(pipeline.flush(), vec!["Still speaking"]);
     }
 }

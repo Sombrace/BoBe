@@ -121,7 +121,7 @@ mod tests {
     fn nothing_is_heard_before_the_first_sentence_ends() {
         let script = script(&[("One.", 10), ("Two.", 25)]);
         let reply = script.heard_until(0).expect("interrupted");
-        assert!(reply.heard.is_empty());
+        assert_eq!(reply.heard, "");
         assert_eq!(reply.cut_off.as_deref(), Some("One."));
     }
 

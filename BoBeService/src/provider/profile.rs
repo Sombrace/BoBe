@@ -66,7 +66,7 @@ impl ProfileId {
     }
 
     pub(crate) fn from_static(value: &'static str) -> Self {
-        debug_assert!(!value.is_empty());
+        debug_assert_ne!(value, "");
         Self(value.to_owned())
     }
 

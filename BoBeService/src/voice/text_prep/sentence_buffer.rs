@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn a_sentence_is_emitted_once_the_next_one_begins() {
         let mut b = SentenceBuffer::new();
-        assert!(b.feed("Hello world.").is_empty());
+        assert_eq!(b.feed("Hello world."), []);
         assert_eq!(texts(b.feed(" Next")), vec!["Hello world."]);
         assert_eq!(texts(b.flush()), vec!["Next"]);
     }
@@ -226,10 +226,10 @@ mod tests {
     #[test]
     fn a_finished_sentence_is_released_when_the_stream_pauses() {
         let mut b = SentenceBuffer::new();
-        assert!(b.feed("Let me check that.").is_empty());
+        assert_eq!(b.feed("Let me check that."), []);
         assert_eq!(texts(b.settle()), vec!["Let me check that."]);
-        assert!(b.settle().is_empty());
-        assert!(b.feed(" Here it is.").is_empty());
+        assert_eq!(b.settle(), []);
+        assert_eq!(b.feed(" Here it is."), []);
         assert_eq!(texts(b.flush()), vec!["Here it is."]);
     }
 
@@ -237,7 +237,7 @@ mod tests {
     fn a_pause_does_not_release_unfinished_text() {
         for unfinished in ["Still going", "Talk to Dr.", "1.", "Wait, e.g."] {
             let mut b = SentenceBuffer::new();
-            assert!(b.feed(unfinished).is_empty());
+            assert_eq!(b.feed(unfinished), []);
             assert!(b.settle().is_empty(), "{unfinished}");
         }
     }
@@ -245,8 +245,8 @@ mod tests {
     #[test]
     fn buffers_text_without_terminator() {
         let mut b = SentenceBuffer::new();
-        assert!(b.feed("Hello world").is_empty());
-        assert!(b.feed(", and more.").is_empty());
+        assert_eq!(b.feed("Hello world"), []);
+        assert_eq!(b.feed(", and more."), []);
         assert_eq!(texts(b.flush()), vec!["Hello world, and more."]);
     }
 
@@ -298,9 +298,9 @@ mod tests {
             vec![true, false, true]
         );
         let mut b = SentenceBuffer::new();
-        assert!(b.feed("One.").is_empty());
+        assert_eq!(b.feed("One."), []);
         assert_eq!(b.settle().len(), 1);
-        assert!(b.feed("\n2. Two.").is_empty());
+        assert_eq!(b.feed("\n2. Two."), []);
         assert!(b.flush().iter().all(|sentence| sentence.starts_line));
     }
 
@@ -399,12 +399,12 @@ mod tests {
     #[test]
     fn flush_drains_unterminated_remainder() {
         let mut b = SentenceBuffer::new();
-        assert!(b.feed("One sentence remaining no terminator").is_empty());
+        assert_eq!(b.feed("One sentence remaining no terminator"), []);
         assert_eq!(
             texts(b.flush()),
             vec!["One sentence remaining no terminator"]
         );
-        assert!(b.flush().is_empty());
+        assert_eq!(b.flush(), []);
     }
 
     #[test]
