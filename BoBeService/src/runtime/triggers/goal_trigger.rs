@@ -147,7 +147,7 @@ mod tests {
         let start = chrono::Utc::now();
         for hour in 0..IDLE_REVIEW_LIMIT {
             trigger
-                .fire_at(start + chrono::Duration::hours(i64::from(hour)))
+                .fire_at(start + chrono::TimeDelta::hours(i64::from(hour)))
                 .await;
             let queued = jobs
                 .list()
@@ -172,7 +172,7 @@ mod tests {
 
         for hour in IDLE_REVIEW_LIMIT..IDLE_REVIEW_LIMIT + 5 {
             trigger
-                .fire_at(start + chrono::Duration::hours(i64::from(hour)))
+                .fire_at(start + chrono::TimeDelta::hours(i64::from(hour)))
                 .await;
         }
         assert_eq!(jobs.list().await.unwrap().len(), reviewed);
@@ -185,7 +185,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        trigger.fire_at(start + chrono::Duration::hours(24)).await;
+        trigger.fire_at(start + chrono::TimeDelta::hours(24)).await;
         assert_eq!(jobs.list().await.unwrap().len(), reviewed + 1);
         pool.close().await;
         tokio::fs::remove_dir_all(root).await.unwrap();
@@ -272,7 +272,7 @@ mod tests {
             .await
             .unwrap();
         trigger
-            .fire_at(chrono::Utc::now() + chrono::Duration::hours(1))
+            .fire_at(chrono::Utc::now() + chrono::TimeDelta::hours(1))
             .await;
         assert_eq!(jobs.get(queued[0].id).await.unwrap().attempt, 2);
         jobs.cancel(queued[0].id).await.unwrap();

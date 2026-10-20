@@ -265,7 +265,7 @@ impl AgentJobRepo {
                     .join(", ")
             )
         };
-        let expiry = Utc::now() + chrono::Duration::seconds(i64::from(input.expires_seconds));
+        let expiry = Utc::now() + chrono::TimeDelta::seconds(i64::from(input.expires_seconds));
         sqlx::query("INSERT INTO owner_inputs (id,source_key,origin_run_id,job_id,channel_id,goal_id,kind,question,action,prompt,choices_json,definition_json,expires_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)")
             .bind(id).bind(source).bind(origin.run_id).bind(origin.job_id).bind(origin.channel).bind(origin.goal_id)
             .bind(input.kind).bind(&input.question).bind(&input.action).bind(prompt).bind(serde_json::to_string(&input.choices)?)
@@ -440,7 +440,7 @@ impl AgentJobRepo {
              AND p.turn_id=(SELECT t.id FROM conversation_turns t JOIN conversations c ON c.id=t.conversation_id WHERE c.channel_id=?1 ORDER BY t.rowid DESC LIMIT 1)
              AND EXISTS(SELECT 1 FROM conversation_turns t WHERE t.id=p.turn_id AND t.role='assistant' AND t.is_complete=1)
              ORDER BY p.presented_at DESC LIMIT 1",
-        ).bind(channel).bind(timestamp(received_at)).bind(timestamp(received_at-chrono::Duration::minutes(2))).fetch_optional(&self.pool).await?;
+        ).bind(channel).bind(timestamp(received_at)).bind(timestamp(received_at-chrono::TimeDelta::minutes(2))).fetch_optional(&self.pool).await?;
         let Some(input) = input else {
             return Ok(None);
         };
@@ -743,7 +743,7 @@ mod tests {
             .ask_owner("question", origin(run, None), question())
             .await
             .unwrap();
-        let received_before_question = Utc::now() - chrono::Duration::seconds(1);
+        let received_before_question = Utc::now() - chrono::TimeDelta::seconds(1);
         assert!(
             repo.bind_presented_input(ConversationChannelId::OWNER, "yes", Utc::now())
                 .await

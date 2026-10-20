@@ -176,7 +176,7 @@ fn duration_until_next(fire_at: NaiveTime, now_utc: DateTime<Utc>) -> Duration {
             Local
                 .from_local_datetime(&tomorrow.and_time(fire_at))
                 .single()
-                .unwrap_or(now_local + chrono::Duration::hours(24))
+                .unwrap_or(now_local + chrono::TimeDelta::hours(24))
         }
     };
 

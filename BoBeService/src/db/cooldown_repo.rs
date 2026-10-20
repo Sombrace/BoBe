@@ -128,7 +128,7 @@ impl SqliteCooldownRepo {
 mod tests {
     use super::*;
     use crate::db::test_helpers::in_memory_pool;
-    use chrono::Duration as ChronoDuration;
+    use chrono::TimeDelta;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -252,11 +252,11 @@ mod tests {
     async fn concurrent_updates_leave_the_cache_equal_to_sqlite() {
         let pool = in_memory_pool().await;
         let repo = Arc::new(SqliteCooldownRepo::new(pool.clone()));
-        let start = Utc::now() - ChronoDuration::minutes(60);
+        let start = Utc::now() - TimeDelta::minutes(60);
         let updates = (0..24)
             .map(|index| {
                 let repo = Arc::clone(&repo);
-                let timestamp = start + ChronoDuration::seconds(index);
+                let timestamp = start + TimeDelta::seconds(index);
                 tokio::spawn(async move {
                     if index % 2 == 0 {
                         repo.update_last_engagement(timestamp).await
@@ -307,7 +307,7 @@ mod tests {
         let pool = in_memory_pool().await;
         let repo = SqliteCooldownRepo::new(pool);
         repo.load_or_create().await.expect("seed cooldown state");
-        let past = Utc::now() - ChronoDuration::minutes(10);
+        let past = Utc::now() - TimeDelta::minutes(10);
         repo.update_last_engagement(past)
             .await
             .expect("record old engagement");

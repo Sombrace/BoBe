@@ -610,7 +610,7 @@ mod tests {
     use super::{ProactiveStreamGuard, inactivity_timeout_elapsed};
     use crate::db::{SqliteConversationRepo, test_helpers::in_memory_pool};
     use crate::runtime::conversation_service::ConversationService;
-    use chrono::{Duration, Utc};
+    use chrono::{TimeDelta, Utc};
 
     #[test]
     fn activation_decisions_require_an_explicit_boolean() {
@@ -784,7 +784,7 @@ mod tests {
         let now = Utc::now();
         assert!(!inactivity_timeout_elapsed(
             now,
-            now - Duration::seconds(29),
+            now - TimeDelta::seconds(29),
             30
         ));
     }
@@ -794,7 +794,7 @@ mod tests {
         let now = Utc::now();
         assert!(inactivity_timeout_elapsed(
             now,
-            now - Duration::seconds(30),
+            now - TimeDelta::seconds(30),
             30
         ));
     }
@@ -804,7 +804,7 @@ mod tests {
         let now = Utc::now();
         assert!(!inactivity_timeout_elapsed(
             now,
-            now + Duration::seconds(1),
+            now + TimeDelta::seconds(1),
             30
         ));
     }

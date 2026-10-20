@@ -373,8 +373,5 @@ async fn pump(
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| {
-        tracing::error!("owned process registry mutex was poisoned");
-        poisoned.into_inner()
-    })
+    crate::util::sync::lock(mutex, "owned process registry")
 }

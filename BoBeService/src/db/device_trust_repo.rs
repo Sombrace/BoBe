@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, SqlitePool};
 use uuid::Uuid;
@@ -248,7 +248,7 @@ impl DeviceTrustRepo {
         let scopes = self.active_scopes(&record.endpoint_id).await?;
         if record
             .last_used_at
-            .is_none_or(|used| used <= Utc::now() - Duration::minutes(5))
+            .is_none_or(|used| used <= Utc::now() - TimeDelta::minutes(5))
         {
             sqlx::query(
                 "UPDATE endpoint_credentials

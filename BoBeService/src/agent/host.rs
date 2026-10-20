@@ -1264,10 +1264,7 @@ async fn read_line(
 }
 
 fn lock<T>(mutex: &SyncMutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| {
-        tracing::error!("pi state mutex was poisoned");
-        poisoned.into_inner()
-    })
+    crate::util::sync::lock(mutex, "pi state")
 }
 
 #[cfg(test)]

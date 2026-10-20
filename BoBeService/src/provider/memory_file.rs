@@ -1,9 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::SystemTime;
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::error::AppError;
@@ -87,7 +86,7 @@ impl MemoryFile {
         }) {
             return Ok(());
         }
-        let now: DateTime<Utc> = SystemTime::now().into();
+        let now = Utc::now();
         let date = now.format("%Y-%m-%d %H:%M");
         let line = format!("- {date} — {entry}");
         let new_body = upsert_bullet(&body, section, &line);

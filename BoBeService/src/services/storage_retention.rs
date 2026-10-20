@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use chrono::{Duration, Utc};
+use chrono::{TimeDelta, Utc};
 use sqlx::SqlitePool;
 use tracing::{info, warn};
 
@@ -44,7 +44,7 @@ pub(crate) async fn run(pool: &SqlitePool, config: &Config) {
 }
 
 async fn prune_closed_conversations(pool: &SqlitePool, config: &Config) -> Result<u64, AppError> {
-    let cutoff = Utc::now() - Duration::days(i64::from(config.conversation.closed_retention_days));
+    let cutoff = Utc::now() - TimeDelta::days(i64::from(config.conversation.closed_retention_days));
     let keep_count = i64::from(config.conversation.closed_retention_count);
     let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await?;
     let candidate_ids: Vec<(Vec<u8>,)> = sqlx::query_as(
@@ -106,7 +106,7 @@ fn prune_daily_logs(config: &crate::config::LoggingConfig) -> std::io::Result<(u
         Err(error) => return Err(error),
     };
     let today = Utc::now().date_naive();
-    let cutoff = today - Duration::days(i64::from(config.retention_days));
+    let cutoff = today - TimeDelta::days(i64::from(config.retention_days));
     let owned_prefix = format!("{prefix}.");
     let owned_suffix = format!(".{}", crate::util::logging::DAILY_LOG_SUFFIX);
     let mut files = Vec::new();
@@ -190,7 +190,7 @@ mod tests {
     #[tokio::test]
     async fn pruning_is_bounded_and_preserves_active() {
         let pool = test_pool().await;
-        let old = Utc::now() - Duration::days(365);
+        let old = Utc::now() - TimeDelta::days(365);
         let active = insert_conversation(&pool, "active", old).await;
         for _ in 0..105 {
             insert_conversation(&pool, "closed", old).await;
@@ -230,7 +230,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        insert_conversation(&pool, "closed", Utc::now() - Duration::days(365)).await;
+        insert_conversation(&pool, "closed", Utc::now() - TimeDelta::days(365)).await;
         let mut writer = pool.begin().await.unwrap();
         sqlx::query("INSERT INTO conversations (id) VALUES (?1)")
             .bind(uuid::Uuid::new_v4())
@@ -257,7 +257,7 @@ mod tests {
     #[tokio::test]
     async fn pruning_preserves_executable_jobs_and_tombstones_terminal_requests() {
         let pool = test_pool().await;
-        let old = Utc::now() - Duration::days(365);
+        let old = Utc::now() - TimeDelta::days(365);
         for status in ["queued", "running", "completed", "failed"] {
             sqlx::query(
                 "INSERT INTO message_requests \
@@ -310,7 +310,7 @@ mod tests {
             .into_string()
             .unwrap();
         assert_eq!(current, format!("bobe.{today}.log"));
-        let old = (Utc::now().date_naive() - Duration::days(30)).to_string();
+        let old = (Utc::now().date_naive() - TimeDelta::days(30)).to_string();
         std::fs::write(
             directory.join(current.replace(&today, &old)),
             vec![0_u8; 10],

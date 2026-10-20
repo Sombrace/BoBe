@@ -240,7 +240,7 @@ mod tests {
         let restarted = AgentJobRepo::new(pool.clone());
         assert!(
             !restarted
-                .goal_review_due(now + chrono::Duration::minutes(30), 3600)
+                .goal_review_due(now + chrono::TimeDelta::minutes(30), 3600)
                 .await
                 .unwrap()
         );
@@ -250,7 +250,7 @@ mod tests {
                     work(goal),
                     &route(),
                     3600,
-                    now + chrono::Duration::minutes(30)
+                    now + chrono::TimeDelta::minutes(30)
                 )
                 .await
                 .unwrap(),
@@ -258,7 +258,12 @@ mod tests {
         );
         assert_eq!(
             restarted
-                .review_goals(work(goal), &route(), 3600, now + chrono::Duration::hours(5))
+                .review_goals(
+                    work(goal),
+                    &route(),
+                    3600,
+                    now + chrono::TimeDelta::hours(5)
+                )
                 .await
                 .unwrap(),
             1
@@ -291,9 +296,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            repo.review_goals(work(goal), &route(), 3600, now + chrono::Duration::hours(2))
-                .await
-                .unwrap(),
+            repo.review_goals(
+                work(goal),
+                &route(),
+                3600,
+                now + chrono::TimeDelta::hours(2)
+            )
+            .await
+            .unwrap(),
             1
         );
         let next = repo

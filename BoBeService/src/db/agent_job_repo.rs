@@ -125,7 +125,7 @@ impl AgentJobRepo {
         seconds: u32,
     ) -> Result<(), AppError> {
         let due =
-            chrono::Utc::now() + chrono::Duration::seconds(i64::from(seconds.clamp(30, 3600)));
+            chrono::Utc::now() + chrono::TimeDelta::seconds(i64::from(seconds.clamp(30, 3600)));
         sqlx::query("UPDATE agent_jobs SET delivery_status='pending',delivery_after=?3 WHERE id=?1 AND delivery_id=?2 AND delivery_status IN ('pending','delivering')")
             .bind(id).bind(delivery_id).bind(due.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)).execute(&self.pool).await?;
         Ok(())

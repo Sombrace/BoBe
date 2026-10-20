@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex as SyncMutex, MutexGuard};
 
-use dashmap::DashMap;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 
@@ -19,10 +19,14 @@ struct StreamingAssistantTurn {
 pub(crate) struct ConversationService {
     repo: Arc<SqliteConversationRepo>,
     lifecycle_lock: Mutex<()>,
-    streaming_assistant_turns: DashMap<ConversationId, StreamingAssistantTurn>,
+    streaming_assistant_turns: SyncMutex<HashMap<ConversationId, StreamingAssistantTurn>>,
 }
 
 impl ConversationService {
+    fn drafts(&self) -> MutexGuard<'_, HashMap<ConversationId, StreamingAssistantTurn>> {
+        crate::util::sync::lock(&self.streaming_assistant_turns, "streaming assistant turns")
+    }
+
     pub(crate) async fn acknowledge_presentation(
         &self,
         turn: ConversationTurnId,
@@ -42,7 +46,7 @@ impl ConversationService {
         Self {
             repo,
             lifecycle_lock: Mutex::new(()),
-            streaming_assistant_turns: DashMap::new(),
+            streaming_assistant_turns: SyncMutex::new(HashMap::new()),
         }
     }
 
@@ -139,7 +143,7 @@ impl ConversationService {
             String::new(),
             false,
         );
-        let replaced = self.streaming_assistant_turns.insert(
+        let replaced = self.drafts().insert(
             conversation_id,
             StreamingAssistantTurn {
                 turn,
@@ -159,7 +163,7 @@ impl ConversationService {
             return;
         }
 
-        if let Some(mut draft) = self.streaming_assistant_turns.get_mut(&conversation_id) {
+        if let Some(draft) = self.drafts().get_mut(&conversation_id) {
             draft.turn.append_content(delta);
         }
     }
@@ -171,7 +175,7 @@ impl ConversationService {
         is_complete: bool,
     ) -> Result<Option<ConversationTurn>, AppError> {
         let _guard = self.lifecycle_lock.lock().await;
-        let Some((_, mut draft)) = self.streaming_assistant_turns.remove(&conversation_id) else {
+        let Some(mut draft) = self.drafts().remove(&conversation_id) else {
             return Ok(None);
         };
 
@@ -199,7 +203,7 @@ impl ConversationService {
         conversation_id: ConversationId,
     ) -> Result<(), AppError> {
         let _guard = self.lifecycle_lock.lock().await;
-        self.streaming_assistant_turns.remove(&conversation_id);
+        self.drafts().remove(&conversation_id);
         self.repo.delete_if_empty_pending(conversation_id).await?;
         Ok(())
     }
@@ -210,10 +214,10 @@ impl ConversationService {
     ) -> Result<(), AppError> {
         let _guard = self.lifecycle_lock.lock().await;
         let conversation_id = self
-            .streaming_assistant_turns
+            .drafts()
             .iter()
-            .find(|entry| entry.turn.id == turn_id)
-            .map(|entry| *entry.key());
+            .find(|(_, draft)| draft.turn.id == turn_id)
+            .map(|(conversation_id, _)| *conversation_id);
         if let Some(conversation_id) = conversation_id {
             self.settle_interrupted_stream_locked(conversation_id)
                 .await?;
@@ -225,7 +229,7 @@ impl ConversationService {
         &self,
         conversation_id: ConversationId,
     ) -> Result<(), AppError> {
-        let Some((_, mut draft)) = self.streaming_assistant_turns.remove(&conversation_id) else {
+        let Some(mut draft) = self.drafts().remove(&conversation_id) else {
             return Ok(());
         };
         if draft.turn.content.is_empty() {
@@ -260,7 +264,7 @@ impl ConversationService {
         conversation_id: ConversationId,
     ) -> Result<(), AppError> {
         let Some(snapshot) = self
-            .streaming_assistant_turns
+            .drafts()
             .get(&conversation_id)
             .map(|draft| (draft.turn.clone(), draft.persisted))
         else {
@@ -278,7 +282,7 @@ impl ConversationService {
                 .await?;
         } else {
             self.repo.add_turn(&turn).await?;
-            if let Some(mut draft) = self.streaming_assistant_turns.get_mut(&conversation_id)
+            if let Some(draft) = self.drafts().get_mut(&conversation_id)
                 && draft.turn.id == turn.id
             {
                 draft.persisted = true;
@@ -314,10 +318,7 @@ impl ConversationService {
     ) -> Result<Option<usize>, AppError> {
         let _guard = self.lifecycle_lock.lock().await;
 
-        if self
-            .streaming_assistant_turns
-            .contains_key(&conversation_id)
-        {
+        if self.drafts().contains_key(&conversation_id) {
             return Ok(None);
         }
 

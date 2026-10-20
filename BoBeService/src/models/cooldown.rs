@@ -1,10 +1,10 @@
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 
 use super::ids::CooldownId;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CooldownInfo {
-    pub(crate) remaining: Duration,
+    pub(crate) remaining: TimeDelta,
     pub(crate) cooldown_type: String,
 }
 
@@ -37,7 +37,7 @@ impl Cooldown {
         let now = Utc::now();
 
         if let Some(last_response) = self.last_user_response {
-            let extended = Duration::minutes(extended_minutes);
+            let extended = TimeDelta::try_minutes(extended_minutes).unwrap_or(TimeDelta::MAX);
             let elapsed = now - last_response;
             if elapsed < extended {
                 return Some(CooldownInfo {
@@ -48,7 +48,7 @@ impl Cooldown {
         }
 
         if let Some(last_eng) = self.last_engagement {
-            let base = Duration::minutes(base_minutes);
+            let base = TimeDelta::try_minutes(base_minutes).unwrap_or(TimeDelta::MAX);
             let elapsed = now - last_eng;
             if elapsed < base {
                 return Some(CooldownInfo {

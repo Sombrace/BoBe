@@ -612,7 +612,7 @@ mod tests {
         let base = Utc::now();
         for index in 0..5 {
             let mut turn = ConversationTurn::new(conv.id, TurnRole::User, format!("turn-{index}"));
-            turn.created_at = base + chrono::Duration::seconds(index);
+            turn.created_at = base + chrono::TimeDelta::seconds(index);
             turn.updated_at = turn.created_at;
             repo.add_turn(&turn).await.expect("add turn");
         }
