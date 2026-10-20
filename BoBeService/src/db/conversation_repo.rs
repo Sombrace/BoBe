@@ -610,7 +610,7 @@ mod tests {
         let pool = in_memory_pool().await;
         let repo = SqliteConversationRepo::new(pool);
         let conv = repo.save(&Conversation::new_active()).await.expect("save");
-        let base = chrono::Utc::now();
+        let base = Utc::now();
         for index in 0..5 {
             let mut turn = ConversationTurn::new(conv.id, TurnRole::User, format!("turn-{index}"));
             turn.created_at = base + chrono::Duration::seconds(index);

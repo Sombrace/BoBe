@@ -165,7 +165,6 @@ fn prune_daily_logs(config: &crate::config::LoggingConfig) -> std::io::Result<(u
 )]
 mod tests {
     use super::*;
-    use chrono::{Duration, Utc};
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn test_pool() -> SqlitePool {

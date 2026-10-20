@@ -96,6 +96,6 @@ pub(crate) fn daily_log_target(config: &crate::config::LoggingConfig) -> Option<
     let directory = file_path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
-        .map_or_else(|| PathBuf::from("."), std::path::Path::to_path_buf);
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
     Some((directory, file_name))
 }

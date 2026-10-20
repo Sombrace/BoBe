@@ -292,7 +292,7 @@ async fn run_with_config(
     let provider_login =
         crate::agent::auth::LoginCoordinator::new(&agent, authority_lifecycle.maintenance_flag());
 
-    let initialization = Arc::new(arc_swap::ArcSwap::from_pointee(initialization));
+    let initialization = Arc::new(ArcSwap::from_pointee(initialization));
     let background = crate::runtime::background_work::BackgroundWork::new(
         agent_jobs,
         Arc::clone(&workers),

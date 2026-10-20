@@ -647,7 +647,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             )
             .await?;
             api::handlers::conversation::recover_message_requests(&state).await?;
-            let app = api::router::build_router(std::sync::Arc::clone(&state), shutdown.clone());
+            let app = api::router::build_router(Arc::clone(&state), shutdown.clone());
 
             let mut tasks = spawn_background_tasks(&state, &shutdown);
 
@@ -2311,7 +2311,7 @@ fn normalize_config_path(
     config_root: &std::path::Path,
     label: &str,
 ) -> Result<std::path::PathBuf, error::AppError> {
-    let expanded = crate::util::paths::expand_tilde(&path.to_string_lossy());
+    let expanded = util::paths::expand_tilde(&path.to_string_lossy());
     let absolute = if expanded.is_absolute() {
         expanded
     } else {
@@ -2974,7 +2974,7 @@ async fn wait_for_shutdown_signal() {
 }
 
 fn spawn_background_tasks(
-    state: &std::sync::Arc<app_state::AppState>,
+    state: &Arc<app_state::AppState>,
     shutdown: &tokio_util::sync::CancellationToken,
 ) -> tokio::task::JoinSet<&'static str> {
     let mut set = tokio::task::JoinSet::new();
@@ -3015,7 +3015,7 @@ fn spawn_background_tasks(
     }
 
     {
-        let session = std::sync::Arc::clone(&state.runtime.runtime_session);
+        let session = Arc::clone(&state.runtime.runtime_session);
         let initialization = Arc::clone(&state.infra.initialization);
         let token = shutdown.clone();
         set.spawn(async move {
@@ -3034,9 +3034,9 @@ fn spawn_background_tasks(
 
     if state.config().memory.enabled {
         let scheduler = runtime::consolidation::ConsolidationScheduler::new(
-            std::sync::Arc::clone(&state.runtime.workers),
-            std::sync::Arc::clone(&state.runtime.memory_file),
-            std::sync::Arc::clone(&state.runtime.personal_data_lifecycle),
+            Arc::clone(&state.runtime.workers),
+            Arc::clone(&state.runtime.memory_file),
+            Arc::clone(&state.runtime.personal_data_lifecycle),
         );
         let token = shutdown.clone();
         let initialization = Arc::clone(&state.infra.initialization);
@@ -3050,13 +3050,13 @@ fn spawn_background_tasks(
 
     {
         let pool = state.infra.db.clone();
-        let config = std::sync::Arc::clone(&state.infra.config);
+        let config = Arc::clone(&state.infra.config);
         let token = shutdown.clone();
         set.spawn(async move {
             loop {
-                crate::services::storage_retention::run(&pool, &config.load()).await;
+                services::storage_retention::run(&pool, &config.load()).await;
                 tokio::select! {
-                    () = tokio::time::sleep(crate::services::storage_retention::RETENTION_INTERVAL) => {}
+                    () = tokio::time::sleep(services::storage_retention::RETENTION_INTERVAL) => {}
                     () = token.cancelled() => break,
                 }
             }
@@ -3157,7 +3157,7 @@ async fn drain_in_flight_text_turns(counter: &std::sync::atomic::AtomicUsize) {
     }
 }
 
-async fn run_graceful_shutdown(state: &std::sync::Arc<app_state::AppState>) {
+async fn run_graceful_shutdown(state: &Arc<app_state::AppState>) {
     tracing::info!("Stopping mDNS...");
     state.infra.mdns_announcer.stop().await;
 
@@ -3187,15 +3187,15 @@ async fn run_graceful_shutdown(state: &std::sync::Arc<app_state::AppState>) {
 mod tests {
     #[test]
     fn a_managed_daemon_stops_once_its_app_is_no_longer_its_parent() {
-        assert!(!super::managing_app_is_gone(4_242, 4_242));
-        assert!(super::managing_app_is_gone(4_242, 1));
-        assert!(super::managing_app_is_gone(4_242, 9_000));
-        assert!(super::managing_app_is_gone(1, 1));
+        assert!(!managing_app_is_gone(4_242, 4_242));
+        assert!(managing_app_is_gone(4_242, 1));
+        assert!(managing_app_is_gone(4_242, 9_000));
+        assert!(managing_app_is_gone(1, 1));
     }
 
     #[tokio::test]
     async fn an_unmanaged_daemon_never_watches_a_parent() {
-        let watch = super::wait_for_managing_app_exit(None);
+        let watch = wait_for_managing_app_exit(None);
         let waited = tokio::time::timeout(std::time::Duration::from_millis(50), watch).await;
         assert!(waited.is_err());
     }

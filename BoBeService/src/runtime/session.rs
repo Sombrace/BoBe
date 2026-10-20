@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Instant;
@@ -150,8 +149,7 @@ impl RuntimeSession {
     }
 
     pub(crate) async fn start(&self) {
-        self.running
-            .store(true, std::sync::atomic::Ordering::Release);
+        self.running.store(true, Ordering::Release);
 
         if let Err(e) = self.cooldown_repo.load_or_create().await {
             warn!(error = %e, "runtime_session.cooldown_load_failed");
@@ -161,8 +159,7 @@ impl RuntimeSession {
     }
 
     pub(crate) async fn stop(&self) {
-        self.running
-            .store(false, std::sync::atomic::Ordering::Release);
+        self.running.store(false, Ordering::Release);
         info!("runtime_session.stopped");
     }
 
@@ -349,10 +346,8 @@ impl RuntimeSession {
         &self,
         channel: crate::models::ids::ConversationChannelId,
     ) -> Option<UserMessageGuard> {
-        self.turn_admission.try_admit_channel(
-            crate::runtime::turn_admission::TurnSource::Background,
-            channel,
-        )
+        self.turn_admission
+            .try_admit_channel(TurnSource::Background, channel)
     }
 
     pub(crate) async fn handle_background_result(
@@ -392,7 +387,7 @@ impl RuntimeSession {
             .await
     }
 
-    pub(crate) async fn handle_user_message_with_observer<F, Fut>(
+    pub(crate) async fn handle_user_message_with_observer<F>(
         &self,
         content: &str,
         message_id: &str,
@@ -402,8 +397,7 @@ impl RuntimeSession {
         on_text_delta: F,
     ) -> bool
     where
-        F: FnMut(String) -> Fut + Send,
-        Fut: Future<Output = ()> + Send,
+        F: AsyncFnMut(String) + Send,
     {
         self.message_handler
             .handle_message_with_observer(
@@ -418,7 +412,7 @@ impl RuntimeSession {
             .await
     }
 
-    pub(crate) async fn handle_endpoint_text_with_observer<F, Fut>(
+    pub(crate) async fn handle_endpoint_text_with_observer<F>(
         &self,
         content: &str,
         message_id: &str,
@@ -427,8 +421,7 @@ impl RuntimeSession {
         on_text_delta: F,
     ) -> bool
     where
-        F: FnMut(String) -> Fut + Send,
-        Fut: Future<Output = ()> + Send,
+        F: AsyncFnMut(String) + Send,
     {
         self.message_handler
             .handle_message_with_observer(
@@ -518,7 +511,7 @@ impl RuntimeSession {
 async fn run_trigger(
     name: &'static str,
     timeout: std::time::Duration,
-    fut: impl std::future::Future<Output = Decision>,
+    fut: impl Future<Output = Decision>,
 ) -> bool {
     match tokio::time::timeout(timeout, fut).await {
         Ok(Decision::Engage) => {

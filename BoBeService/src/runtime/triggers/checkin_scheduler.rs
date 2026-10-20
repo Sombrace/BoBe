@@ -188,7 +188,7 @@ impl CheckinScheduler {
         }
 
         if next_time.is_none() {
-            let tomorrow = today + chrono::Duration::days(1);
+            let tomorrow = today + Duration::days(1);
             let naive_dt = tomorrow.and_time(self.times[0]);
             if let Some(dt) = naive_dt.and_local_timezone(Local).single() {
                 next_time = Some(dt.with_timezone(&Utc));

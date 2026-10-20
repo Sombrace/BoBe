@@ -78,7 +78,7 @@ pub(super) async fn commit(
     let following = Arc::clone(state);
     commit_in_background(
         async move { apply_change(&applying, change).await },
-        move |result| async move {
+        async move |result| {
             let body_theme_delivered = apply_follow_ups(&following, &result).await;
             Committed {
                 result,
@@ -227,14 +227,11 @@ where
     }
 }
 
-async fn commit_then_reload<T, F>(
+async fn commit_then_reload<T>(
     commit: impl FnOnce() -> Result<T, AppError>,
-    reload: impl FnOnce() -> F,
+    reload: impl AsyncFnOnce() -> Result<(), AppError>,
     restore: impl FnOnce() -> Result<(), AppError>,
-) -> Result<T, AppError>
-where
-    F: Future<Output = Result<(), AppError>>,
-{
+) -> Result<T, AppError> {
     let committed = commit()?;
     let Err(error) = reload().await else {
         return Ok(committed);
@@ -296,7 +293,7 @@ mod tests {
             },
             {
                 let followed = Arc::clone(&followed);
-                move |result: UpdateResult| async move {
+                async move |result: UpdateResult| {
                     followed.store(true, Ordering::SeqCst);
                     result
                 }
@@ -332,7 +329,7 @@ mod tests {
             },
             {
                 let followed = Arc::clone(&followed);
-                move |result: UpdateResult| async move {
+                async move |result: UpdateResult| {
                     followed.store(true, Ordering::SeqCst);
                     result
                 }
@@ -350,9 +347,9 @@ mod tests {
         let reloads = RefCell::new(Vec::new());
         let committed = Cell::new(false);
         let error = reload_then_commit(
-            |runtime: McpRuntimeConfig| {
+            async |runtime: McpRuntimeConfig| {
                 reloads.borrow_mut().push(runtime.servers.len());
-                async { Err(AppError::Internal("MCP reload was rolled back".into())) }
+                Err(AppError::Internal("MCP reload was rolled back".into()))
             },
             servers(0),
             servers(2),
@@ -370,9 +367,9 @@ mod tests {
 
         reloads.borrow_mut().clear();
         let result = reload_then_commit(
-            |runtime: McpRuntimeConfig| {
+            async |runtime: McpRuntimeConfig| {
                 reloads.borrow_mut().push(runtime.servers.len());
-                async { Ok(()) }
+                Ok(())
             },
             servers(0),
             servers(2),
@@ -388,9 +385,9 @@ mod tests {
     #[tokio::test]
     async fn an_unsaved_switch_puts_the_previous_mcp_servers_back() {
         let reloads = RefCell::new(Vec::new());
-        let reload = |runtime: McpRuntimeConfig| {
+        let reload = async |runtime: McpRuntimeConfig| {
             reloads.borrow_mut().push(runtime.servers.len());
-            async { Ok(()) }
+            Ok(())
         };
         let error = reload_then_commit(
             reload,
@@ -418,14 +415,11 @@ mod tests {
         assert_eq!(*reloads.borrow(), [2, 1]);
 
         let error = reload_then_commit(
-            |runtime: McpRuntimeConfig| {
-                let restoring = runtime.servers.len() == 1;
-                async move {
-                    if restoring {
-                        Err(AppError::ServiceUnavailable("worker unavailable".into()))
-                    } else {
-                        Ok(())
-                    }
+            async |runtime: McpRuntimeConfig| {
+                if runtime.servers.len() == 1 {
+                    Err(AppError::ServiceUnavailable("worker unavailable".into()))
+                } else {
+                    Ok(())
                 }
             },
             servers(1),
@@ -445,7 +439,7 @@ mod tests {
         let restored = Cell::new(false);
         let error = commit_then_reload(
             || Ok(saved(false)),
-            || async { Err(AppError::Internal("MCP reload was rolled back".into())) },
+            async || Err(AppError::Internal("MCP reload was rolled back".into())),
             || {
                 restored.set(true);
                 Ok(())
@@ -458,7 +452,7 @@ mod tests {
 
         let error = commit_then_reload(
             || Ok(saved(false)),
-            || async { Err(AppError::Internal("MCP reload was rolled back".into())) },
+            async || Err(AppError::Internal("MCP reload was rolled back".into())),
             || Err(AppError::Io(std::io::Error::other("disk full"))),
         )
         .await
@@ -471,7 +465,7 @@ mod tests {
         assert!(
             commit_then_reload(
                 || Ok(saved(false)),
-                || async { Ok(()) },
+                async || Ok(()),
                 || {
                     restored.set(true);
                     Ok(())

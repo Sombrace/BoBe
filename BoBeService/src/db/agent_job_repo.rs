@@ -587,7 +587,7 @@ mod tests {
         for goal_id in [None, Some(crate::models::ids::GoalId::new())] {
             let job = repo
                 .submit(
-                    &uuid::Uuid::new_v4().to_string(),
+                    &Uuid::new_v4().to_string(),
                     JobInput {
                         channel_id: Some(first),
                         goal_id,

@@ -581,7 +581,7 @@ mod tests {
         .unwrap();
         let app = axum::Router::new().route(
             "/readyz",
-            axum::routing::get(move || async move { axum::Json(body) }),
+            axum::routing::get(async move || axum::Json(body)),
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();

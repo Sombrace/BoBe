@@ -251,17 +251,12 @@ pub(crate) async fn run_text_turn(
     ));
     let pipeline_for_obs = Arc::clone(&pipeline);
     let sentence_tx_for_obs = sentence_tx.clone();
-    let observer = move |delta: String| {
-        let pipeline = Arc::clone(&pipeline_for_obs);
-        let sentence_tx = sentence_tx_for_obs.clone();
-        let stream_activity = Arc::clone(&stream_activity);
-        async move {
-            let mut pipeline = pipeline.lock().await;
-            stream_activity.notify_one();
-            for sentence in pipeline.feed(&delta) {
-                if sentence_tx.send(sentence).await.is_err() {
-                    return;
-                }
+    let observer = async move |delta: String| {
+        let mut pipeline = pipeline_for_obs.lock().await;
+        stream_activity.notify_one();
+        for sentence in pipeline.feed(&delta) {
+            if sentence_tx_for_obs.send(sentence).await.is_err() {
+                return;
             }
         }
     };
@@ -437,7 +432,7 @@ fn spawn_client_tts_text_task(
     mut sentence_rx: mpsc::Receiver<String>,
     output: VoiceOutput,
     script: Arc<SpokenScript>,
-) -> tokio::task::JoinHandle<bool> {
+) -> JoinHandle<bool> {
     tokio::spawn(async move {
         let mut sequence = 0_u64;
         let mut produced = false;

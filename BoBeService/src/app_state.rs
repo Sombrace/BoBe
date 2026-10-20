@@ -79,7 +79,7 @@ pub(crate) struct AuthContext {
     pub(crate) local_enrollment:
         Arc<crate::api::handlers::local_enrollment::LocalEnrollmentBootstrap>,
     pub(crate) provider_login: Arc<crate::agent::auth::LoginCoordinator>,
-    pub(crate) agent: Arc<crate::agent::PiRuntime>,
+    pub(crate) agent: Arc<PiRuntime>,
 }
 
 pub(crate) struct BodyContext {

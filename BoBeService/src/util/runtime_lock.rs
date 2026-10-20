@@ -1,8 +1,5 @@
-#![allow(unsafe_code, reason = "flock and open flags require libc on Unix")]
-
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, Write};
-use std::os::fd::AsRawFd;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
@@ -87,14 +84,12 @@ impl RuntimeLock {
             .write(true)
             .create(true)
             .mode(0o600)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+            .custom_flags(libc::O_NOFOLLOW)
             .open(path)?;
 
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if result != 0 {
-            let error = std::io::Error::last_os_error();
-            let code = error.raw_os_error();
-            if code == Some(libc::EWOULDBLOCK) || code == Some(libc::EAGAIN) {
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => {
                 let holder = read_holder(&mut file);
                 return Err(AppError::Conflict(format!(
                     "another BoBe daemon owns the {kind} lock {}{}",
@@ -102,7 +97,7 @@ impl RuntimeLock {
                     holder.map_or_else(String::new, |h| format!(" (pid {})", h.pid))
                 )));
             }
-            return Err(AppError::Io(error));
+            Err(TryLockError::Error(error)) => return Err(AppError::Io(error)),
         }
 
         let holder = HolderInfo {

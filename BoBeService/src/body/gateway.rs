@@ -2561,7 +2561,7 @@ mod tests {
             },
             limits: super::super::capabilities::BodyLimits {
                 max_control_bytes: super::super::protocol::MAX_CONTROL_BYTES as u32,
-                max_playback_credit_ms: super::super::protocol::MAX_PLAYBACK_CREDIT_MS,
+                max_playback_credit_ms: MAX_PLAYBACK_CREDIT_MS,
             },
             interactions: Arc::new(Mutex::new(
                 super::super::interactions::InteractionState::default(),

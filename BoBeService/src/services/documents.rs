@@ -116,8 +116,6 @@ fn validate_content(content: &str) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::db::test_helpers::in_memory_pool;
-    use crate::models::soul::Souls;
-    use crate::models::user_profile::UserProfiles;
 
     async fn service<K: DocumentKind>() -> DocumentService<K> {
         DocumentService::new(Arc::new(SqliteDocumentRepo::new(in_memory_pool().await)))

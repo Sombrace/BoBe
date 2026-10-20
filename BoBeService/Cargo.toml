@@ -15,6 +15,12 @@ unreachable_pub = "warn"
 elided_lifetimes_in_paths = "warn"
 let_underscore_drop = "warn"
 dead_code_pub_in_binary = "warn"
+closure_returning_async_block = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+trivial_casts = "warn"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }

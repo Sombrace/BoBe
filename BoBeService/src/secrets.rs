@@ -33,13 +33,9 @@ pub(crate) fn default_secret_store(
     if let Some(store) = DEFAULT_STORE.get() {
         return Ok(Arc::clone(store));
     }
-    let store =
-        Arc::new(file::FileSecretStore::at_path(paths.secrets_file())?) as Arc<dyn SecretStore>;
-    drop(DEFAULT_STORE.set(store));
-    DEFAULT_STORE
-        .get()
-        .map(Arc::clone)
-        .ok_or_else(|| SecretError::Backend("default secret store initialization failed".into()))
+    let store: Arc<dyn SecretStore> =
+        Arc::new(file::FileSecretStore::at_path(paths.secrets_file())?);
+    Ok(Arc::clone(DEFAULT_STORE.get_or_init(|| store)))
 }
 
 pub(crate) fn headless_secret_store(
@@ -48,14 +44,10 @@ pub(crate) fn headless_secret_store(
     if let Some(store) = HEADLESS_STORE.get() {
         return Ok(Arc::clone(store));
     }
-    let store = Arc::new(file::FileSecretStore::at_path(
+    let store: Arc<dyn SecretStore> = Arc::new(file::FileSecretStore::at_path(
         paths.headless_secrets_file(),
-    )?) as Arc<dyn SecretStore>;
-    drop(HEADLESS_STORE.set(store));
-    HEADLESS_STORE
-        .get()
-        .map(Arc::clone)
-        .ok_or_else(|| SecretError::Backend("headless secret store initialization failed".into()))
+    )?);
+    Ok(Arc::clone(HEADLESS_STORE.get_or_init(|| store)))
 }
 
 pub(crate) fn read_secret(account: &str) -> Option<String> {

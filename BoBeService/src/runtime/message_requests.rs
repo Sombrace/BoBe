@@ -257,20 +257,16 @@ impl MessageRequests {
                                 &message_id,
                                 turn_id,
                                 channel,
-                                move |text| {
-                                    let sender = delivery.sender.clone();
-                                    let cancellation = delivery.cancellation.clone();
-                                    async move {
-                                        if !matches!(
-                                            tokio::time::timeout(
-                                                Duration::from_secs(2),
-                                                sender.send(RequestEvent::Text(text))
-                                            )
-                                            .await,
-                                            Ok(Ok(()))
-                                        ) {
-                                            cancellation.cancel();
-                                        }
+                                async move |text| {
+                                    if !matches!(
+                                        tokio::time::timeout(
+                                            Duration::from_secs(2),
+                                            delivery.sender.send(RequestEvent::Text(text))
+                                        )
+                                        .await,
+                                        Ok(Ok(()))
+                                    ) {
+                                        delivery.cancellation.cancel();
                                     }
                                 },
                             )
@@ -412,7 +408,7 @@ async fn prepare_execution(
     shutdown: &CancellationToken,
     cancellation: &CancellationToken,
     request_id: Uuid,
-    bind_answer: impl std::future::Future<Output = Result<(), AppError>>,
+    bind_answer: impl Future<Output = Result<(), AppError>>,
 ) -> Result<Option<RequestOutcome>, AppError> {
     if shutdown.is_cancelled() {
         return Ok(Some(RequestOutcome::Deferred));

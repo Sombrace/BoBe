@@ -73,13 +73,13 @@ pub(crate) enum ToolCommands {
     },
     Enable {
         #[arg(value_enum)]
-        tools: Vec<crate::config::AgentTool>,
+        tools: Vec<config::AgentTool>,
         #[arg(long)]
         json: bool,
     },
     Disable {
         #[arg(value_enum)]
-        tools: Vec<crate::config::AgentTool>,
+        tools: Vec<config::AgentTool>,
         #[arg(long)]
         json: bool,
     },

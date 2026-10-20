@@ -517,7 +517,7 @@ mod tests {
     #[tokio::test]
     async fn a_phone_pairing_cannot_take_over_a_mac_endpoint() {
         let repo = repo().await;
-        let mac = enroll(&repo, crate::api::scope::Scope::ALL.as_slice(), 4).await;
+        let mac = enroll(&repo, Scope::ALL.as_slice(), 4).await;
         let mut phone = mac_endpoint("iPhone");
         phone.kind = crate::api::scope::ScopeProfile::Phone
             .endpoint_kind()

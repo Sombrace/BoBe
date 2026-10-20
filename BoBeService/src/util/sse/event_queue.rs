@@ -21,7 +21,7 @@ pub(crate) struct EventQueue {
 }
 
 pub(crate) struct EventSubscription {
-    channel: crate::models::ids::ConversationChannelId,
+    channel: ConversationChannelId,
     initial_indicator: Option<StreamBundle>,
     replay: VecDeque<Arc<StreamBundle>>,
     pending_gap: Option<StreamBundle>,
@@ -59,11 +59,7 @@ impl EventSubscription {
 }
 
 impl EventQueue {
-    pub(crate) fn push_in_channel(
-        &self,
-        channel: crate::models::ids::ConversationChannelId,
-        mut event: StreamBundle,
-    ) {
+    pub(crate) fn push_in_channel(&self, channel: ConversationChannelId, mut event: StreamBundle) {
         event.channel_id = Some(channel);
         self.push(event);
     }
@@ -288,8 +284,8 @@ mod tests {
     #[tokio::test]
     async fn channel_subscriptions_do_not_receive_other_channel_text_or_replay() {
         let queue = EventQueue::with_incarnation(8, Uuid::new_v4());
-        let mac = crate::models::ids::ConversationChannelId::for_endpoint("mac");
-        let body = crate::models::ids::ConversationChannelId::for_endpoint("body");
+        let mac = ConversationChannelId::for_endpoint("mac");
+        let body = ConversationChannelId::for_endpoint("body");
         let mut live = queue.subscribe_in_channel(None, body);
         queue.push_in_channel(mac, text_delta_event("mac-message", "private mac", false));
         queue.push_in_channel(body, text_delta_event("body-message", "body reply", false));

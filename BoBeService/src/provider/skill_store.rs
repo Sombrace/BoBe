@@ -85,7 +85,7 @@ impl SkillStore {
     ) -> Result<SkillSummary, AppError>
     where
         F: FnMut() -> Fut,
-        Fut: std::future::Future<Output = Result<(), AppError>>,
+        Fut: Future<Output = Result<(), AppError>>,
     {
         validate_skill_input(&name, &description, &body)?;
         let _guard = self.write_lock.lock().await;
@@ -400,7 +400,7 @@ mod tests {
                 "release-check".into(),
                 "Verify a release before publishing".into(),
                 "# Release check\n\nRun the repository gates.".into(),
-                || async { Ok(()) },
+                async || Ok(()),
             )
             .await
             .unwrap();
@@ -418,7 +418,7 @@ mod tests {
                 "release-check".into(),
                 "Verify every release".into(),
                 "# Release check\n\nRun all product gates.".into(),
-                || async { Ok(()) },
+                async || Ok(()),
             )
             .await
             .unwrap();
@@ -451,7 +451,7 @@ mod tests {
                 "collision".into(),
                 "Collision candidate".into(),
                 "# Candidate\n\nDo the candidate procedure.".into(),
-                || async { Ok(()) },
+                async || Ok(()),
             )
             .await
             .unwrap_err();
@@ -470,7 +470,7 @@ mod tests {
                 "temporary-check".into(),
                 "Temporary reusable check".into(),
                 "# Check\n\nRun it.".into(),
-                || async { Ok(()) },
+                async || Ok(()),
             )
             .await
             .unwrap();

@@ -382,7 +382,7 @@ pub(crate) async fn run(
     endpoints: Arc<crate::db::endpoint_repo::EndpointRepo>,
     registry_lock: Arc<tokio::sync::Mutex<()>>,
     config: BodyConfig,
-    shutdown: tokio_util::sync::CancellationToken,
+    shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(config.enabled, "BodyLink gateway is disabled");
     if let Some(error) = config.validation_errors().into_iter().next() {

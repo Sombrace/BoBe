@@ -389,19 +389,15 @@ mod tests {
             post({
                 let first_chunk_sent = Arc::clone(&first_chunk_sent);
                 let release_stream = Arc::clone(&release_stream);
-                move || {
-                    let first_chunk_sent = Arc::clone(&first_chunk_sent);
-                    let release_stream = Arc::clone(&release_stream);
-                    async move {
-                        let stream = async_stream::stream! {
-                            yield Ok::<_, Infallible>(Bytes::from_static(
-                                b"{\"status\":\"pulling\",\"completed\":1,\"total\":2}\n"
-                            ));
-                            first_chunk_sent.notify_one();
-                            release_stream.notified().await;
-                        };
-                        axum::body::Body::from_stream(stream)
-                    }
+                async move || {
+                    let stream = async_stream::stream! {
+                        yield Ok::<_, Infallible>(Bytes::from_static(
+                            b"{\"status\":\"pulling\",\"completed\":1,\"total\":2}\n"
+                        ));
+                        first_chunk_sent.notify_one();
+                        release_stream.notified().await;
+                    };
+                    axum::body::Body::from_stream(stream)
                 }
             }),
         );
@@ -462,7 +458,7 @@ mod tests {
         crate::util::tls::install_crypto_provider().expect("TLS provider should install");
         let app = Router::new().route(
             "/api/tags",
-            get(|| async {
+            get(async || {
                 Json(json!({
                     "models": [{
                         "name": "qwen-vl",
@@ -540,7 +536,7 @@ mod tests {
         ignore_terminate: bool,
     ) -> (OllamaManager, u32, tokio::task::JoinHandle<()>) {
         crate::util::tls::install_crypto_provider().expect("TLS provider should install");
-        let app = Router::new().route("/api/tags", get(|| async { Json(json!({"models": []})) }));
+        let app = Router::new().route("/api/tags", get(async || Json(json!({"models": []}))));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test server should bind");

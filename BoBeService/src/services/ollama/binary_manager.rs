@@ -542,13 +542,8 @@ mod tests {
         let sha256: &'static str = Box::leak(
             crate::util::text::hex_encode(&sha2::Sha256::digest(&archive)).into_boxed_str(),
         );
-        let app = axum::Router::new().route(
-            "/ollama.tgz",
-            axum::routing::get(move || {
-                let archive = archive.clone();
-                async move { archive }
-            }),
-        );
+        let app =
+            axum::Router::new().route("/ollama.tgz", axum::routing::get(async move || archive));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("test server should bind");

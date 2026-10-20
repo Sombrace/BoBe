@@ -29,8 +29,6 @@ impl Drop for IndicatorGuard {
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use std::sync::Arc;
-
     use super::*;
 
     #[test]

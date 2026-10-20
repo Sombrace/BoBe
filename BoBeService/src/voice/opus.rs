@@ -106,7 +106,7 @@ pub(crate) fn encode_pcm_with(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp)]
     use super::*;
-    use opusic_c::{Channels, Decoder as OpusDecoder, SampleRate};
+    use opusic_c::Decoder as OpusDecoder;
 
     #[test]
     fn encoder_produces_frames_for_24khz_voice() {

@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -100,7 +99,7 @@ mod tests {
         listener.set_nonblocking(true).unwrap();
         let address = listener.local_addr().unwrap();
         let handle = axum_server::Handle::new();
-        let app = axum::Router::new().route("/health", axum::routing::get(|| async { "ok" }));
+        let app = axum::Router::new().route("/health", axum::routing::get(async || "ok"));
         let server = axum_server::from_tcp(listener)
             .unwrap()
             .acceptor(LocalPlainAcceptor::new(RustlsAcceptor::new(tls)))

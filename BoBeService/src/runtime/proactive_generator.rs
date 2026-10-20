@@ -550,11 +550,8 @@ impl ProactiveGenerator {
             &self.event_queue,
             Some(msg_id),
             crate::runtime::response_streamer::StreamDelivery::Sse.in_channel(channel),
-            move |delta| {
-                let conversation = Arc::clone(&conversation);
-                async move {
-                    conversation.push_assistant_stream_delta(conversation_id, &delta);
-                }
+            async move |delta| {
+                conversation.push_assistant_stream_delta(conversation_id, &delta);
             },
         )
         .await)

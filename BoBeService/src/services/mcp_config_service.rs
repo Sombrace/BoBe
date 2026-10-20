@@ -204,7 +204,7 @@ async fn commit_document(
             &deps.config,
             deps.secret_store.as_ref(),
             &body,
-            move |runtime| async move { workers.apply_mcp_config(runtime).await },
+            async move |runtime| workers.apply_mcp_config(runtime).await,
         )
         .await
     })
@@ -212,16 +212,13 @@ async fn commit_document(
     .map_err(|error| AppError::Internal(format!("MCP configuration update stopped: {error}")))?
 }
 
-async fn save_locked<F>(
+async fn save_locked(
     lock: &Mutex<()>,
     config: &ArcSwap<Config>,
     secret_store: &dyn SecretStore,
     body: &McpConfigMutationRequest,
-    reload: impl FnOnce(McpRuntimeConfig) -> F,
-) -> Result<McpConfigFile, AppError>
-where
-    F: Future<Output = Result<(), AppError>>,
-{
+    reload: impl AsyncFnOnce(McpRuntimeConfig) -> Result<(), AppError>,
+) -> Result<McpConfigFile, AppError> {
     let _guard = lock.lock().await;
     let current = config.load_full();
     let (file, servers) = parse_document(
@@ -514,10 +511,7 @@ fn load_mcp_file(deps: &McpConfigDeps) -> Result<(PathBuf, McpConfigFile), AppEr
 
 fn resolve_config_path(deps: &McpConfigDeps) -> Result<PathBuf, AppError> {
     let cfg = deps.config.load();
-    mcp_config::ensure_mcp_config_exists(
-        std::path::Path::new(&cfg.data_dir),
-        cfg.mcp.config_file.as_deref(),
-    )
+    mcp_config::ensure_mcp_config_exists(Path::new(&cfg.data_dir), cfg.mcp.config_file.as_deref())
 }
 
 fn blocked_and_dangerous(deps: &McpConfigDeps) -> (Vec<String>, Vec<String>) {
@@ -779,9 +773,9 @@ mod tests {
                     &config,
                     &crate::secrets::memory::MemorySecretStore::holding([]),
                     &body,
-                    move |runtime| {
+                    async move |runtime: McpRuntimeConfig| {
                         *reloaded.lock().unwrap() = Some(runtime.servers.len());
-                        async { Ok(()) }
+                        Ok(())
                     },
                 )
                 .await

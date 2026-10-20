@@ -188,7 +188,6 @@ fn duration_until_next(fire_at: NaiveTime, now_utc: DateTime<Utc>) -> Duration {
 #[allow(clippy::unwrap_used, reason = "tests panic on precondition failures")]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
 
     #[test]
     fn duration_until_next_picks_today_when_in_future() {

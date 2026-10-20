@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -233,7 +232,7 @@ impl MessageHandler {
             false,
             StreamDelivery::Sse,
             channel,
-            |_| async {},
+            async |_| {},
         )
         .await
     }
@@ -305,7 +304,7 @@ impl MessageHandler {
                 true,
                 job.goal_id,
                 StreamDelivery::Sse,
-                |_| async {},
+                async |_| {},
             )
             .await;
         if success
@@ -317,7 +316,7 @@ impl MessageHandler {
         success
     }
 
-    pub(crate) async fn handle_message_with_observer<F, Fut>(
+    pub(crate) async fn handle_message_with_observer<F>(
         &self,
         content: &str,
         message_id: &str,
@@ -328,8 +327,7 @@ impl MessageHandler {
         on_text_delta: F,
     ) -> bool
     where
-        F: FnMut(String) -> Fut + Send,
-        Fut: Future<Output = ()> + Send,
+        F: AsyncFnMut(String) + Send,
     {
         if let Err(e) = self
             .cooldown_repo
@@ -384,7 +382,7 @@ impl MessageHandler {
         }
     }
 
-    async fn respond_to_message<F, Fut>(
+    async fn respond_to_message<F>(
         &self,
         msg_id: &str,
         assistant_turn_id: ConversationTurnId,
@@ -398,8 +396,7 @@ impl MessageHandler {
         on_text_delta: F,
     ) -> bool
     where
-        F: FnMut(String) -> Fut + Send,
-        Fut: Future<Output = ()> + Send,
+        F: AsyncFnMut(String) + Send,
     {
         let delivery = delivery.in_channel(channel);
         let _indicator_guard = IndicatorGuard::new(
@@ -469,7 +466,7 @@ impl MessageHandler {
         false
     }
 
-    async fn send_via_chat_worker<F, Fut>(
+    async fn send_via_chat_worker<F>(
         &self,
         user_content: &str,
         msg_id: &str,
@@ -482,8 +479,7 @@ impl MessageHandler {
         mut on_text_delta: F,
     ) -> Result<crate::runtime::response_streamer::StreamResult, AppError>
     where
-        F: FnMut(String) -> Fut + Send,
-        Fut: Future<Output = ()> + Send,
+        F: AsyncFnMut(String) + Send,
     {
         let worker = self.workers.chat();
         let prompt = if background {
@@ -509,9 +505,9 @@ impl MessageHandler {
             &self.event_queue,
             Some(msg_id),
             delivery,
-            move |delta| {
+            async move |delta| {
                 conversation.push_assistant_stream_delta(conversation_id, &delta);
-                on_text_delta(delta)
+                on_text_delta(delta).await;
             },
         )
         .await)

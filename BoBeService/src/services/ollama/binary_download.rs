@@ -216,7 +216,7 @@ mod tests {
     use axum::body::Bytes;
     use axum::routing::get;
     use tokio::net::TcpListener;
-    use tokio::sync::{Notify, watch};
+    use tokio::sync::Notify;
 
     use super::*;
 
@@ -265,17 +265,13 @@ mod tests {
             get({
                 let first_chunk_sent = Arc::clone(&first_chunk_sent);
                 let release_stream = Arc::clone(&release_stream);
-                move || {
-                    let first_chunk_sent = Arc::clone(&first_chunk_sent);
-                    let release_stream = Arc::clone(&release_stream);
-                    async move {
-                        let stream = async_stream::stream! {
-                            yield Ok::<_, Infallible>(Bytes::from_static(b"partial"));
-                            first_chunk_sent.notify_one();
-                            release_stream.notified().await;
-                        };
-                        axum::body::Body::from_stream(stream)
-                    }
+                async move || {
+                    let stream = async_stream::stream! {
+                        yield Ok::<_, Infallible>(Bytes::from_static(b"partial"));
+                        first_chunk_sent.notify_one();
+                        release_stream.notified().await;
+                    };
+                    axum::body::Body::from_stream(stream)
                 }
             }),
         );

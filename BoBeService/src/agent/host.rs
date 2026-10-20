@@ -1208,7 +1208,7 @@ impl DomainBridge {
             let params: SkillCreateParams = serde_json::from_value(arguments)?;
             match self
                 .skills
-                .create_activated(params.name, params.description, params.body, || async {
+                .create_activated(params.name, params.description, params.body, async || {
                     connection
                         .call(
                             "reload",

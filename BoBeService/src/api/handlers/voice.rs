@@ -204,7 +204,7 @@ pub(super) fn upgrade_voice(
     ));
     ws.max_message_size(32_768)
         .max_frame_size(32_768)
-        .on_upgrade(move |socket| async move {
+        .on_upgrade(async move |socket| {
             if preview {
                 super::voice_preview::handle_socket(socket, state, principal).await;
             } else {
