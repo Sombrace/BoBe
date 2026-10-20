@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { getCurrentSystemMessage, type TranscriptContext } from "@earendil-works/pi-ai";
+import { randomUUID } from "node:crypto";
+import { getCurrentSystemMessage, getCurrentTools, type TranscriptContext } from "@earendil-works/pi-ai";
 import { openCanonicalSession } from "./persistence.js";
-import { configuration, deferred, fixture, host, userText } from "./test-support.js";
-import { isRecord, type JsonObject } from "./protocol.js";
+import { configuration, configureMcp, deferred, fixture, host, userText } from "./test-support.js";
+import { isRecord, toolNames, type JsonObject } from "./protocol.js";
 import { abortableDelay, Cancelled } from "./errors.js";
 
 const chat = (text: string, channel: "text" | "voice" = "text"): JsonObject => ({
@@ -134,6 +135,45 @@ test("canonical session remains exact across refresh, restart, channel and provi
   const pointer: unknown = JSON.parse(pointerBefore);
   assert.ok(isRecord(pointer) && typeof pointer.file === "string");
   assert.equal((await stat(join(paths.root, "agent", pointer.file))).mode & 0o777, 0o600);
+});
+
+test("a resumed channel declares the configured tools, not the smaller set its transcript recorded", async t => {
+  const paths = await fixture(t);
+  const config = configuration(paths);
+  config.enabled_tools = ["read"];
+  const channel = randomUUID();
+  const ask = (text: string): JsonObject => ({ ...chat(text), session_key: channel });
+  const declared: string[][] = [];
+  let calls = 0;
+  const first = await host(t, config, context => {
+    declared.push(getCurrentTools(context.messages).map(tool => tool.name));
+    return ++calls === 1
+      ? { tools: [{ id: "malformed-1", name: "read", arguments: {}, argumentsError: "Unexpected end of JSON input" }] }
+      : { text: "The arguments were malformed." };
+  });
+  await first.worker.request({ id: 2, method: "chat", params: ask("Read something") });
+  assert.deepEqual(declared.at(-1), ["read"]);
+  await first.worker.close();
+  const [transcript] = await readdir(join(paths.root, "agent/sessions/channels", channel, "sessions"));
+  assert.ok(transcript);
+  assert.ok((await readFile(join(paths.root, "agent/sessions/channels", channel, "sessions", transcript), "utf8"))
+    .includes("Unexpected end of JSON input"));
+  config.enabled_tools = [...toolNames];
+  config.tools = [{
+    name: "bobe_memory_read", description: "Read owner memory",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+  }];
+  configureMcp(config);
+  const second = await host(t, config, context => {
+    declared.push(getCurrentTools(context.messages).map(tool => tool.name));
+    return { text: "Every configured tool is available." };
+  });
+  await second.worker.request({ id: 2, method: "chat", params: ask("Continue with the current tools") });
+  const current = new Set(declared.at(-1));
+  for (const name of ["read", "bash", "write", "subagent", "background_task", "bobe_memory_read", "mcp__sample__echo"]) {
+    assert.ok(current.has(name), `${name} is declared after resume: ${[...current].join(", ")}`);
+  }
+  assert.ok(!current.has("mcp__sample__hidden"));
 });
 
 test("skill publication refreshes the next tool round without replacing the active session", async t => {

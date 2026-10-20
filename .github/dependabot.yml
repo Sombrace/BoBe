@@ -12,9 +12,14 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    groups:
+      pi:
+        patterns:
+          - "@earendil-works/*"
     ignore:
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      - dependency-name: "typebox"
     open-pull-requests-limit: 5
 
   - package-ecosystem: swift

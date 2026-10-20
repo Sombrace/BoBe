@@ -363,6 +363,7 @@ export class Sessions {
             ? ["background_task", "background_tasks", "background_task_status", "background_task_cancel", "bobe_schedule", "bobe_owner_input"] : []),
         ],
       });
+      session.setActiveToolsByName(customTools.map(tool => tool.name));
       current = new SessionBundle(session, resources, mcp, full);
       const ui = session.extensionRunner.createContext().ui;
       const noDialog = (): never => { throw new Error("Interactive dialogs are not available in the worker"); };

@@ -89,7 +89,7 @@ const fixtureModel: Model<Api> = {
 interface ScriptResponse {
   text?: string;
   thinking?: string;
-  tools?: { id: string; name: string; arguments: { [key: string]: Json } }[];
+  tools?: { id: string; name: string; arguments: { [key: string]: Json }; argumentsError?: string }[];
   error?: string;
   stopReason?: Exclude<AssistantMessage["stopReason"], "pending">;
   inputTokens?: number;
