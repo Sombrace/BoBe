@@ -94,6 +94,7 @@ struct ThreadView: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
+        // swiftlint:disable:next accessibility_trait_for_button
         ScrollView {
             LazyVStack(spacing: 12) {
                 if self.model.needsAttention {

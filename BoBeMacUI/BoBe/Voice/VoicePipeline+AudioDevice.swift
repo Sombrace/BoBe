@@ -29,7 +29,7 @@ extension VoicePipeline {
         selector: AudioObjectPropertySelector,
         kind: DeviceKind,
         alreadyRegistered: Bool,
-        markRegistered: @escaping @MainActor () -> Void
+        markRegistered: @MainActor () -> Void
     ) {
         guard !alreadyRegistered else { return }
         var address = AudioObjectPropertyAddress(

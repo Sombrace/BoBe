@@ -429,7 +429,7 @@ public final class VoicePipeline {
     }
 
     @discardableResult
-    public func setMuted(_ shouldMute: Bool) async -> Bool {
+    public func setMuted(_ shouldMute: Bool) -> Bool {
         guard self.muted != shouldMute else { return true }
         do {
             try AVAudioApplication.shared.setInputMuted(shouldMute)

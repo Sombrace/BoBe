@@ -277,7 +277,7 @@ extension DaemonClient {
     }
 
     func streamLocalRuntimeStatus(
-        onSnapshot: @Sendable @escaping (LocalRuntimeSnapshot) -> Void
+        onSnapshot: @Sendable (LocalRuntimeSnapshot) -> Void
     ) async throws {
         var reconnectAttempt = 0
         while !Task.isCancelled {
@@ -367,7 +367,7 @@ extension DaemonClient {
 
     func streamProviderLogin(
         profile: String,
-        onPhase: @Sendable @escaping (ProviderLoginPhase) async -> Void
+        onPhase: @Sendable (ProviderLoginPhase) async -> Void
     ) async throws {
         let url = self.endpointURL(pathSegments: ["auth", profile, "login", "events"])
         var request = URLRequest(url: url)

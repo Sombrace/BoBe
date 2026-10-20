@@ -516,10 +516,10 @@ struct WelcomeWizard: View {
     }
 
     private func advance() {
+        let commit: (() async throws -> Void)? = self.requiresCommit
+            ? { try await self.commitCurrentStep() }
+            : nil
         Task {
-            let commit: (() async throws -> Void)? = self.requiresCommit
-                ? { try await self.commitCurrentStep() }
-                : nil
             guard await self.navigation.commit(commit) else { return }
             guard let next = self.route.step(after: self.currentStep) else {
                 self.onComplete()
@@ -653,7 +653,7 @@ struct WelcomeWizard: View {
             return
         }
         Task {
-            await self.navigation.goBack(after: { try await LocalRuntimeInstall.cancel() })
+            await self.navigation.goBack(after: LocalRuntimeInstall.cancel)
         }
     }
 }

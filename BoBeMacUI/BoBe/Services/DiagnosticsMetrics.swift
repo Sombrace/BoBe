@@ -139,7 +139,7 @@ final class DiagnosticsMetrics: NSObject, MXMetricManagerSubscriber {
         self.isSubscribed = false
     }
 
-    func setEnabled(_ enabled: Bool) async throws {
+    func setEnabled(_ enabled: Bool) throws {
         self.isEnabled = enabled
         if enabled {
             self.start()

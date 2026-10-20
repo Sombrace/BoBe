@@ -83,7 +83,7 @@ final class SettingsDebouncer {
     }
 
     func runPersist(
-        setError: @escaping (String?) -> Void,
+        setError: (String?) -> Void,
         setSaved: @escaping (String?) -> Void,
         onSuccess: (@MainActor (SettingsUpdateResponse) async -> Void)? = nil,
         update: @MainActor (SettingsUpdateRequest) async throws -> SettingsUpdateResponse,
