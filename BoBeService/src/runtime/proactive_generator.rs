@@ -603,7 +603,6 @@ impl ProactiveGenerator {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on invalid fixtures")]
 mod tests {
     use std::sync::Arc;
     use std::time::Duration as StdDuration;

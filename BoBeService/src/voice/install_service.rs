@@ -132,7 +132,6 @@ pub(crate) async fn reconcile_install_state(models_root: &Path) -> Result<(), Ap
 
 #[cfg(test)]
 #[expect(
-    clippy::expect_used,
     clippy::items_after_test_module,
     reason = "focused path-validation tests sit next to their private helper"
 )]

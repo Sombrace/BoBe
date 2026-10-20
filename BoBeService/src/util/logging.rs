@@ -41,7 +41,7 @@ pub(crate) fn init_tracing(config: &Config) {
     }
 }
 
-#[allow(clippy::print_stderr)]
+#[expect(clippy::print_stderr, reason = "logging is not initialized yet")]
 fn build_file_writer(config: &crate::config::LoggingConfig) -> Option<NonBlocking> {
     let (dir, file_name) = daily_log_target(config)?;
 

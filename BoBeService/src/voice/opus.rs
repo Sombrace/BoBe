@@ -100,7 +100,6 @@ pub(crate) fn encode_pcm_with(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp)]
     use super::*;
     use opusic_c::Decoder as OpusDecoder;
 

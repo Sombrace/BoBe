@@ -117,7 +117,7 @@ pub(crate) async fn status(paths: &ServicePaths) -> Result<ServiceStatus, AppErr
     let manages_data_root = definition_manages_data_root(paths).await?;
     #[cfg(target_os = "macos")]
     {
-        let uid = user_id().await?;
+        let uid = user_id();
         ensure_launchd_gui_domain(&uid).await?;
         let target = format!("gui/{uid}/{LAUNCHD_LABEL}");
         let running = command_succeeds("/bin/launchctl", &["print", &target]).await?;
@@ -229,7 +229,7 @@ impl ServiceManager for SystemServiceManager {
 async fn service_running() -> Result<bool, AppError> {
     #[cfg(target_os = "macos")]
     {
-        let uid = user_id().await?;
+        let uid = user_id();
         ensure_launchd_gui_domain(&uid).await?;
         let output = tokio::process::Command::new("/bin/launchctl")
             .args(["print", &format!("gui/{uid}/{LAUNCHD_LABEL}")])
@@ -386,7 +386,7 @@ pub(crate) async fn restart(paths: &ServicePaths) -> Result<(), AppError> {
     return run_launchctl(&[
         "kickstart",
         "-k",
-        &format!("gui/{}/{LAUNCHD_LABEL}", user_id().await?),
+        &format!("gui/{}/{LAUNCHD_LABEL}", user_id()),
     ])
     .await;
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -449,7 +449,7 @@ async fn start_loaded(paths: &ServicePaths) -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     return run_launchctl(&[
         "bootstrap",
-        &format!("gui/{}", user_id().await?),
+        &format!("gui/{}", user_id()),
         &path_text(&paths.definition)?,
     ])
     .await;
@@ -477,7 +477,7 @@ async fn start(paths: &ServicePaths) -> Result<(), AppError> {
 async fn stop_if_loaded() -> Result<(), AppError> {
     #[cfg(target_os = "macos")]
     {
-        let uid = user_id().await?;
+        let uid = user_id();
         ensure_launchd_gui_domain(&uid).await?;
         let target = format!("gui/{uid}/{LAUNCHD_LABEL}");
         if !command_succeeds("/bin/launchctl", &["print", &target]).await? {
@@ -513,17 +513,8 @@ async fn disable_and_stop_if_loaded() -> Result<(), AppError> {
 }
 
 #[cfg(target_os = "macos")]
-async fn user_id() -> Result<String, AppError> {
-    let output = tokio::process::Command::new("/usr/bin/id")
-        .arg("-u")
-        .output()
-        .await?;
-    if !output.status.success() {
-        return Err(AppError::Internal(
-            "could not determine launchd user ID".into(),
-        ));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+fn user_id() -> String {
+    crate::util::paths::effective_uid().to_string()
 }
 
 #[cfg(target_os = "macos")]
@@ -543,7 +534,7 @@ async fn ensure_launchd_gui_domain(uid: &str) -> Result<(), AppError> {
 
 #[cfg(target_os = "macos")]
 async fn run_launchctl(args: &[&str]) -> Result<(), AppError> {
-    let uid = user_id().await?;
+    let uid = user_id();
     ensure_launchd_gui_domain(&uid).await?;
     run_command("/bin/launchctl", args).await
 }
@@ -836,6 +827,10 @@ mod tests {
         }
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the fake answers synchronously"
+    )]
     impl ServiceManager for FakeManager {
         async fn check_definition(&self, _definition: &Path) -> Result<(), AppError> {
             self.call("check")

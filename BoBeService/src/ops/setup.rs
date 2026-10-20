@@ -1,4 +1,4 @@
-use std::io::{BufRead, IsTerminal, Write};
+use std::io::{BufRead, Write};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -72,7 +72,7 @@ pub(crate) struct SetupContext {
     pub(crate) service_paths: ops::service::ServicePaths,
 }
 
-#[allow(clippy::print_stdout, reason = "setup talks to the person running it")]
+#[expect(clippy::print_stdout, reason = "setup talks to the person running it")]
 pub(crate) async fn execute(context: SetupContext) -> Result<ops::exit::ExitCode, AppError> {
     let prompt = Prompt;
     println!("BoBe setup\n");
@@ -119,7 +119,7 @@ async fn wait_reachable() -> Result<(), AppError> {
     ))
 }
 
-#[allow(clippy::print_stdout, reason = "setup talks to the person running it")]
+#[expect(clippy::print_stdout, reason = "setup talks to the person running it")]
 async fn ensure_running(context: &SetupContext) -> Result<(), AppError> {
     if reachable().await {
         return Ok(());
@@ -190,7 +190,7 @@ async fn expect_success(response: reqwest::Response) -> Result<Value, AppError> 
     Err(AppError::Validation(message))
 }
 
-#[allow(clippy::print_stdout, reason = "setup talks to the person running it")]
+#[expect(clippy::print_stdout, reason = "setup talks to the person running it")]
 async fn choose_ai(
     prompt: &Prompt,
     target: &OpsTarget,
@@ -372,7 +372,7 @@ async fn personalize(prompt: &Prompt, target: &OpsTarget) -> Result<(), AppError
     advance(target, "ready").await
 }
 
-#[allow(clippy::print_stdout, reason = "setup talks to the person running it")]
+#[expect(clippy::print_stdout, reason = "setup talks to the person running it")]
 async fn reach(
     prompt: &Prompt,
     target: &OpsTarget,
@@ -435,7 +435,7 @@ fn firewall_may_block() -> bool {
         .is_ok_and(|text| text.lines().any(|line| line.trim() == "ENABLED=yes"))
 }
 
-#[allow(clippy::print_stdout, reason = "setup talks to the person running it")]
+#[expect(clippy::print_stdout, reason = "setup talks to the person running it")]
 async fn pair(prompt: &Prompt, address: Option<&str>) -> Result<(), AppError> {
     let Some(address) = address else {
         return Ok(());
@@ -473,7 +473,7 @@ async fn pair(prompt: &Prompt, address: Option<&str>) -> Result<(), AppError> {
 
 struct Prompt;
 
-#[allow(clippy::print_stdout, reason = "setup talks to the person running it")]
+#[expect(clippy::print_stdout, reason = "setup talks to the person running it")]
 impl Prompt {
     fn line(&self, question: &str) -> Result<String, AppError> {
         print!("{question}");
@@ -488,7 +488,7 @@ impl Prompt {
     }
 
     fn secret(&self, question: &str) -> Result<String, AppError> {
-        let hidden = HiddenInput::start();
+        let hidden = crate::util::terminal::HiddenInput::start().ok().flatten();
         let answer = self.line(question);
         if hidden.is_some() {
             println!();
@@ -541,38 +541,6 @@ impl Prompt {
             if let Some(model) = models.iter().find(|model| **model == answer) {
                 return Ok(model.clone());
             }
-        }
-    }
-}
-
-struct HiddenInput {
-    original: libc::termios,
-}
-
-impl HiddenInput {
-    #[allow(unsafe_code)]
-    fn start() -> Option<Self> {
-        if !std::io::stdin().is_terminal() {
-            return None;
-        }
-        let mut original = unsafe { std::mem::zeroed::<libc::termios>() };
-        if unsafe { libc::tcgetattr(libc::STDIN_FILENO, &raw mut original) } != 0 {
-            return None;
-        }
-        let mut hidden = original;
-        hidden.c_lflag &= !libc::ECHO;
-        if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw const hidden) } != 0 {
-            return None;
-        }
-        Some(Self { original })
-    }
-}
-
-impl Drop for HiddenInput {
-    #[allow(unsafe_code)]
-    fn drop(&mut self) {
-        unsafe {
-            libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw const self.original);
         }
     }
 }

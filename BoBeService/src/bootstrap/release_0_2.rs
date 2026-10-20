@@ -68,7 +68,8 @@ mod tests {
         TABLES
             .iter()
             .map(|table| format!("CREATE TABLE {table} (id INTEGER PRIMARY KEY);"))
-            .collect()
+            .collect::<Vec<_>>()
+            .concat()
     }
 
     async fn root_with(statements: &str) -> PathBuf {

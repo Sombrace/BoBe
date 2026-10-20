@@ -1,4 +1,4 @@
-#[cfg(not(any(target_os = "macos", unix)))]
+#[cfg(not(unix))]
 compile_error!("BoBe daemon supports only macOS and Unix-family OSes (Linux, *BSD).");
 
 use std::sync::{Arc, OnceLock};
@@ -199,7 +199,7 @@ pub(crate) mod file {
                 path.display()
             )));
         }
-        let expected_uid = effective_uid();
+        let expected_uid = crate::util::paths::effective_uid();
         if metadata.uid() != expected_uid {
             return Err(super::SecretError::Backend(format!(
                 "secret store is owned by uid {}, expected {}: {}",
@@ -215,11 +215,6 @@ pub(crate) mod file {
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
         Ok(serde_json::from_slice(&bytes)?)
-    }
-
-    #[allow(unsafe_code, reason = "geteuid is a side-effect-free libc query")]
-    fn effective_uid() -> u32 {
-        unsafe { libc::geteuid() }
     }
 
     impl super::SecretStore for FileSecretStore {
@@ -259,7 +254,6 @@ pub(crate) mod file {
     }
 
     #[cfg(test)]
-    #[allow(clippy::unwrap_used, clippy::expect_used)]
     mod tests {
         use super::*;
         use crate::secrets::SecretStore;

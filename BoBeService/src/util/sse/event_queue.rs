@@ -275,7 +275,6 @@ fn lock_or_recover<'a, T>(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::util::sse::factories::text_delta_event;

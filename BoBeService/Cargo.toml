@@ -34,26 +34,24 @@ print_stderr = "warn"
 clone_on_ref_ptr = "warn"
 unwrap_used = "warn"
 expect_used = "warn"
-undocumented_unsafe_blocks = "allow"
 multiple_unsafe_ops_per_block = "warn"
 exit = "warn"
-
-
-module_name_repetitions = "allow"
-missing_errors_doc = "allow"
-must_use_candidate = "allow"
-doc_markdown = "allow"
-implicit_hasher = "allow"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+as_pointer_underscore = "warn"
+mutex_integer = "warn"
+pointer_format = "warn"
+precedence_bits = "warn"
+return_and_then = "warn"
+unnecessary_rest_pattern = "warn"
 
 struct_excessive_bools = "allow"
 struct_field_names = "allow"
-missing_fields_in_debug = "allow"
 
 unused_async = "allow"
 unused_self = "allow"
 
 needless_pass_by_value = "allow"
-implicit_clone = "allow"
 unnecessary_wraps = "allow"
 
 cast_possible_truncation = "allow"
@@ -62,14 +60,10 @@ cast_precision_loss = "allow"
 cast_possible_wrap = "allow"
 cast_lossless = "allow"
 
-return_self_not_must_use = "allow"
 similar_names = "allow"
-needless_lifetimes = "allow"
 items_after_statements = "allow"
 too_many_lines = "allow"
-incompatible_msrv = "allow"
 trivially_copy_pass_by_ref = "allow"
-unnecessary_literal_bound = "allow"
 
 [profile.release]
 opt-level = 3

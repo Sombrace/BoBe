@@ -153,7 +153,6 @@ pub(crate) async fn update_settings(
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on precondition failures")]
 mod tests {
     use super::*;
 

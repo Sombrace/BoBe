@@ -750,8 +750,10 @@ mod tests {
     async fn a_save_queued_behind_an_mcp_switch_applies_the_switched_state() {
         let root = std::env::temp_dir().join(format!("bobe-mcp-switch-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
-        let mut initial = Config::default();
-        initial.data_dir = root.to_string_lossy().into_owned();
+        let mut initial = Config {
+            data_dir: root.to_string_lossy().into_owned(),
+            ..Config::default()
+        };
         initial.mcp.enabled = true;
         let config = Arc::new(ArcSwap::from_pointee(initial));
         let lock = Arc::new(Mutex::new(()));

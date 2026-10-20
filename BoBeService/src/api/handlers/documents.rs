@@ -129,7 +129,6 @@ fn not_found<K: DocumentKind>(id: K::Id) -> AppError {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on precondition failures")]
 mod tests {
     use super::*;
     use crate::db::SqliteDocumentRepo;

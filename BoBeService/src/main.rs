@@ -26,7 +26,6 @@ mod ops;
 mod owner_token;
 mod provider;
 mod runtime;
-#[allow(unsafe_code)]
 mod secrets;
 mod services;
 mod speech;
@@ -534,7 +533,7 @@ enum InitializationCommands {
 }
 
 #[tokio::main]
-#[allow(
+#[expect(
     clippy::print_stderr,
     reason = "startup failures must be visible before tracing initializes"
 )]
@@ -1709,7 +1708,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 }
             }
         }
-        #[allow(
+        #[expect(
             clippy::print_stdout,
             reason = "CLI service commands report operator results"
         )]
@@ -1773,7 +1772,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 }
             }
         }
-        #[allow(
+        #[expect(
             clippy::print_stdout,
             reason = "backup commands report operator results"
         )]
@@ -1941,7 +1940,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 }
             }
         }
-        #[allow(
+        #[expect(
             clippy::print_stdout,
             reason = "update command reports activation result"
         )]
@@ -2216,7 +2215,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 println!("Activated BoBe standalone {}", update.version);
             }
         },
-        #[allow(clippy::print_stdout)]
+        #[expect(clippy::print_stdout, reason = "version is printed for the operator")]
         Commands::Version { json } => {
             if json {
                 let report = serde_json::json!({
@@ -2599,46 +2598,13 @@ async fn wait_for_provider_login(
     }
 }
 
-#[allow(unsafe_code)]
 fn read_provider_login_line(password: bool) -> Result<String, error::AppError> {
-    use std::io::{BufRead, IsTerminal, Read};
-    #[cfg(unix)]
-    struct EchoGuard {
-        fd: std::os::fd::RawFd,
-        original: libc::termios,
-    }
-    #[cfg(unix)]
-    impl Drop for EchoGuard {
-        fn drop(&mut self) {
-            if unsafe { libc::tcsetattr(self.fd, libc::TCSANOW, &raw const self.original) } != 0 {
-                tracing::error!(error = %std::io::Error::last_os_error(), "provider.login_terminal_restore_failed");
-            }
-        }
-    }
-    #[cfg(unix)]
-    let _echo = if password && std::io::stdin().is_terminal() {
-        use std::os::fd::AsRawFd;
-        let fd = std::io::stdin().as_raw_fd();
-        let mut attributes = std::mem::MaybeUninit::<libc::termios>::uninit();
-        if unsafe { libc::tcgetattr(fd, attributes.as_mut_ptr()) } != 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        let original = unsafe { attributes.assume_init() };
-        let mut hidden = original;
-        hidden.c_lflag &= !libc::ECHO;
-        if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw const hidden) } != 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        Some(EchoGuard { fd, original })
+    use std::io::{BufRead, Read};
+    let _echo = if password {
+        util::terminal::HiddenInput::start()?
     } else {
         None
     };
-    #[cfg(not(unix))]
-    if password && std::io::stdin().is_terminal() {
-        return Err(error::AppError::Validation(
-            "private login input must be piped through stdin".into(),
-        ));
-    }
     let mut bytes = Vec::new();
     let read = std::io::stdin()
         .lock()
@@ -2660,7 +2626,10 @@ fn read_provider_login_line(password: bool) -> Result<String, error::AppError> {
     Ok(value)
 }
 
-#[allow(clippy::print_stderr)]
+#[expect(
+    clippy::print_stderr,
+    reason = "sign-in progress is shown on the terminal"
+)]
 fn print_login_phase(phase: &serde_json::Value) {
     match phase["phase"].as_str() {
         Some("preparing") => eprintln!("Preparing provider sign-in..."),
@@ -2768,7 +2737,7 @@ fn parse_duration(value: &str) -> Result<std::time::Duration, String> {
     }
 }
 
-#[allow(clippy::print_stdout)]
+#[expect(clippy::print_stdout, reason = "CLI reports are written to stdout")]
 fn emit_report<T: serde::Serialize>(json: bool, report: &T, human: String) {
     if json {
         match serde_json::to_string_pretty(report) {
@@ -3187,7 +3156,6 @@ async fn run_graceful_shutdown(state: &Arc<app_state::AppState>) {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on invalid CLI fixtures")]
 mod tests {
     #[test]
     fn a_managed_daemon_stops_once_its_app_is_no_longer_its_parent() {

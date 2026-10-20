@@ -1,4 +1,4 @@
-#![allow(
+#![expect(
     clippy::print_stdout,
     clippy::print_stderr,
     reason = "interactive CLI chat streams assistant and tool events"

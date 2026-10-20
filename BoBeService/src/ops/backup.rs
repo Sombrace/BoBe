@@ -2208,7 +2208,7 @@ mod tests {
         ));
         assert!(points.len() > committed + 1);
 
-        for interrupted_at in 0..points.len() {
+        for (interrupted_at, point) in points.iter().enumerate() {
             let fixture = restore_fixture().await;
             let live = tracked_state(&fixture).await;
             let mut reached = 0;
@@ -2227,8 +2227,7 @@ mod tests {
             assert!(error.to_string().contains("interrupted"), "{error}");
             assert!(
                 fixture.config.with_file_name(RESTORE_JOURNAL).exists(),
-                "step {interrupted_at}: {:?}",
-                points[interrupted_at]
+                "step {interrupted_at}: {point:?}"
             );
 
             reconcile_interrupted_restore(fixture.config.parent().unwrap())
@@ -2241,19 +2240,11 @@ mod tests {
                 let database = expected.pop().unwrap();
                 let mut actual = state.clone();
                 actual.pop();
-                assert_eq!(
-                    actual, expected,
-                    "step {interrupted_at}: {:?}",
-                    points[interrupted_at]
-                );
+                assert_eq!(actual, expected, "step {interrupted_at}: {point:?}");
                 assert!(database.1.is_some());
                 assert_eq!(read_authority(&fixture.database).await.unwrap().1, 8);
             } else {
-                assert_eq!(
-                    state, live,
-                    "step {interrupted_at}: {:?}",
-                    points[interrupted_at]
-                );
+                assert_eq!(state, live, "step {interrupted_at}: {point:?}");
                 assert_eq!(read_authority(&fixture.database).await.unwrap().1, 7);
             }
             assert!(

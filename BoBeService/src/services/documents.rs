@@ -112,7 +112,6 @@ fn validate_content(content: &str) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on precondition failures")]
 mod tests {
     use super::*;
     use crate::db::test_helpers::in_memory_pool;

@@ -9,5 +9,6 @@ pub(crate) mod paths;
 pub(crate) mod process_group;
 pub(crate) mod runtime_lock;
 pub(crate) mod sse;
+pub(crate) mod terminal;
 pub(crate) mod text;
 pub(crate) mod tls;

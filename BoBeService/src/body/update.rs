@@ -385,7 +385,6 @@ fn reject_unknown_or_duplicate(keys: &[String], allowed: &[&str]) -> Result<(), 
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used, clippy::unwrap_used)]
 
     use super::*;
 

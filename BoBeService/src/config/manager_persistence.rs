@@ -191,7 +191,6 @@ fn json_to_toml_item(value: &serde_json::Value) -> toml_edit::Item {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on fixture failures")]
 mod tests {
     use std::collections::BTreeMap;
 

@@ -408,7 +408,6 @@ impl std::fmt::Debug for ConversationService {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
 
     use super::*;
     use crate::db::test_helpers::in_memory_pool;

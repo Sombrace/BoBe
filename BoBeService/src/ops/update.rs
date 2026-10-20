@@ -810,6 +810,10 @@ mod tests {
         }
     }
 
+    #[expect(
+        clippy::unused_async_trait_impl,
+        reason = "the fake answers synchronously"
+    )]
     impl UpdateHost for FakeHost {
         async fn stop_service(&self) -> Result<(), AppError> {
             self.record("stop".into());

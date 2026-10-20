@@ -253,7 +253,6 @@ async fn unused_copy_name<K: DocumentKind>(
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on precondition failures")]
 mod tests {
     use super::*;
     use crate::db::test_helpers::in_memory_pool;

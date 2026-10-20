@@ -141,7 +141,6 @@ fn load_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>, String
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on serialization failures")]
 mod tests {
     use super::*;
 

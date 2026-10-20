@@ -342,7 +342,6 @@ async fn wait_for_cancel(cancel_rx: &mut watch::Receiver<bool>) {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
 
     use std::convert::Infallible;
     use std::sync::Arc;

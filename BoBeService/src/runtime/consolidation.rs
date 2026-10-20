@@ -186,7 +186,6 @@ fn duration_until_next(fire_at: NaiveTime, now_utc: DateTime<Utc>) -> Duration {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, reason = "tests panic on precondition failures")]
 mod tests {
     use super::*;
 

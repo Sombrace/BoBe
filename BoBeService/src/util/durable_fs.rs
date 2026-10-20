@@ -197,7 +197,6 @@ fn sync_directory_sync(path: &Path) -> Result<(), AppError> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, reason = "tests panic on precondition failures")]
 mod tests {
     use super::*;
 

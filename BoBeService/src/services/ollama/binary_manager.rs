@@ -311,7 +311,6 @@ async fn wait_for_cancel(cancel_rx: &mut watch::Receiver<bool>) {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::float_cmp)]
     use super::BinaryManager;
     use super::download::current_artifact;
     use std::path::PathBuf;

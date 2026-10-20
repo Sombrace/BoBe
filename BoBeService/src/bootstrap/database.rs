@@ -412,7 +412,6 @@ fn rename_frontmatter(content: &str, name: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, reason = "tests panic on precondition failures")]
 mod tests {
     use std::collections::BTreeMap;
 

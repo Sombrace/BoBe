@@ -53,11 +53,11 @@ impl DataPaths {
                 std::fs::set_permissions(&self.root, std::fs::Permissions::from_mode(0o700))?;
             }
             let metadata = std::fs::metadata(&self.root)?;
-            if metadata.uid() != unsafe_effective_uid() {
+            if metadata.uid() != effective_uid() {
                 return Err(AppError::Config(format!(
                     "data root is owned by uid {}, expected {}: {}",
                     metadata.uid(),
-                    unsafe_effective_uid(),
+                    effective_uid(),
                     self.root.display()
                 )));
             }
@@ -169,11 +169,11 @@ pub(crate) fn validate_private_directory(path: &Path, purpose: &str) -> Result<(
             path.display()
         )));
     }
-    if metadata.uid() != unsafe_effective_uid() {
+    if metadata.uid() != effective_uid() {
         return Err(AppError::Config(format!(
             "{purpose} is owned by uid {}, expected {}: {}",
             metadata.uid(),
-            unsafe_effective_uid(),
+            effective_uid(),
             path.display()
         )));
     }
@@ -215,11 +215,11 @@ pub(crate) fn validate_private_tree(root: &Path, purpose: &str) -> Result<(), Ap
                 path.display()
             )));
         }
-        if metadata.uid() != unsafe_effective_uid() {
+        if metadata.uid() != effective_uid() {
             return Err(AppError::Config(format!(
                 "{purpose} entry is owned by uid {}, expected {}: {}",
                 metadata.uid(),
-                unsafe_effective_uid(),
+                effective_uid(),
                 path.display()
             )));
         }
@@ -353,14 +353,12 @@ fn sqlite_file_path(database_url: &str) -> Option<&str> {
     Some(raw.split('?').next().unwrap_or(raw))
 }
 
-#[cfg(unix)]
-#[allow(unsafe_code, reason = "geteuid is a side-effect-free libc query")]
-fn unsafe_effective_uid() -> u32 {
+#[expect(unsafe_code, reason = "geteuid has no std wrapper")]
+pub(crate) fn effective_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 

@@ -159,10 +159,6 @@ fn prune_daily_logs(config: &crate::config::LoggingConfig) -> std::io::Result<(u
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    reason = "tests panic on fixture setup and assertions"
-)]
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;

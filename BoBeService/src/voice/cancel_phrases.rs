@@ -1,10 +1,5 @@
-use std::sync::LazyLock;
-
-use regex::Regex;
-
-static CANCEL_PHRASE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    #[allow(clippy::expect_used)]
-    Regex::new(
+pub(crate) fn is_cancel_phrase(partial: &str) -> bool {
+    regex::regex!(
         r"(?ix)
         \b(
             stop                   |
@@ -16,13 +11,9 @@ static CANCEL_PHRASE_RE: LazyLock<Regex> = LazyLock::new(|| {
             hold\s+on\s+hold\s+on  |
             forget\s+it            |
             be\s+quiet
-        )\b",
+        )\b"
     )
-    .expect("cancel-phrase regex must compile")
-});
-
-pub(crate) fn is_cancel_phrase(partial: &str) -> bool {
-    CANCEL_PHRASE_RE.is_match(partial)
+    .is_match(partial)
 }
 
 #[cfg(test)]

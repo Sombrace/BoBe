@@ -45,7 +45,6 @@ pub(crate) fn tail_str(s: &str, max_bytes: usize) -> &str {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::{constant_time_eq, hex_decode, hex_encode, tail_str, truncate_str};
 

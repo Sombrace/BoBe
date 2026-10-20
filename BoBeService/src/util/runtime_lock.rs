@@ -127,7 +127,6 @@ fn read_holder(file: &mut File) -> Option<HolderInfo> {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 

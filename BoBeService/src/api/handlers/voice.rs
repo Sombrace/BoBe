@@ -209,11 +209,6 @@ pub(super) fn upgrade_voice(
         .into_response()
 }
 
-#[allow(
-    clippy::collapsible_match,
-    reason = "outer match has Binary/Close arms that prevent if-let collapse; \
-              async call also disallows match guards"
-)]
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>, principal: Principal) {
     let engines = VoiceEngines::from_state(&state);
 

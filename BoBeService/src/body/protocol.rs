@@ -368,7 +368,6 @@ pub(crate) fn control_type(value: &serde_json::Value) -> Option<&str> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
 
     use super::*;
 

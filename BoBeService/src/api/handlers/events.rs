@@ -130,7 +130,6 @@ fn to_sse_event(bundle: &StreamBundle) -> Event {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::expect_used)]
 
     use crate::util::sse::factories::text_delta_event;
 
