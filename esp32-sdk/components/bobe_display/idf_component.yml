@@ -2,13 +2,13 @@
   "version": "0.2.0",
   "description": "esp-bobe bobe_display",
   "dependencies": {
-    "idf": ">=6.0.2,<6.2",
+    "idf": ">=6.1,<6.2",
     "espressif/esp_lvgl_port": {
-      "version": "==2.8.0~1",
+      "version": "==2.9.0",
       "require": "public"
     },
     "lvgl/lvgl": {
-      "version": "==9.5.0",
+      "version": "==9.6.0~1",
       "require": "public"
     }
   }

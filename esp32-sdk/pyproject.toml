@@ -9,7 +9,7 @@ package = false
 default-groups = []
 
 [dependency-groups]
-dev = ["pyright>=1.1.411"]
+dev = ["pyright>=1.1.414"]
 
 [tool.pyright]
 include = ["tools", "tests/python"]

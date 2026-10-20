@@ -153,7 +153,7 @@ esp_err_t bobe_update_install(const bobe_update_manifest_t *manifest)
         memcmp(digest, manifest->image_sha256, sizeof(digest)) == 0) {
         result = esp_ota_end(ota);
         if (result == ESP_OK) {
-            result = esp_ota_set_boot_partition(target);
+            result = esp_ota_set_boot_partition_skip_validate(target);
         }
     } else {
         psa_hash_abort(&hash);

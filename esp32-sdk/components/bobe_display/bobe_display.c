@@ -35,6 +35,7 @@ static SemaphoreHandle_t flush_completion;
 static StaticSemaphore_t flush_completion_state;
 static esp_lcd_panel_io_handle_t panel_io;
 static esp_lcd_panel_handle_t panel;
+static bool swap_color_bytes;
 static atomic_bool microphone_active;
 static atomic_bool flush_pending;
 static atomic_uint flush_started_us;
@@ -134,7 +135,9 @@ static void display_flush(
 {
     (void)display;
     (void)xSemaphoreTake(flush_completion, 0);
-    lv_draw_sw_rgb565_swap(color_map, lv_area_get_size(area));
+    if (swap_color_bytes) {
+        lv_draw_rgb565_swap(color_map, lv_area_get_size(area));
+    }
     atomic_store_explicit(
         &flush_started_us,
         (unsigned int)esp_timer_get_time(),
@@ -311,6 +314,7 @@ esp_err_t bobe_display_init(void)
 
     panel_io = board_display.io;
     panel = board_display.panel;
+    swap_color_bytes = board_display.swap_color_bytes;
 
     face_queue = xQueueCreate(1, sizeof(bobe_face_state_t));
     if (face_queue == NULL) {

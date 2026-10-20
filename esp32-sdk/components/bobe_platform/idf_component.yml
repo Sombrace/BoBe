@@ -4,4 +4,4 @@ files:
   include: ["CMakeLists.txt", "idf_component.yml", "*.c", "*.h", "include/**/*.h"]
 description: "ESP-IDF claim storage and task configuration for BoBe components"
 dependencies:
-  idf: ">=6.0.2,<6.2"
+  idf: ">=6.1,<6.2"

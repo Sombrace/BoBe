@@ -2,16 +2,15 @@
 #include "bobe_device_config.h"
 
 #include "lvgl.h"
-#include "src/debugging/test/lv_test_display.h"
 
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#if LVGL_VERSION_MAJOR != 9 || LVGL_VERSION_MINOR != 5 || \
+#if LVGL_VERSION_MAJOR != 9 || LVGL_VERSION_MINOR != 6 || \
     LVGL_VERSION_PATCH != 0
-#error "The UI references require the pinned LVGL 9.5.0"
+#error "The UI references require the pinned LVGL 9.6.0"
 #endif
 
 typedef struct {

@@ -4,6 +4,7 @@
 
 #include "bobe_provisioning_credentials.h"
 #include "bobe_claim.h"
+#include "bobe_protocol.h"
 #include "bobe_storage.h"
 #include "bobe_task_config.h"
 #include "cJSON.h"
@@ -84,21 +85,6 @@ static void stop_provisioning_httpd(void)
     }
 }
 #endif
-
-static bool contains_nul_escape(const uint8_t *input, size_t input_size)
-{
-    for (size_t index = 0; index + 5U < input_size; ++index) {
-        if (input[index] == '\\') {
-            if (input[index + 1U] == 'u' &&
-                input[index + 2U] == '0' && input[index + 3U] == '0' &&
-                input[index + 4U] == '0' && input[index + 5U] == '0') {
-                return true;
-            }
-            ++index;
-        }
-    }
-    return false;
-}
 
 static bool claim_schema_is_valid(const cJSON *root)
 {
@@ -391,7 +377,7 @@ static esp_err_t claim_handler(
     if (input == NULL || input_length <= 0 || input_length > 16384 ||
         output == NULL || output_length == NULL ||
         memchr(input, '\0', (size_t)input_length) != NULL ||
-        contains_nul_escape(input, (size_t)input_length)) {
+        !bobe_json_escapes_valid((const char *)input, (size_t)input_length)) {
         ESP_LOGW(
             TAG,
             "claim rejected before parsing: bytes=%d",
@@ -572,6 +558,9 @@ static void provisioning_control_task(void *unused)
     if (atomic_load(&provisioning_complete)) {
         vTaskDelay(pdMS_TO_TICKS(1500));
     }
+#if defined(CONFIG_BOBE_PROVISIONING_TRANSPORT_SOFTAP)
+    stop_provisioning_httpd();
+#endif
     if (atomic_load(&running)) {
         network_prov_mgr_stop_provisioning();
     }
@@ -899,6 +888,9 @@ esp_err_t bobe_provisioning_start(
     return ESP_OK;
 
 stop:
+#if defined(CONFIG_BOBE_PROVISIONING_TRANSPORT_SOFTAP)
+    stop_provisioning_httpd();
+#endif
     network_prov_mgr_stop_provisioning();
     control_task = (TaskHandle_t)atomic_exchange(
         &control_task_handle,

@@ -2,7 +2,7 @@ dependencies:
   bobe_client:
     dependencies:
     - name: idf
-      version: '>=6.0.2,<6.2'
+      version: '>=6.1,<6.2'
     - name: bobe_protocol
       path: ../bobe_protocol
       require: public
@@ -15,7 +15,7 @@ dependencies:
   bobe_platform:
     dependencies:
     - name: idf
-      version: '>=6.0.2,<6.2'
+      version: '>=6.1,<6.2'
     source:
       path: ../../components/bobe_platform
       type: local
@@ -23,7 +23,7 @@ dependencies:
   bobe_protocol:
     dependencies:
     - name: idf
-      version: '>=6.0.2,<6.2'
+      version: '>=6.1,<6.2'
     - name: espressif/cjson
       require: public
       version: ==1.7.19~2
@@ -34,7 +34,7 @@ dependencies:
   bobe_transport:
     dependencies:
     - name: idf
-      version: '>=6.0.2,<6.2'
+      version: '>=6.1,<6.2'
     - name: bobe_platform
       path: ../bobe_platform
       require: public
@@ -43,7 +43,7 @@ dependencies:
       require: public
     - name: espressif/esp_websocket_client
       require: public
-      version: ==1.7.0
+      version: ==1.8.0
     source:
       path: ../../components/bobe_transport
       type: local
@@ -59,7 +59,7 @@ dependencies:
       type: service
     version: 1.7.19~2
   espressif/esp_websocket_client:
-    component_hash: 3fb288702517ef4d75bf933a115f1056ee0c2540d964f9e1d856e0bb67e1dfeb
+    component_hash: dc00233af846f3a744ada283a300e0d586040aadc3ee67361645ecdce4523672
     dependencies:
     - name: idf
       require: private
@@ -67,7 +67,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.7.0
+    version: 1.8.0
   espressif/ethernet_init:
     component_hash: 6268f857d06a1c414d38d38d74632e0d94074f8f653106bfa4a1d475a74f8fe0
     dependencies:
@@ -215,5 +215,5 @@ direct_dependencies:
 - bobe_client
 - espressif/ethernet_init
 manifest_hash: 77a15b0d126f5584905569757d282fa52d5abefebdc1bdecec335574ea95e029
-target: esp32c3
+target: esp32
 version: 3.0.0

@@ -1,0 +1,11 @@
+[mapping:bobe_esp_sr_nsnet3]
+archive: libnsnet3.a
+entries:
+    if ESP_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (extram_bss)
+
+[mapping:bobe_esp_dl]
+archive: libespressif__esp-dl.a
+entries:
+    if ESP_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        * (extram_bss)

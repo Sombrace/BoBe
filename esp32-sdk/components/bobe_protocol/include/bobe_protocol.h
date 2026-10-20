@@ -189,6 +189,7 @@ typedef struct {
 
 uint8_t bobe_capabilities_protocol_minor(const bobe_capabilities_t *capabilities);
 bool bobe_utf8_valid(const char *input, size_t length);
+bool bobe_json_escapes_valid(const char *input, size_t length);
 
 bobe_protocol_result_t bobe_protocol_build_text_input(
     char *output, size_t capacity, const char *request_id, const char *text

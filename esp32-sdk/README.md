@@ -31,10 +31,11 @@ tools/idf.sh -C examples/text_terminal build
 tools/idf.sh -C examples/text_terminal -p PORT flash monitor
 ```
 
-`tools/bootstrap.sh` installs ESP-IDF 6.1 into `.deps/`; `BOBE_IDF_VERSION=6.0.2`
-installs the version the WB-12 uses. `uv run --locked python tools/doctor.py`
-reports what is missing. Set Wi-Fi under **Example Connection Configuration**.
-The sensor node's button is off by default; check the pinout before enabling it.
+`tools/bootstrap.sh` installs into `.deps/` the ESP-IDF 6.1 commit that
+[`tools/esp-idf.lock`](tools/esp-idf.lock) pins for every example and the WB-12.
+`uv run --locked python tools/doctor.py` reports what is missing. Set Wi-Fi
+under **Example Connection Configuration**. The sensor node's button is off by
+default; check the pinout before enabling it.
 Only the last command writes to the device.
 
 ## Create a project

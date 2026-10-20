@@ -748,6 +748,7 @@ static void transport_tx_task(void *unused)
         }
         if (atomic_exchange(&restart_requested, false) &&
             atomic_load(&desired_running)) {
+            (void)esp_websocket_client_stop(client);
             const esp_err_t result = start_client_task();
             if (result != ESP_OK) {
                 publish_error(result);

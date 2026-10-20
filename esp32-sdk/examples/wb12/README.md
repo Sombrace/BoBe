@@ -29,7 +29,7 @@ tools/bootstrap_idf.sh
 tools/check.sh
 ```
 
-`bootstrap_idf.sh` installs ESP-IDF 6.0.2 into the SDK's `.deps/`. `check.sh`
+`bootstrap_idf.sh` installs the pinned ESP-IDF 6.1 into the SDK's `.deps/`. `check.sh`
 runs every host test and profile build on macOS without flashing; pass
 `core-policy`, `ui`, `fixture` or `capture` to run one part, or `ui-regenerate`
 to rewrite the UI reference hashes.

@@ -469,6 +469,27 @@ class ProvisioningCredentialBundleTests(unittest.TestCase):
 
 
 class BoBeProvisioningToolTests(unittest.TestCase):
+    @unittest.skipUnless(
+        provision_tool.ESP_PROV.is_dir() and provision_tool.IDF_PATH.is_dir(),
+        "esp_prov ships with the resolved network_provisioning component",
+    )
+    def test_esp_prov_loads_in_the_tool_environment(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import provision_bobe; "
+                "_, security, transport, _ = provision_bobe.load_esp_prov(); "
+                "print(security.Security2.__name__, transport.Transport_HTTP.__name__)",
+            ],
+            cwd=TOOLS,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "Security2 Transport_HTTP")
+
     @staticmethod
     def write_inputs(root: Path, claim_device_id: str = "device-1") -> tuple[Path, Path]:
         credentials = root / "credentials.json"
