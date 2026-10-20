@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
@@ -28,8 +29,8 @@ fn main() {
 }
 
 fn build() -> Result<(), Box<dyn Error>> {
-    println!("cargo:rerun-if-changed=build.rs");
-    println!("cargo:rerun-if-env-changed=SHERPA_ONNX_ARCHIVE_DIR");
+    println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-env-changed=SHERPA_ONNX_ARCHIVE_DIR");
     if env::var_os("DOCS_RS").is_some() {
         return Ok(());
     }
@@ -73,21 +74,21 @@ fn build() -> Result<(), Box<dyn Error>> {
             );
         }
     }
-    println!("cargo:rustc-link-search=native={}", lib.display());
+    println!("cargo::rustc-link-search=native={}", lib.display());
     for name in LIBRARIES {
         if !lib.join(format!("lib{name}.a")).is_file() {
             return Err(format!("recognition-only runtime is missing lib{name}.a").into());
         }
-        println!("cargo:rustc-link-lib=static={name}");
+        println!("cargo::rustc-link-lib=static={name}");
     }
     match os.as_str() {
         "macos" => {
-            println!("cargo:rustc-link-lib=dylib=c++");
-            println!("cargo:rustc-link-lib=framework=Foundation");
+            println!("cargo::rustc-link-lib=dylib=c++");
+            println!("cargo::rustc-link-lib=framework=Foundation");
         }
         "linux" => {
             for name in ["stdc++", "m", "pthread", "dl"] {
-                println!("cargo:rustc-link-lib=dylib={name}");
+                println!("cargo::rustc-link-lib=dylib={name}");
             }
         }
         _ => unreachable!(),
@@ -109,14 +110,13 @@ fn prepare_archive(path: &Path, filename: &str, expected: &str) -> Result<(), Bo
                 let url = format!(
                     "https://github.com/k2-fsa/sherpa-onnx/releases/download/v{VERSION}/{filename}"
                 );
-                let response = ureq::builder()
-                    .try_proxy_from_env(true)
-                    .timeout_connect(std::time::Duration::from_secs(30))
-                    .timeout_read(std::time::Duration::from_secs(120))
+                let agent: ureq::Agent = ureq::Agent::config_builder()
+                    .timeout_connect(Some(Duration::from_secs(30)))
+                    .timeout_recv_response(Some(Duration::from_secs(120)))
+                    .timeout_recv_body(Some(Duration::from_secs(900)))
                     .build()
-                    .get(&url)
-                    .call()?;
-                response.into_reader()
+                    .into();
+                Box::new(agent.get(&url).call()?.into_body().into_reader())
             };
         let bytes = std::io::copy(&mut input.by_ref().take(MAX_ARCHIVE_BYTES + 1), &mut output)?;
         if bytes > MAX_ARCHIVE_BYTES {

@@ -71,8 +71,8 @@ pub(crate) async fn create_live(
         .database_file()
         .ok_or_else(|| AppError::Config("backup requires a file-backed SQLite database".into()))?;
     let snapshot = database.with_extension(format!("bobe-snapshot-{}", uuid::Uuid::new_v4()));
-    let escaped = snapshot.to_string_lossy().replace('\'', "''");
-    sqlx::query(sqlx::AssertSqlSafe(format!("VACUUM INTO '{escaped}'")))
+    sqlx::query("VACUUM INTO ?1")
+        .bind(snapshot.to_string_lossy().as_ref())
         .execute(pool)
         .await?;
     let result = async {

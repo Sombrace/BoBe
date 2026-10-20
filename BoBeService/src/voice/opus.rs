@@ -1,7 +1,7 @@
 use opusic_c::{Application, Bitrate, Channels, Encoder as OpusEncoder, SampleRate};
 use tracing::warn;
 
-const TTS_OPUS_BITRATE_BPS: i32 = 24_000;
+const TTS_OPUS_BITRATE_BPS: u32 = 24_000;
 
 pub(crate) struct PcmPacketizer {
     pending: Vec<f32>,
@@ -25,13 +25,12 @@ impl PcmPacketizer {
         let complete = self.pending.len() / self.frame_samples * self.frame_samples;
         let mut packets = Vec::new();
         for frame in self.pending[..complete].chunks_exact(self.frame_samples) {
-            let mut packet = vec![0; 1500];
-            let n = encoder
-                .encode_float_to_slice(frame, &mut packet)
+            let mut packet = Vec::with_capacity(1500);
+            encoder
+                .encode_float_to_vec(frame, &mut packet)
                 .map_err(|e| {
                     crate::error::AppError::Internal(format!("Opus encoding failed: {e:?}"))
                 })?;
-            packet.truncate(n);
             packets.push(packet);
         }
         self.pending.drain(..complete);
@@ -69,7 +68,7 @@ pub(crate) fn make_opus_encoder(sample_rate: u32) -> Option<OpusEncoder> {
             return None;
         }
     };
-    if let Err(e) = encoder.set_bitrate(Bitrate::Value(TTS_OPUS_BITRATE_BPS as u32)) {
+    if let Err(e) = encoder.set_bitrate(Bitrate::Value(TTS_OPUS_BITRATE_BPS)) {
         warn!(error = ?e, "voice.opus_bitrate_failed");
     }
     Some(encoder)
@@ -87,12 +86,9 @@ pub(crate) fn encode_pcm_with(
         if input.len() < frame_samples {
             input.resize(frame_samples, 0.0);
         }
-        let mut out = vec![0_u8; 1500];
-        match encoder.encode_float_to_slice(&input, &mut out) {
-            Ok(n) => {
-                out.truncate(n);
-                frames.push(out);
-            }
+        let mut out = Vec::with_capacity(1500);
+        match encoder.encode_float_to_vec(&input, &mut out) {
+            Ok(_) => frames.push(out),
             Err(e) => {
                 warn!(error = ?e, "voice.opus_encode_failed");
                 break;

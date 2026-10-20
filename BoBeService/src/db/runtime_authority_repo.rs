@@ -31,19 +31,17 @@ pub(crate) async fn claim(
          (singleton, authority_id, authority_epoch, data_root)
          VALUES (1, ?, 1, ?)",
     )
-    .bind(proposed_authority.as_bytes().as_slice())
+    .bind(proposed_authority)
     .bind(&data_root)
     .execute(&mut *transaction)
     .await?;
 
-    let (authority_bytes, authority_epoch, stored_root): (Vec<u8>, i64, String) = sqlx::query_as(
+    let (runtime_authority_id, authority_epoch, stored_root): (Uuid, i64, String) = sqlx::query_as(
         "SELECT authority_id, authority_epoch, data_root
          FROM runtime_authority WHERE singleton = 1",
     )
     .fetch_one(&mut *transaction)
     .await?;
-    let runtime_authority_id = Uuid::from_slice(&authority_bytes)
-        .map_err(|error| AppError::Internal(format!("invalid runtime authority UUID: {error}")))?;
     transaction.commit().await?;
 
     if stored_root != data_root {

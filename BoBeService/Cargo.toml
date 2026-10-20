@@ -94,7 +94,7 @@ schemars = "1.2.3"
 secrecy = { version = "0.10", features = ["serde"] }
 sqlx = { version = "0.9.0", default-features = false, features = [
     "runtime-tokio",
-    "sqlite",
+    "sqlite-bundled",
     "uuid",
     "chrono",
     "derive",
@@ -144,7 +144,7 @@ rustls = { version = "0.23.46", default-features = false, features = [
 ] }
 flate2 = "1.1.10"
 tar = "0.4.46"
-zstd = "0.14.3"
+zstd = { version = "0.14.3", default-features = false }
 bzip2 = "0.6.1"
 sherpa-onnx = "=1.13.8"
 ptts = { version = "=0.4.0-rc.2", default-features = false, features = ["hf"] }
