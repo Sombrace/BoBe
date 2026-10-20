@@ -8,6 +8,7 @@ use axum::response::{IntoResponse, Response};
 use futures::{SinkExt, StreamExt};
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
 
 use super::gateway::{AdapterInputDisposition, BodyGateway};
@@ -32,8 +33,8 @@ fn spawn_writer(
     mut sink: futures::stream::SplitSink<WebSocket, Message>,
     mut receiver: OutboundReceiver,
     disconnect: CancellationToken,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
+) -> AbortOnDropHandle<()> {
+    AbortOnDropHandle::new(tokio::spawn(async move {
         while let Some(outbound) = receiver.recv().await {
             let delivered = matches!(
                 tokio::time::timeout(SEND_TIMEOUT, sink.send(outbound.message)).await,
@@ -48,7 +49,7 @@ fn spawn_writer(
         }
         drop(tokio::time::timeout(SEND_TIMEOUT, sink.close()).await);
         disconnect.cancel();
-    })
+    }))
 }
 
 async fn first_text(stream: &mut futures::stream::SplitStream<WebSocket>) -> Option<String> {
@@ -184,7 +185,6 @@ async fn handle_body(
         gateway
             .unregister_body(&hello.device_id, registration.generation)
             .await;
-        writer.abort();
         return;
     }
     if capabilities.display.is_some()
@@ -195,7 +195,6 @@ async fn handle_body(
         gateway
             .unregister_body(&hello.device_id, registration.generation)
             .await;
-        writer.abort();
         return;
     }
     info!(
@@ -578,7 +577,6 @@ async fn handle_adapter(socket: WebSocket, gateway: Arc<BodyGateway>) {
     drop(welcome_guard);
     if !welcome_sent {
         gateway.unregister_adapter(generation).await;
-        writer.abort();
         return;
     }
     info!(adapter_generation = generation, "body.adapter_connected");

@@ -983,13 +983,8 @@ mod tests {
         let pid = tokio::fs::read_to_string(root.join("workspace/timeout.pid"))
             .await
             .unwrap();
-        let alive = tokio::process::Command::new("kill")
-            .args(["-0", pid.trim()])
-            .output()
-            .await
-            .unwrap();
         assert!(
-            !alive.status.success(),
+            !crate::util::process_group::group_exists(pid.trim().parse().unwrap()),
             "timed-out native tool must be settled before failure is returned"
         );
         assert!(!root.join("workspace/timeout-result.txt").exists());
@@ -1027,18 +1022,10 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let alive = tokio::process::Command::new("kill")
-            .args(["-0", crash_pid.trim()])
-            .output()
-            .await
-            .unwrap();
-        let survived = alive.status.success();
+        let crash_pid: u32 = crash_pid.trim().parse().unwrap();
+        let survived = crate::util::process_group::group_exists(crash_pid);
         if survived {
-            tokio::process::Command::new("kill")
-                .args(["-KILL", "--", &format!("-{}", crash_pid.trim())])
-                .output()
-                .await
-                .unwrap();
+            crate::util::process_group::signal_group(crash_pid, libc::SIGKILL);
         }
         runtime.host.shutdown().await.unwrap();
         server.abort();

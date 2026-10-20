@@ -280,6 +280,12 @@ pub(crate) fn bobe_data_dir() -> Result<PathBuf, AppError> {
         .ok_or_else(|| AppError::Config("HOME is unavailable; set BOBE_DATA_DIR explicitly".into()))
 }
 
+pub(crate) fn home_dir() -> Result<PathBuf, AppError> {
+    std::env::home_dir()
+        .filter(|home| !home.as_os_str().is_empty())
+        .ok_or_else(|| AppError::Config("HOME is unavailable".into()))
+}
+
 fn absolute_lexical(path: &Path) -> Result<PathBuf, AppError> {
     let absolute = if path.is_absolute() {
         path.to_path_buf()

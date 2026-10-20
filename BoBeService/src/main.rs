@@ -376,7 +376,7 @@ enum ProviderCommands {
         id: String,
         #[arg(long, value_enum)]
         kind: provider::ProviderKind,
-        #[arg(long, value_enum, default_value = "api-key")]
+        #[arg(long, value_enum, default_value_t = provider::ProviderAuthMethod::ApiKey)]
         auth_method: provider::ProviderAuthMethod,
         #[arg(long)]
         base_url: Option<String>,
@@ -395,7 +395,7 @@ enum ProviderCommands {
         id: String,
         #[arg(long, value_enum)]
         kind: provider::ProviderKind,
-        #[arg(long, value_enum, default_value = "api-key")]
+        #[arg(long, value_enum, default_value_t = provider::ProviderAuthMethod::ApiKey)]
         auth_method: provider::ProviderAuthMethod,
         #[arg(long)]
         base_url: Option<String>,
@@ -826,10 +826,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
         }
         Commands::Setup => {
             let loaded = config::Config::load_operational()?;
-            let home = std::env::var_os("HOME")
-                .filter(|value| !value.is_empty())
-                .map(std::path::PathBuf::from)
-                .ok_or_else(|| error::AppError::Config("HOME is unavailable".into()))?;
+            let home = util::paths::home_dir()?;
             let service_paths = ops::service::paths(
                 &home,
                 loaded.paths.root(),
@@ -1714,10 +1711,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
         )]
         Commands::Service { command } => {
             let loaded = config::Config::load_operational()?;
-            let home = std::env::var_os("HOME")
-                .filter(|value| !value.is_empty())
-                .map(std::path::PathBuf::from)
-                .ok_or_else(|| error::AppError::Config("HOME is unavailable".into()))?;
+            let home = util::paths::home_dir()?;
             let service_paths = ops::service::paths(
                 &home,
                 loaded.paths.root(),
@@ -1843,10 +1837,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                         &bootstrap::database::SUPPORTED_SCHEMA_VERSIONS,
                     )
                     .await?;
-                    let home = std::env::var_os("HOME")
-                        .filter(|value| !value.is_empty())
-                        .map(std::path::PathBuf::from)
-                        .ok_or_else(|| error::AppError::Config("HOME is unavailable".into()))?;
+                    let home = util::paths::home_dir()?;
                     let service_paths = ops::service::paths(
                         &home,
                         paths.root(),
@@ -1951,10 +1942,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                 archive,
             } => {
                 let loaded = config::Config::load_reconciled().await?;
-                let home = std::env::var_os("HOME")
-                    .filter(|value| !value.is_empty())
-                    .map(std::path::PathBuf::from)
-                    .ok_or_else(|| error::AppError::Config("HOME is unavailable".into()))?;
+                let home = util::paths::home_dir()?;
                 let current_executable = std::env::current_exe()?.canonicalize()?;
                 let layout = ops::update::StandaloneLayout::discover(&current_executable)?;
                 let versions = layout.versions_root.clone();
