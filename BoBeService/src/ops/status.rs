@@ -497,7 +497,7 @@ pub(crate) async fn wait_ready(
 mod tests {
     #[test]
     fn owner_requests_preserve_remote_prefixes_with_or_without_a_trailing_slash() {
-        crate::util::tls::install_crypto_provider().unwrap();
+        crate::util::tls::install_crypto_provider();
         for base in [
             "https://authority.example/bobe",
             "https://authority.example/bobe/",
@@ -565,7 +565,7 @@ mod tests {
     async fn a_runtime_still_setting_up_is_running_but_not_ready() {
         use crate::db::runtime_initialization_repo::InitializationState;
 
-        crate::util::tls::install_crypto_provider().unwrap();
+        crate::util::tls::install_crypto_provider();
         let identity = crate::db::runtime_authority_repo::RuntimeIdentity {
             runtime_authority_id: uuid::Uuid::new_v4(),
             runtime_authority_epoch: 2,

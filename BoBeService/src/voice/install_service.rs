@@ -149,7 +149,7 @@ mod tests {
             VoiceEngineAvailability, VoiceInstallService, VoiceModelKind, unavailable_kinds,
         };
         use std::sync::Arc;
-        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
+        crate::util::tls::install_crypto_provider();
         let root =
             std::env::temp_dir().join(format!("bobe-voice-isolation-{}", uuid::Uuid::new_v4()));
         for artifact in ARTIFACTS {

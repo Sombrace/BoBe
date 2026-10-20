@@ -445,7 +445,7 @@ data: {"type":"text_delta","message_id":"msg_1","timestamp":"now","description":
 
     #[tokio::test]
     async fn subscribes_before_submit_and_does_not_duplicate_terminal_body() {
-        crate::util::tls::install_crypto_provider().unwrap();
+        crate::util::tls::install_crypto_provider();
         let (events, _) = broadcast::channel(8);
         let state = FixtureState {
             subscribed: Arc::new(AtomicBool::new(false)),
@@ -497,7 +497,7 @@ data: {"type":"text_delta","message_id":"msg_1","timestamp":"now","description":
 
     #[tokio::test]
     async fn snapshot_gap_recovery_waits_for_durable_completion() {
-        crate::util::tls::install_crypto_provider().unwrap();
+        crate::util::tls::install_crypto_provider();
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let app = Router::new()
             .route("/conversation/current", get(delayed_snapshot))

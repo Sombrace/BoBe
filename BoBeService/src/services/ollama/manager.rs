@@ -381,7 +381,7 @@ mod tests {
 
     #[tokio::test]
     async fn stalled_model_pull_cancels_without_another_chunk() {
-        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
+        crate::util::tls::install_crypto_provider();
         let first_chunk_sent = Arc::new(Notify::new());
         let release_stream = Arc::new(Notify::new());
         let app = Router::new().route(
@@ -455,7 +455,7 @@ mod tests {
 
     #[tokio::test]
     async fn installed_model_names_ignore_catalog_only_metadata() {
-        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
+        crate::util::tls::install_crypto_provider();
         let app = Router::new().route(
             "/api/tags",
             get(async || {
@@ -535,7 +535,7 @@ mod tests {
         name: &str,
         ignore_terminate: bool,
     ) -> (OllamaManager, u32, tokio::task::JoinHandle<()>) {
-        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
+        crate::util::tls::install_crypto_provider();
         let app = Router::new().route("/api/tags", get(async || Json(json!({"models": []}))));
         let listener = TcpListener::bind("127.0.0.1:0")
             .await

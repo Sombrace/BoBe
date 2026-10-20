@@ -330,7 +330,7 @@ mod tests {
     }
 
     fn test_client() -> Arc<reqwest::Client> {
-        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
+        crate::util::tls::install_crypto_provider();
         Arc::new(reqwest::Client::new())
     }
 

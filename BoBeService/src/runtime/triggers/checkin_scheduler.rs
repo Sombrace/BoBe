@@ -1,5 +1,4 @@
 use chrono::{DateTime, Duration, Local, NaiveTime, Utc};
-use rand::RngExt;
 use tracing::{debug, info, warn};
 
 pub(crate) struct CheckinScheduler {
@@ -199,7 +198,7 @@ impl CheckinScheduler {
         if let Some(ref mut t) = next_time
             && self.jitter_minutes > 0
         {
-            let jitter = rand::rng().random_range(-self.jitter_minutes..=self.jitter_minutes);
+            let jitter = rand::random_range(-self.jitter_minutes..=self.jitter_minutes);
             *t += Duration::minutes(jitter as i64);
         }
 
@@ -218,7 +217,7 @@ impl CheckinScheduler {
         let mut next_time = after + Duration::minutes(interval as i64);
 
         if self.jitter_minutes > 0 {
-            let jitter = rand::rng().random_range(-self.jitter_minutes..=self.jitter_minutes);
+            let jitter = rand::random_range(-self.jitter_minutes..=self.jitter_minutes);
             next_time += Duration::minutes(jitter as i64);
         }
 

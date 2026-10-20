@@ -1,5 +1,4 @@
 use chrono::{DateTime, Duration, Utc};
-use rand::RngExt;
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, SqlitePool};
 use uuid::Uuid;
@@ -101,14 +100,14 @@ impl DeviceTrustRepo {
 
         let credential_id = Uuid::new_v4().to_string();
         let lookup_id = Uuid::new_v4().simple().to_string();
-        let mut secret = [0_u8; SECRET_BYTES];
-        rand::rng().fill(&mut secret);
-        let verifier = bearer_verifier(&lookup_id, &secret);
+        let mut secret = zeroize::Zeroizing::new([0_u8; SECRET_BYTES]);
+        rand::fill(secret.as_mut_slice());
+        let verifier = bearer_verifier(&lookup_id, secret.as_slice());
         let token = format!(
             "{ENDPOINT_CREDENTIAL_PREFIX}{lookup_id}_{}",
-            hex_encode(&secret)
+            hex_encode(secret.as_slice())
         );
-        secret.fill(0);
+        drop(secret);
 
         let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let enrolled_kind: Option<String> =

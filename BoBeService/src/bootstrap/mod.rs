@@ -45,7 +45,7 @@ pub(crate) async fn run(
     runtime_locks: crate::util::runtime_lock::RuntimeLocks,
     local_enrollment: Arc<crate::api::handlers::local_enrollment::LocalEnrollmentBootstrap>,
 ) -> Result<Arc<AppState>, AppError> {
-    crate::util::tls::install_crypto_provider()?;
+    crate::util::tls::install_crypto_provider();
     let (pool, identity) = initialize_storage(&paths).await?;
     let initialization = crate::db::runtime_initialization_repo::ensure(&pool).await?;
     let identity = Arc::new(identity);

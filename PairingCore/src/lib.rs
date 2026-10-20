@@ -8,7 +8,7 @@ use opaque_ke::{
 };
 use rand::rngs::OsRng;
 use sha2::Sha512;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 const CLIENT_ID: &[u8] = b"bobe-pairing-client-v1";
 const SERVER_ID: &[u8] = b"bobe-pairing-authority-v1";
@@ -169,7 +169,11 @@ impl ServerStart {
         &self.response
     }
 
-    pub fn finish(self, finalization: &[u8], context: &[u8]) -> Result<Vec<u8>, PairingError> {
+    pub fn finish(
+        self,
+        finalization: &[u8],
+        context: &[u8],
+    ) -> Result<Zeroizing<Vec<u8>>, PairingError> {
         let state = ServerLogin::<PairingSuite>::deserialize(&self.state)
             .map_err(|_| PairingError::InvalidMessage)?;
         let finalization = CredentialFinalization::<PairingSuite>::deserialize(finalization)
@@ -183,16 +187,12 @@ impl ServerStart {
                 },
             )
             .map_err(|_| PairingError::AuthenticationFailed)?;
-        Ok(result.session_key.to_vec())
+        Ok(Zeroizing::new(result.session_key.to_vec()))
     }
 }
 
 fn validate_code(code: &[u8]) -> Result<(), PairingError> {
-    if code.len() == 6 && code.iter().all(u8::is_ascii_digit) {
-        Ok(())
-    } else {
-        Err(PairingError::InvalidMessage)
-    }
+    (code.len() == 6 && code.iter().all(u8::is_ascii_digit)).ok_or(PairingError::InvalidMessage)
 }
 
 fn identifiers() -> Identifiers<'static> {
@@ -216,7 +216,7 @@ mod tests {
         let server_key = server
             .finish(client.finalization(), server_context)
             .unwrap();
-        client.session_key() == server_key
+        client.session_key() == server_key.as_slice()
     }
 
     #[test]

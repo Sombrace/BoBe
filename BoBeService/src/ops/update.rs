@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use base64::Engine;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -428,21 +428,27 @@ fn verify_manifest_with_key(
     expected_platform: &str,
     current_database_schema: i64,
 ) -> Result<StandaloneManifest, AppError> {
-    let key_bytes = base64::engine::general_purpose::STANDARD
-        .decode(public_key_base64)
+    let mut key_bytes = [0_u8; 32];
+    match base64::engine::general_purpose::STANDARD.decode_slice(public_key_base64, &mut key_bytes)
+    {
+        Ok(32) => {}
+        Ok(_) | Err(base64::DecodeSliceError::OutputSliceTooSmall) => {
+            return Err(AppError::Config(
+                "update public key must be 32 bytes".into(),
+            ));
+        }
+        Err(base64::DecodeSliceError::DecodeError(error)) => {
+            return Err(AppError::Config(format!("update public key: {error}")));
+        }
+    }
+    let key = VerifyingKey::from_bytes(&key_bytes)
         .map_err(|error| AppError::Config(format!("update public key: {error}")))?;
-    let key = VerifyingKey::from_bytes(
-        &key_bytes
-            .try_into()
-            .map_err(|_| AppError::Config("update public key must be 32 bytes".into()))?,
-    )
-    .map_err(|error| AppError::Config(format!("update public key: {error}")))?;
     let signature_bytes = base64::engine::general_purpose::STANDARD
         .decode(signature_base64)
         .map_err(|error| AppError::Config(format!("update signature: {error}")))?;
     let signature = Signature::from_slice(&signature_bytes)
         .map_err(|error| AppError::Config(format!("update signature: {error}")))?;
-    key.verify(manifest_bytes, &signature)
+    key.verify_strict(manifest_bytes, &signature)
         .map_err(|_| AppError::Conflict("standalone update signature is invalid".into()))?;
     let manifest: StandaloneManifest = serde_json::from_slice(manifest_bytes)?;
     if manifest.schema != 1

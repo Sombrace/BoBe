@@ -77,7 +77,7 @@ mod tests {
 
     #[tokio::test]
     async fn one_port_serves_plain_http_and_tls_to_this_computer() {
-        crate::util::tls::install_crypto_provider().unwrap();
+        crate::util::tls::install_crypto_provider();
         let root = std::env::temp_dir().join(format!("bobe-listener-{}", uuid::Uuid::new_v4()));
         let paths = crate::util::paths::DataPaths::resolve(
             &root,

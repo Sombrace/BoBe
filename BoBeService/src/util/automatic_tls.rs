@@ -1,11 +1,10 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
 
 use chrono::Utc;
 use rcgen::{
     CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, KeyPair, PublicKeyData,
-    SanType,
 };
 use rustls::pki_types::pem::{PemObject, SectionKind};
 use serde::{Deserialize, Serialize};
@@ -179,19 +178,6 @@ fn issue_certificate(
     name.push(DnType::CommonName, "BoBe personal runtime");
     params.distinguished_name = name;
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
-    params.subject_alt_names = hosts
-        .iter()
-        .map(|host| {
-            if let Ok(address) = host.parse::<IpAddr>() {
-                Ok(SanType::IpAddress(address))
-            } else {
-                let name = host.clone().try_into().map_err(|error| {
-                    AppError::Config(format!("invalid TLS DNS name {host}: {error}"))
-                })?;
-                Ok(SanType::DnsName(name))
-            }
-        })
-        .collect::<Result<Vec<_>, AppError>>()?;
     params
         .self_signed(key_pair)
         .map(|certificate| certificate.pem())
@@ -252,20 +238,13 @@ fn certificate_facts(pem_value: &[u8]) -> Result<CertificateFacts, AppError> {
         .iter()
         .map(|name| match name {
             GeneralName::DNSName(name) => Ok((*name).to_lowercase()),
-            GeneralName::IPAddress(bytes) => match bytes.len() {
-                4 => Ok(
-                    IpAddr::V4(Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])).to_string(),
-                ),
-                16 => {
-                    let bytes: [u8; 16] = (*bytes).try_into().map_err(|_| {
-                        AppError::Config("invalid IPv6 SAN in automatic TLS certificate".into())
-                    })?;
-                    Ok(IpAddr::V6(Ipv6Addr::from(bytes)).to_string())
-                }
-                _ => Err(AppError::Config(
-                    "invalid IP SAN in automatic TLS certificate".into(),
-                )),
-            },
+            GeneralName::IPAddress(bytes) => <[u8; 4]>::try_from(*bytes)
+                .map(IpAddr::from)
+                .or_else(|_| <[u8; 16]>::try_from(*bytes).map(IpAddr::from))
+                .map(|address| address.to_string())
+                .map_err(|_| {
+                    AppError::Config("invalid IP SAN in automatic TLS certificate".into())
+                }),
             _ => Err(AppError::Config(
                 "automatic TLS certificate contains an unsupported SAN type".into(),
             )),
@@ -273,16 +252,12 @@ fn certificate_facts(pem_value: &[u8]) -> Result<CertificateFacts, AppError> {
         .collect::<Result<Vec<_>, AppError>>()?;
     hosts.sort();
     hosts.dedup();
-    let expiry = certificate.validity().not_after.timestamp();
-    let not_after = if expiry >= 0 {
-        SystemTime::UNIX_EPOCH
-            .checked_add(Duration::from_secs(expiry as u64))
-            .ok_or_else(|| AppError::Config("invalid automatic TLS certificate expiry".into()))?
-    } else {
-        return Err(AppError::Config(
-            "automatic TLS certificate has an invalid expiry".into(),
-        ));
-    };
+    let not_after = u64::try_from(certificate.validity().not_after.timestamp())
+        .ok()
+        .and_then(|seconds| SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
+        .ok_or_else(|| {
+            AppError::Config("automatic TLS certificate has an invalid expiry".into())
+        })?;
     Ok(CertificateFacts {
         spki: certificate.tbs_certificate.subject_pki.raw.to_vec(),
         hosts,

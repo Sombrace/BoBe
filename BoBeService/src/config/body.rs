@@ -165,7 +165,7 @@ mod tests {
         let broken = BodyConfig {
             enabled: true,
             controller_epoch: 0,
-            adapter_token: SecretString::from("adapter".to_owned()),
+            adapter_token: SecretString::from("adapter"),
             adapter_port: 8_767,
             host: "body.local".into(),
             tls_cert_path: Some(root.join("missing.pem").to_string_lossy().into_owned()),

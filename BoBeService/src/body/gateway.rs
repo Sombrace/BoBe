@@ -341,7 +341,7 @@ struct PlaybackState {
 
 fn new_playback_state() -> PlaybackState {
     PlaybackState {
-        stream_id: rand::random::<u32>().max(1),
+        stream_id: rand::random::<std::num::NonZeroU32>().get(),
         next_body_sequence: 0,
         ready_received: false,
         credit_frames: 0,

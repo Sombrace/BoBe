@@ -369,7 +369,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_runtime_that_was_never_installed_is_not_started() {
-        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
+        crate::util::tls::install_crypto_provider();
         let root =
             std::env::temp_dir().join(format!("bobe-ollama-ensure-{}", uuid::Uuid::new_v4()));
         let client = Arc::new(reqwest::Client::new());

@@ -6,7 +6,7 @@ pub(crate) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
             left.get(index).copied().unwrap_or(0) ^ right.get(index).copied().unwrap_or(0),
         );
     }
-    difference == 0
+    std::hint::black_box(difference) == 0
 }
 
 pub(crate) fn hex_encode(bytes: &[u8]) -> String {

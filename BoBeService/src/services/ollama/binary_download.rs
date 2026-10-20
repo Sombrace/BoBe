@@ -257,7 +257,7 @@ mod tests {
 
     #[tokio::test]
     async fn cancellation_removes_partial_download() {
-        crate::util::tls::install_crypto_provider().expect("TLS provider should install");
+        crate::util::tls::install_crypto_provider();
         let first_chunk_sent = Arc::new(Notify::new());
         let release_stream = Arc::new(Notify::new());
         let app = Router::new().route(

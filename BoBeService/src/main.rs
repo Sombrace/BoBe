@@ -553,7 +553,7 @@ async fn main() -> std::process::ExitCode {
 
 async fn run() -> anyhow::Result<ops::exit::ExitCode> {
     let cli = Cli::parse();
-    util::tls::install_crypto_provider()?;
+    util::tls::install_crypto_provider();
 
     match cli.command {
         Commands::Serve {
@@ -625,7 +625,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
             validate_server_security(&config)?;
             let local_enrollment = if managed_bootstrap_stdin {
                 use tokio::io::AsyncReadExt;
-                let mut secret = Vec::new();
+                let mut secret = zeroize::Zeroizing::new(Vec::new());
                 tokio::io::stdin()
                     .take(4096)
                     .read_to_end(&mut secret)

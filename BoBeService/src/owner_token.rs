@@ -17,9 +17,9 @@ pub(crate) fn ensure(paths: &crate::util::paths::DataPaths) -> Result<String, Ap
     if let Some(token) = read(paths)? {
         return Ok(token);
     }
-    let mut secret = [0_u8; 32];
-    rand::RngExt::fill(&mut rand::rng(), &mut secret);
-    let token = format!("bobe_{}", crate::util::text::hex_encode(&secret));
+    let mut secret = zeroize::Zeroizing::new([0_u8; 32]);
+    rand::fill(secret.as_mut_slice());
+    let token = format!("bobe_{}", crate::util::text::hex_encode(secret.as_slice()));
     let path = paths.owner_api_token_file();
     #[cfg(unix)]
     crate::util::durable_fs::atomic_write_sync_mode(&path, token.as_bytes(), 0o600)?;
