@@ -1,14 +1,14 @@
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
-use axum::http::Request;
+use axum::Extension;
+use axum::middleware::AddExtension;
 use axum_server::accept::Accept;
 use axum_server::tls_rustls::RustlsAcceptor;
 use sha2::{Digest, Sha256};
 use tokio_rustls::server::TlsStream;
-use tower::Service;
+use tower::Layer;
 
 use super::identity::{BodyIdentityIndex, BodyPeerIdentity};
 
@@ -24,30 +24,6 @@ impl BodyIdentityAcceptor {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct BodyIdentityService<S> {
-    inner: S,
-    identity: BodyPeerIdentity,
-}
-
-impl<S, B> Service<Request<B>> for BodyIdentityService<S>
-where
-    S: Service<Request<B>>,
-{
-    type Response = S::Response;
-    type Error = S::Error;
-    type Future = S::Future;
-
-    fn poll_ready(&mut self, context: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(context)
-    }
-
-    fn call(&mut self, mut request: Request<B>) -> Self::Future {
-        request.extensions_mut().insert(self.identity.clone());
-        self.inner.call(request)
-    }
-}
-
 impl<I, S> Accept<I, S> for BodyIdentityAcceptor
 where
     RustlsAcceptor: Accept<I, S, Stream = TlsStream<I>, Service = S>,
@@ -56,7 +32,7 @@ where
     S: Send + 'static,
 {
     type Stream = TlsStream<I>;
-    type Service = BodyIdentityService<S>;
+    type Service = AddExtension<S, BodyPeerIdentity>;
     type Future = Pin<Box<dyn Future<Output = io::Result<(Self::Stream, Self::Service)>> + Send>>;
 
     fn accept(&self, stream: I, service: S) -> Self::Future {
@@ -82,13 +58,7 @@ where
                     "client certificate is not enrolled",
                 )
             })?;
-            Ok((
-                stream,
-                BodyIdentityService {
-                    inner: service,
-                    identity,
-                },
-            ))
+            Ok((stream, Extension(identity).layer(service)))
         })
     }
 }

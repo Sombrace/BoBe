@@ -334,7 +334,7 @@ impl Host {
             self.notifications.clone(),
         )?;
         *process = Some(Arc::clone(&connection));
-        let initializing = connection.stop.clone().drop_guard();
+        let initializing = connection.stop.drop_guard_ref();
         let initialized = connection
             .call("initialize", parameters, CONTROL_TIMEOUT)
             .await;
@@ -428,7 +428,7 @@ impl Host {
         let Some(connection) = process.as_ref().cloned() else {
             return Ok(());
         };
-        let stopping = connection.stop.clone().drop_guard();
+        let stopping = connection.stop.drop_guard_ref();
         for cancellation in lock(&connection.domain_turns).values() {
             cancellation.cancellation.cancel();
         }
@@ -1059,11 +1059,19 @@ impl DomainBridge {
                 )
                 .await;
         }
-        tokio::select! {
-            biased;
-            () = authority.cancellation.cancelled() => Err(AppError::Conflict("domain tool was canceled with its owner execution".into())),
-            result = self.invoke_tool(connection, &invocation.name, invocation.arguments) => result,
-        }
+        authority
+            .cancellation
+            .run_until_cancelled(self.invoke_tool(
+                connection,
+                &invocation.name,
+                invocation.arguments,
+            ))
+            .await
+            .unwrap_or_else(|| {
+                Err(AppError::Conflict(
+                    "domain tool was canceled with its owner execution".into(),
+                ))
+            })
     }
 
     async fn invoke_schedule(

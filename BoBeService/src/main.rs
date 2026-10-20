@@ -2987,10 +2987,9 @@ fn spawn_background_tasks(
                 .active_routes
                 .iter()
                 .map(|route| &route.profile);
-            tokio::select! {
-                () = token.cancelled() => {}
-                () = api::handlers::health::start_local_runtime(&state, profiles) => {}
-            }
+            token
+                .run_until_cancelled(api::handlers::health::start_local_runtime(&state, profiles))
+                .await;
             "local_runtime"
         });
     }
@@ -3022,11 +3021,8 @@ fn spawn_background_tasks(
             if !wait_for_initialization(&initialization, &token).await {
                 return "runtime_session";
             }
-            tokio::select! {
-                () = session.run() => {}
-                () = token.cancelled() => {
-                    session.stop().await;
-                }
+            if token.run_until_cancelled(session.run()).await.is_none() {
+                session.stop().await;
             }
             "runtime_session"
         });
@@ -3055,9 +3051,14 @@ fn spawn_background_tasks(
         set.spawn(async move {
             loop {
                 services::storage_retention::run(&pool, &config.load()).await;
-                tokio::select! {
-                    () = tokio::time::sleep(services::storage_retention::RETENTION_INTERVAL) => {}
-                    () = token.cancelled() => break,
+                if token
+                    .run_until_cancelled(tokio::time::sleep(
+                        services::storage_retention::RETENTION_INTERVAL,
+                    ))
+                    .await
+                    .is_none()
+                {
+                    break;
                 }
             }
             "storage_retention"
@@ -3106,9 +3107,12 @@ async fn wait_for_initialization(
         if **initialization.load() == db::runtime_initialization_repo::InitializationState::Ready {
             return true;
         }
-        tokio::select! {
-            () = shutdown.cancelled() => return false,
-            () = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+        if shutdown
+            .run_until_cancelled(tokio::time::sleep(std::time::Duration::from_secs(1)))
+            .await
+            .is_none()
+        {
+            return false;
         }
     }
 }

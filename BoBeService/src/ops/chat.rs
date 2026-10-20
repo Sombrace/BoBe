@@ -124,7 +124,7 @@ pub(crate) async fn turn(
 
 async fn consume_events(
     target: &OpsTarget,
-    stream: &mut (impl futures::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin),
+    stream: &mut (impl futures::Stream<Item = Result<axum::body::Bytes, reqwest::Error>> + Unpin),
     message_id: &str,
     request_id: Uuid,
     json: bool,

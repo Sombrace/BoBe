@@ -61,16 +61,15 @@ async fn first_text(stream: &mut futures::stream::SplitStream<WebSocket>) -> Opt
     }
 }
 
-fn select_subprotocol(mut upgrade: WebSocketUpgrade, expected: &str) -> Option<WebSocketUpgrade> {
-    upgrade = upgrade
+fn select_subprotocol(
+    upgrade: WebSocketUpgrade,
+    expected: &'static str,
+) -> Option<WebSocketUpgrade> {
+    let upgrade = upgrade
         .max_message_size(MAX_CONTROL_BYTES)
-        .max_frame_size(MAX_CONTROL_BYTES);
-    let selected = upgrade
-        .requested_protocols()
-        .find(|protocol| protocol.as_bytes() == expected.as_bytes())
-        .cloned()?;
-    upgrade.set_selected_protocol(selected);
-    Some(upgrade)
+        .max_frame_size(MAX_CONTROL_BYTES)
+        .protocols([expected]);
+    upgrade.selected_protocol().is_some().then_some(upgrade)
 }
 
 pub(crate) async fn body_stream(
@@ -208,9 +207,11 @@ async fn handle_body(
     );
 
     loop {
-        let next = tokio::select! {
-            () = disconnect.cancelled() => break,
-            next = tokio::time::timeout(BODY_STALE_TIMEOUT, stream.next()) => next,
+        let Some(next) = disconnect
+            .run_until_cancelled(tokio::time::timeout(BODY_STALE_TIMEOUT, stream.next()))
+            .await
+        else {
+            break;
         };
         let Ok(Some(Ok(message))) = next else {
             break;
@@ -583,9 +584,8 @@ async fn handle_adapter(socket: WebSocket, gateway: Arc<BodyGateway>) {
     info!(adapter_generation = generation, "body.adapter_connected");
 
     loop {
-        let message = tokio::select! {
-            () = disconnect.cancelled() => break,
-            message = stream.next() => message,
+        let Some(message) = disconnect.run_until_cancelled(stream.next()).await else {
+            break;
         };
         let Some(message) = message else {
             break;

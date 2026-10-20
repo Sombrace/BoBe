@@ -309,7 +309,7 @@ impl OpsTarget {
                     path.display()
                 ))
             })?;
-            client = client.add_root_certificate(certificate);
+            client = client.tls_certs_merge([certificate]);
         }
         let client = client.build()?;
         let mut request = client.request(method, url);

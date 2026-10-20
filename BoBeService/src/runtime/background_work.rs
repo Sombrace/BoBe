@@ -346,11 +346,11 @@ impl BackgroundWork {
         if candidate.goal_id.is_some() {
             candidate.channel_id = Some(channel);
             use crate::runtime::message_handler::BackgroundOffer;
-            let decision = tokio::select! {
-                decision = self.session.evaluate_background_update(&candidate) => decision,
-                () = shutdown.cancelled() => {
-                    return Ok(());
-                }
+            let Some(decision) = shutdown
+                .run_until_cancelled(self.session.evaluate_background_update(&candidate))
+                .await
+            else {
+                return Ok(());
             };
             match decision {
                 Ok(BackgroundOffer::Offer) => {}
@@ -402,7 +402,7 @@ impl BackgroundWork {
         let session = Arc::clone(&self.session);
         let delivery = job.delivery_id;
         let cancellation = admission.cancellation();
-        let _cancel_on_drop = cancellation.clone().drop_guard();
+        let _cancel_on_drop = cancellation.drop_guard_ref();
         let registration = self.runs.register_cancellation(
             delivery,
             cancellation.clone(),
@@ -415,11 +415,10 @@ impl BackgroundWork {
             let _registration = registration;
             let _admission = admission;
             let _personal = personal;
-            let success = tokio::select! {
-                biased;
-                () = work_cancel.cancelled() => false,
-                success = session.handle_background_result(&job) => success,
-            };
+            let success = work_cancel
+                .run_until_cancelled(session.handle_background_result(&job))
+                .await
+                .unwrap_or(false);
             session
                 .settle_interrupted_turn(crate::models::ids::ConversationTurnId::from(delivery))
                 .await;

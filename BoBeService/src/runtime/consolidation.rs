@@ -58,12 +58,13 @@ impl ConsolidationScheduler {
                 "consolidation.sleeping"
             );
 
-            tokio::select! {
-                () = tokio::time::sleep(wait) => {}
-                () = shutdown.cancelled() => {
-                    tracing::info!("consolidation.stopped");
-                    return;
-                }
+            if shutdown
+                .run_until_cancelled(tokio::time::sleep(wait))
+                .await
+                .is_none()
+            {
+                tracing::info!("consolidation.stopped");
+                return;
             }
 
             let oversized = self

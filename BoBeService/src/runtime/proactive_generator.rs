@@ -296,11 +296,15 @@ impl ProactiveGenerator {
         let task = tokio::spawn(async move {
             let _registration = registration;
             let _turn = turn;
-            let decision = tokio::select! {
-                biased;
-                () = cancellation.cancelled() => Decision::Idle,
-                decision = generator.generate_response(&target_conversation, assistant_turn_id, source, &reason) => decision,
-            };
+            let decision = cancellation
+                .run_until_cancelled(generator.generate_response(
+                    &target_conversation,
+                    assistant_turn_id,
+                    source,
+                    &reason,
+                ))
+                .await
+                .unwrap_or(Decision::Idle);
             if let Err(error) = generator.workers.cancel_run(run_id).await {
                 warn!(%error,%run_id,"proactive_generator.run_settlement_failed");
             }

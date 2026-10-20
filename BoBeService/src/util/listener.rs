@@ -117,7 +117,7 @@ mod tests {
 
         let certificate = tokio::fs::read(&identity.certificate_path).await.unwrap();
         let client = reqwest::Client::builder()
-            .add_root_certificate(reqwest::Certificate::from_pem(&certificate).unwrap())
+            .tls_certs_merge([reqwest::Certificate::from_pem(&certificate).unwrap()])
             .build()
             .unwrap();
         let secure = client

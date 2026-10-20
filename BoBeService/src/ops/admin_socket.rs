@@ -38,19 +38,14 @@ pub(crate) async fn serve(
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
     }
-    loop {
-        tokio::select! {
-            () = shutdown.cancelled() => break,
-            accepted = listener.accept() => {
-                let (stream, _) = accepted?;
-                let state = Arc::clone(&state);
-                tokio::spawn(async move {
-                    if let Err(error) = handle(state, stream).await {
-                        tracing::warn!(%error, "admin.request_failed");
-                    }
-                });
+    while let Some(accepted) = shutdown.run_until_cancelled(listener.accept()).await {
+        let (stream, _) = accepted?;
+        let state = Arc::clone(&state);
+        tokio::spawn(async move {
+            if let Err(error) = handle(state, stream).await {
+                tracing::warn!(%error, "admin.request_failed");
             }
-        }
+        });
     }
     drop(std::fs::remove_file(path));
     Ok(())

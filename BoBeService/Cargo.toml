@@ -146,7 +146,6 @@ flate2 = "1.1.10"
 tar = "0.4.46"
 zstd = "0.14.3"
 bzip2 = "0.6.1"
-bytes = "1"
 sherpa-onnx = "=1.13.8"
 ptts = { version = "=0.4.0-rc.2", default-features = false, features = ["hf"] }
 signalsmith-stretch = "=0.1.3"

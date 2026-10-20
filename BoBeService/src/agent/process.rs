@@ -174,11 +174,9 @@ impl OwnedProcesses {
                     let writer = tokio::spawn(async move {
                         let mut stdin = stdin;
                         loop {
-                            let input = tokio::select! {
-                                () = io_cancel.cancelled() => return,
-                                value = receiver.recv() => value,
-                            };
-                            let Some((bytes, end)) = input else {
+                            let Some(Some((bytes, end))) =
+                                io_cancel.run_until_cancelled(receiver.recv()).await
+                            else {
                                 return;
                             };
                             let write = async {

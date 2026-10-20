@@ -428,7 +428,6 @@ dependencies = [
  "axum-server",
  "base64 0.23.1",
  "bobe-pairing-core",
- "bytes",
  "bzip2",
  "chacha20poly1305",
  "chrono",

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Extension, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
@@ -179,7 +179,7 @@ pub(crate) async fn voice_stream(
 }
 
 pub(super) fn upgrade_voice(
-    mut ws: WebSocketUpgrade,
+    ws: WebSocketUpgrade,
     state: Arc<AppState>,
     allowed_origins: AllowedOrigins,
     principal: Principal,
@@ -193,15 +193,10 @@ pub(super) fn upgrade_voice(
         return StatusCode::FORBIDDEN.into_response();
     }
 
-    if !ws
-        .requested_protocols()
-        .any(|protocol| protocol == crate::constants::voice_wire::SUBPROTOCOL_V2)
-    {
+    let ws = ws.protocols([crate::constants::voice_wire::SUBPROTOCOL_V2]);
+    if ws.selected_protocol().is_none() {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    ws.set_selected_protocol(HeaderValue::from_static(
-        crate::constants::voice_wire::SUBPROTOCOL_V2,
-    ));
     ws.max_message_size(32_768)
         .max_frame_size(32_768)
         .on_upgrade(async move |socket| {

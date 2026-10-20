@@ -261,18 +261,17 @@ pub(crate) async fn run_text_turn(
         }
     };
 
-    let turn_succeeded = tokio::select! {
-        biased;
-        () = cancellation.cancelled() => false,
-        result = runtime_session.handle_user_message_with_observer(
+    let turn_succeeded = cancellation
+        .run_until_cancelled(runtime_session.handle_user_message_with_observer(
             text,
             turn_id,
             assistant_turn_id,
             ctx.delivery,
             ctx.conversation_channel,
             observer,
-        ) => result,
-    };
+        ))
+        .await
+        .unwrap_or(false);
     lifetime.settle().await;
     {
         let _quiescent = pipeline.lock().await;
@@ -388,9 +387,8 @@ pub(crate) async fn run_text_turn(
 }
 
 async fn abort_and_settle<T>(task: AbortOnDropHandle<T>, task_name: &'static str) {
-    let handle = task.detach();
-    handle.abort();
-    match handle.await {
+    task.abort();
+    match task.await {
         Err(error) if error.is_cancelled() => {}
         Err(error) => warn!(%error, task_name, "voice.child_task_join_failed"),
         Ok(_) => debug!(task_name, "voice.child_task_completed_before_abort"),
