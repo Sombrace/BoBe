@@ -605,7 +605,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     "server.automatic_tls_ready"
                 );
             }
-            util::logging::init_tracing(&config);
+            let _log_guard = util::logging::init_tracing(&config);
             if purged_release_0_2 {
                 tracing::info!("data_root.release_0_2_purged");
             }

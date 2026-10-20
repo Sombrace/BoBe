@@ -2223,11 +2223,7 @@ impl BodyGateway {
             abort.abort();
         }
         if let Some(mut finished) = release.turn_finished {
-            while !*finished.borrow_and_update() {
-                if finished.changed().await.is_err() {
-                    break;
-                }
-            }
+            drop(finished.wait_for(|done| *done).await);
         }
         if let Some(adapter) = release.adapter {
             let terminal = if notify_adapter {

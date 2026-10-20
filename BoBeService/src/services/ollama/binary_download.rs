@@ -2,7 +2,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use futures::StreamExt;
-use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::error::AppError;
@@ -61,7 +61,7 @@ pub(crate) async fn download_ollama(
     client: &reqwest::Client,
     artifact: &OllamaArtifact,
     output_path: &Path,
-    cancel_rx: watch::Receiver<bool>,
+    cancel: CancellationToken,
     on_progress: impl FnMut(u64, Option<u64>),
 ) -> Result<(), AppError> {
     download_from_url(
@@ -70,7 +70,7 @@ pub(crate) async fn download_ollama(
         artifact.sha256,
         artifact.max_bytes,
         output_path,
-        cancel_rx,
+        cancel,
         on_progress,
     )
     .await
@@ -82,7 +82,7 @@ async fn download_from_url(
     expected_sha256: &'static str,
     max_bytes: u64,
     output_path: &Path,
-    mut cancel_rx: watch::Receiver<bool>,
+    cancel: CancellationToken,
     mut on_progress: impl FnMut(u64, Option<u64>),
 ) -> Result<(), AppError> {
     info!(url, "binary_download.starting");
@@ -91,7 +91,7 @@ async fn download_from_url(
     tokio::pin!(request);
     let response = tokio::select! {
         biased;
-        () = wait_for_cancel(&mut cancel_rx) => {
+        () = cancel.cancelled() => {
             return Err(AppError::Canceled("Ollama download canceled".into()));
         }
         result = &mut request => result?,
@@ -140,7 +140,7 @@ async fn download_from_url(
         loop {
             let chunk = tokio::select! {
                 biased;
-                () = wait_for_cancel(&mut cancel_rx) => {
+                () = cancel.cancelled() => {
                     return Err(AppError::Canceled("Ollama download canceled".into()));
                 }
                 chunk = stream.next() => chunk,
@@ -192,17 +192,6 @@ async fn download_from_url(
     );
 
     Ok(())
-}
-
-async fn wait_for_cancel(cancel_rx: &mut watch::Receiver<bool>) {
-    if *cancel_rx.borrow() {
-        return;
-    }
-    while cancel_rx.changed().await.is_ok() {
-        if *cancel_rx.borrow() {
-            return;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -288,11 +277,12 @@ mod tests {
             std::env::temp_dir().join(format!("bobe-download-cancel-{}", uuid::Uuid::new_v4()));
         let output_path = dir.join("ollama.tgz");
         let partial_path = dir.join("ollama.tgz.part");
-        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let cancel = CancellationToken::new();
         let client = reqwest::Client::new();
         let url = format!("http://{address}/ollama.tgz");
         let download = tokio::spawn({
             let output_path = output_path.clone();
+            let cancel = cancel.clone();
             async move {
                 download_from_url(
                     &client,
@@ -300,7 +290,7 @@ mod tests {
                     "00",
                     1_000_000,
                     &output_path,
-                    cancel_rx,
+                    cancel,
                     |_, _| {},
                 )
                 .await
@@ -308,7 +298,7 @@ mod tests {
         });
 
         first_chunk_sent.notified().await;
-        cancel_tx.send(true).expect("cancel receiver should exist");
+        cancel.cancel();
         let error = tokio::time::timeout(Duration::from_secs(1), download)
             .await
             .expect("cancellation should be prompt")

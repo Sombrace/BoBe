@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use serde::Deserialize;
 use tokio::sync::{Mutex, watch};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::error::AppError;
@@ -143,7 +144,7 @@ impl OllamaManager {
         &self,
         name: &str,
         progress_tx: &watch::Sender<PullProgress>,
-        mut cancel_rx: watch::Receiver<bool>,
+        cancel: CancellationToken,
     ) -> Result<(), AppError> {
         let url = format!("{}/api/pull", self.base_url);
         info!(model = name, "ollama_manager.pull_starting");
@@ -157,7 +158,7 @@ impl OllamaManager {
         tokio::pin!(request);
         let resp = tokio::select! {
             biased;
-            () = wait_for_cancel(&mut cancel_rx) => {
+            () = cancel.cancelled() => {
                 info!(model = name, "ollama_manager.pull_canceled");
                 return Err(AppError::Canceled("Model pull canceled".into()));
             }
@@ -182,7 +183,7 @@ impl OllamaManager {
         loop {
             let chunk = tokio::select! {
                 biased;
-                () = wait_for_cancel(&mut cancel_rx) => {
+                () = cancel.cancelled() => {
                     info!(model = name, "ollama_manager.pull_canceled");
                     return Err(AppError::Canceled("Model pull canceled".into()));
                 }
@@ -329,17 +330,6 @@ async fn stop_process_group(mut child: tokio::process::Child, grace: Duration) {
     info!(pid, "ollama_manager.stopped");
 }
 
-async fn wait_for_cancel(cancel_rx: &mut watch::Receiver<bool>) {
-    if *cancel_rx.borrow() {
-        return;
-    }
-    while cancel_rx.changed().await.is_ok() {
-        if *cancel_rx.borrow() {
-            return;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
@@ -415,15 +405,16 @@ mod tests {
             &format!("http://{address}"),
         );
         let (progress_tx, _progress_rx) = watch::channel(PullProgress::default());
-        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let pulling = cancel.clone();
         let pull = tokio::spawn(async move {
             manager
-                .pull_model("test-model", &progress_tx, cancel_rx)
+                .pull_model("test-model", &progress_tx, pulling)
                 .await
         });
 
         first_chunk_sent.notified().await;
-        cancel_tx.send(true).expect("cancel receiver should exist");
+        cancel.cancel();
         let error = tokio::time::timeout(Duration::from_secs(1), pull)
             .await
             .expect("cancellation should be prompt")

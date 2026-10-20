@@ -195,9 +195,7 @@ mod tests {
         let now_utc = now_local.with_timezone(&Utc);
         let fire = NaiveTime::from_hms_opt(3, 0, 0).unwrap();
         let d = duration_until_next(fire, now_utc);
-        assert!(
-            d.abs_diff(Duration::from_hours(2)) <= Duration::from_secs(1)
-        );
+        assert!(d.abs_diff(Duration::from_hours(2)) <= Duration::from_secs(1));
     }
 
     #[test]
@@ -206,8 +204,6 @@ mod tests {
         let now_utc = now_local.with_timezone(&Utc);
         let fire = NaiveTime::from_hms_opt(3, 0, 0).unwrap();
         let d = duration_until_next(fire, now_utc);
-        assert!(
-            d.abs_diff(Duration::from_hours(23)) <= Duration::from_secs(1)
-        );
+        assert!(d.abs_diff(Duration::from_hours(23)) <= Duration::from_secs(1));
     }
 }

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::{Mutex, Notify, broadcast, mpsc, oneshot};
+use tokio::sync::{Mutex, SetOnce, broadcast, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use super::process::{OwnedProcesses, ProcessPurpose, ProcessRequest};
@@ -193,8 +193,7 @@ pub(super) struct Connection {
     request_order: Mutex<()>,
     alive: AtomicBool,
     initialized: AtomicBool,
-    exited: AtomicBool,
-    closed: Notify,
+    exited: SetOnce<()>,
     stop: CancellationToken,
     notifications: broadcast::Sender<(String, Value)>,
     processes: Arc<OwnedProcesses>,
@@ -537,8 +536,7 @@ impl Connection {
             request_order: Mutex::new(()),
             alive: AtomicBool::new(true),
             initialized: AtomicBool::new(false),
-            exited: AtomicBool::new(false),
-            closed: Notify::new(),
+            exited: SetOnce::new(),
             stop,
             processes,
             notifications,
@@ -621,8 +619,7 @@ impl Connection {
             reader.abort();
             stderr_task.abort();
             let _settled = tokio::join!(writer, reader, stderr_task);
-            process_connection.exited.store(true, Ordering::Release);
-            process_connection.closed.notify_waiters();
+            drop(process_connection.exited.set(()));
         });
         Ok(connection)
     }
@@ -877,17 +874,10 @@ impl Connection {
 
     pub(super) async fn stop_and_wait(&self) -> Result<(), AppError> {
         self.stop.cancel();
-        tokio::time::timeout(Duration::from_secs(10), async {
-            loop {
-                let notification = self.closed.notified();
-                if self.exited.load(Ordering::Acquire) {
-                    break;
-                }
-                notification.await;
-            }
-        })
-        .await
-        .map_err(|_| AppError::Internal("pi worker did not stop".into()))
+        tokio::time::timeout(Duration::from_secs(10), self.exited.wait())
+            .await
+            .map(drop)
+            .map_err(|_| AppError::Internal("pi worker did not stop".into()))
     }
 }
 
@@ -1681,7 +1671,7 @@ input.on("line", line => {
             .expect("starting worker remains owned after cancellation");
         assert!(tracked.stop.is_cancelled());
         assert!(!host.cancel_run(uuid::Uuid::new_v4()).await.unwrap());
-        assert!(tracked.exited.load(Ordering::Acquire));
+        assert!(tracked.exited.initialized());
         assert!(!tracked.initialized.load(Ordering::Acquire));
         host.options.lock().await.profiles = json!({});
         {

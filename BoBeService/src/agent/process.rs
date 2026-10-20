@@ -333,16 +333,11 @@ async fn terminate(
 
 async fn wait_finished(entry: &ProcessEntry) -> Result<(), AppError> {
     let mut finished = entry.finished.clone();
-    tokio::time::timeout(Duration::from_secs(8), async {
-        while !*finished.borrow_and_update() {
-            finished.changed().await.map_err(|_| {
-                AppError::Internal("process owner did not report settlement".into())
-            })?;
-        }
-        Ok::<_, AppError>(())
-    })
-    .await
-    .map_err(|_| AppError::Internal("owned process did not settle".into()))?
+    tokio::time::timeout(Duration::from_secs(8), finished.wait_for(|done| *done))
+        .await
+        .map_err(|_| AppError::Internal("owned process did not settle".into()))?
+        .map(drop)
+        .map_err(|_| AppError::Internal("process owner did not report settlement".into()))
 }
 
 async fn pump(
