@@ -268,7 +268,7 @@ extension VoicePipeline {
         self.nextScheduleFrame = played
         self.turnFrameBase = played
         self.sampleTimeBase = self.currentPlayerSampleTime()
-        self.playerNode.play()
+        self.restartPlayerNode()
     }
 
     func handlePlaybackRms(_ rms: Float) {

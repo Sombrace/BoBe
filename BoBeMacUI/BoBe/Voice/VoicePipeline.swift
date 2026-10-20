@@ -172,11 +172,15 @@ public final class VoicePipeline {
         )
         self.audioEngine.attach(self.playerNode)
         if let format = self.ttsOutputFormat {
-            self.audioEngine.connect(
-                self.playerNode,
-                to: self.audioEngine.mainMixerNode,
-                format: format
-            )
+            if #available(macOS 27, *) {
+                do {
+                    try self.audioEngine.connectNode(self.playerNode, to: self.audioEngine.mainMixerNode, format: format)
+                } catch {
+                    logger.error("voice player connection failed: \(error.localizedDescription, privacy: .public)")
+                }
+            } else {
+                self.audioEngine.connect(self.playerNode, to: self.audioEngine.mainMixerNode, format: format)
+            }
         }
         self.welcomeObserver = NotificationCenter.default.addObserver(
             for: WelcomeCompletedMessage.self

@@ -151,7 +151,7 @@ extension VoicePipeline {
         self.lastPlaybackAckChunkId = 0
         self.resetReplyPosition()
         self.sampleTimeBase = self.currentPlayerSampleTime()
-        self.playerNode.play()
+        self.restartPlayerNode()
     }
 
     private func startClientTtsTurn(turnId: String) {
@@ -254,7 +254,7 @@ extension VoicePipeline {
         self.playerNode.scheduleBuffer(buffer, completionHandler: nil)
         self.schedulePlaybackAcknowledgement(chunkId: sequence)
         if !self.playerNode.isPlaying {
-            self.playerNode.play()
+            self.restartPlayerNode()
         }
         self.trimPlayedChunks()
         return true

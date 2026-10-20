@@ -1,3 +1,4 @@
+import AppKit
 @testable import BoBe
 import Foundation
 import Testing
@@ -24,6 +25,41 @@ struct BodyRequestTests {
         let text = ScreenReader.arrange(lines)
         #expect(text.unicodeScalars.count <= ScreenReader.maxCharacters)
         #expect(text.hasPrefix("twelve chars\ntwelve chars"))
+    }
+
+    @Test(arguments: [
+        ("おはようございます BoBe", "おはようございます"),
+        ("Bonjour de la part de BoBe", "Bonjour"),
+        ("Good morning from BoBe", "morning"),
+    ])
+    func screenTextIsRecognizedInTheLanguageOnScreen(line: String, word: String) async throws {
+        let image = try #require(Self.render(line))
+        let text = ScreenReader.arrange(try await ScreenReader.recognizeText(in: image))
+        #expect(text.contains(word))
+    }
+
+    private static func render(_ text: String) -> CGImage? {
+        let width = 1_400
+        let height = 200
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.setFillColor(.white)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 56),
+            .foregroundColor: NSColor.black,
+        ]).draw(at: NSPoint(x: 40, y: 70))
+        NSGraphicsContext.restoreGraphicsState()
+        return context.makeImage()
     }
 
     @Test

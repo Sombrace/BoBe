@@ -113,9 +113,8 @@ final class DiagnosticsMetrics: NSObject, MXMetricManagerSubscriber {
     private let store: DiagnosticsStore
 
     override private init() {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         self.store = DiagnosticsStore(
-            fileURL: support
+            fileURL: URL.applicationSupportDirectory
                 .appending(path: "com.bobe.app", directoryHint: .isDirectory)
                 .appending(path: "Diagnostics", directoryHint: .isDirectory)
                 .appending(path: "metrics.json", directoryHint: .notDirectory)

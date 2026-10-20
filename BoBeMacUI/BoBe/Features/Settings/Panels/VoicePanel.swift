@@ -151,8 +151,8 @@ struct VoicePanel: View {
                         .frame(width: 180)
                         .accessibilityLabel(L10n.tr("settings.voice.speed"))
                         .accessibilityHint(L10n.tr("settings.voice.speed.description"))
-                        .accessibilityValue(String(format: "%.2f×", Double(self.store.settings?.voiceSpeed ?? 1.0)))
-                        Text(String(format: "%.2f×", Double(self.store.settings?.voiceSpeed ?? 1.0)))
+                        .accessibilityValue(self.speedLabel)
+                        Text(self.speedLabel)
                             .font(.system(size: 12, design: .monospaced))
                             .foregroundStyle(self.theme.colors.textMuted)
                             .frame(width: 56, alignment: .trailing)
@@ -274,6 +274,11 @@ struct VoicePanel: View {
         case .disabledByUser, .permissionMissing, .preparing:
             return L10n.tr("settings.voice.missing_label")
         }
+    }
+
+    private var speedLabel: String {
+        let speed = Double(self.store.settings?.voiceSpeed ?? 1.0)
+        return "\(speed.formatted(.number.precision(.fractionLength(2))))×"
     }
 
     private var voiceLanguage: String {

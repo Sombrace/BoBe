@@ -50,7 +50,7 @@ struct ThreadMessage: Identifiable, Equatable, Sendable {
         self.text = turn.content
         self.isComplete = turn.isComplete
         self.delivery = .sent
-        self.date = Self.parse(turn.createdAt) ?? .now
+        self.date = PhoneDates.parse(turn.createdAt) ?? .now
     }
 
     static func outgoing(_ text: String, requestId: UUID = UUID(), date: Date = .now) -> ThreadMessage {
@@ -114,12 +114,5 @@ struct ThreadMessage: Identifiable, Equatable, Sendable {
             return available == 0
         }
         return self.ordered(canonical) + pending
-    }
-
-    private static func parse(_ value: String) -> Date? {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: value) { return date }
-        return ISO8601DateFormatter().date(from: value)
     }
 }

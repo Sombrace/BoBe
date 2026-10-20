@@ -178,8 +178,7 @@ struct VoiceModelCard: View {
     }
 
     private func format(_ bytes: UInt64) -> String {
-        let mb = Double(bytes) / 1_048_576.0
-        return String(format: "%.0f MB", mb)
+        Int64(clamping: bytes).formatted(.byteCount(style: .file))
     }
 
     private func openLocationInFinder() {

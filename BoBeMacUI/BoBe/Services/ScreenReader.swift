@@ -51,7 +51,7 @@ nonisolated enum ScreenReader {
                 contentFilter: filter,
                 configuration: configuration
             )
-            let lines = try self.recognizeText(in: image)
+            let lines = try await self.recognizeText(in: image)
             return .completed(ScreenReadingWire(
                 text: self.arrange(lines),
                 application: frontmost.name,
@@ -105,17 +105,17 @@ nonisolated enum ScreenReader {
         Int((top / self.rowHeight).rounded())
     }
 
-    private static func recognizeText(in image: CGImage) throws -> [Line] {
-        let request = VNRecognizeTextRequest()
+    static func recognizeText(in image: CGImage) async throws -> [Line] {
+        var request = RecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
-        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
-        return (request.results ?? []).compactMap { observation in
+        request.automaticallyDetectsLanguage = true
+        return try await request.perform(on: image).compactMap { observation in
             guard let candidate = observation.topCandidates(1).first,
                   candidate.confidence >= self.minimumConfidence
             else { return nil }
             let box = observation.boundingBox
-            return Line(text: candidate.string, top: 1 - (box.origin.y + box.size.height), left: box.origin.x)
+            return Line(text: candidate.string, top: 1 - (box.origin.y + box.height), left: box.origin.x)
         }
     }
 

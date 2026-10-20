@@ -97,8 +97,8 @@ extension VoicePipeline {
             }
         }
 
-        let tapBlock: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { [weak self] buffer, _ in
-            guard let captured = CapturedVoiceAudio(buffer: buffer) else { return }
+        let deliverInput: @Sendable (CapturedVoiceAudio?) -> Void = { [weak self] captured in
+            guard let captured else { return }
             if case .dropped = continuation.yield(captured) {
                 DispatchQueue.main.async {
                     guard let self else { return }
@@ -114,30 +114,42 @@ extension VoicePipeline {
                 }
             }
         }
-        inputNode.installTap(onBus: 0, bufferSize: 2048, format: inputFormat, block: tapBlock)
+        if #available(macOS 27, *) {
+            try inputNode.installAudioTap(onBus: 0, bufferSize: 2048, format: inputFormat) { buffer, _ in
+                deliverInput(CapturedVoiceAudio(buffer: buffer))
+            }
+        } else {
+            let tapBlock: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { buffer, _ in
+                deliverInput(CapturedVoiceAudio(buffer: buffer))
+            }
+            inputNode.installTap(onBus: 0, bufferSize: 2048, format: inputFormat, block: tapBlock)
+        }
         self.inputTapInstalled = true
 
         let playerFormat = self.playerNode.outputFormat(forBus: 0)
         if playerFormat.sampleRate > 0 {
-            let playerTapBlock: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { [weak self] buffer, _ in
-                let rms = computePlaybackRms(buffer)
+            let deliverRms: @Sendable (Float) -> Void = { [weak self] rms in
                 guard rms.isFinite else { return }
                 DispatchQueue.main.async {
                     self?.handlePlaybackRms(rms)
                 }
             }
-            self.playerNode.installTap(
-                onBus: 0,
-                bufferSize: 1_024,
-                format: playerFormat,
-                block: playerTapBlock
-            )
+            if #available(macOS 27, *) {
+                try self.playerNode.installAudioTap(onBus: 0, bufferSize: 1_024, format: playerFormat) { buffer, _ in
+                    deliverRms(computePlaybackRms(buffer))
+                }
+            } else {
+                let playerTapBlock: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { buffer, _ in
+                    deliverRms(computePlaybackRms(buffer))
+                }
+                self.playerNode.installTap(onBus: 0, bufferSize: 1_024, format: playerFormat, block: playerTapBlock)
+            }
             self.playerTapInstalled = true
         }
 
         self.audioEngine.prepare()
         try self.audioEngine.start()
-        self.playerNode.play()
+        try self.startPlayerNode()
         self.registerInputDeviceObserverIfNeeded()
         logger.info("voice engine configured; input \(describe(inputFormat), privacy: .public)")
     }
@@ -269,6 +281,23 @@ extension VoicePipeline {
             guard self.state == .speaking else { return }
             self.bargeInSent = false
             self.bargeInCount = 0
+        }
+    }
+
+    func startPlayerNode() throws {
+        guard self.audioEngine.isRunning else { return }
+        if #available(macOS 27, *) {
+            try self.playerNode.playAudio()
+        } else {
+            self.playerNode.play()
+        }
+    }
+
+    func restartPlayerNode() {
+        do {
+            try self.startPlayerNode()
+        } catch {
+            logger.warning("voice player did not start: \(error.localizedDescription, privacy: .public)")
         }
     }
 

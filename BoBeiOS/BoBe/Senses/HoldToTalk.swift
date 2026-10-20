@@ -60,12 +60,14 @@ final class HoldToTalk {
             let format = input.outputFormat(forBus: 0)
             let (inputs, continuation) = AsyncStream.makeStream(of: AnalyzerInput.self)
             let feed = try SpeechFeed(from: format, to: listener.format, into: continuation)
-            input.installTap(
-                onBus: 0,
-                bufferSize: 1024,
-                format: format,
-                block: Self.tap(feed: feed, owner: self)
-            )
+            let tap = Self.tap(feed: feed, owner: self)
+            if #available(iOS 27, *) {
+                try input.installAudioTap(onBus: 0, bufferSize: 1024, format: format) { buffer, time in
+                    tap(AVAudioPCMBuffer(copying: buffer), time)
+                }
+            } else {
+                input.installTap(onBus: 0, bufferSize: 1024, format: format, block: tap)
+            }
             engine.prepare()
             try engine.start()
             let module = listener.module()
@@ -175,7 +177,10 @@ final class HoldToTalk {
         self.level = level
     }
 
-    nonisolated private static func tap(feed: SpeechFeed, owner: HoldToTalk) -> AVAudioNodeTapBlock {
+    nonisolated private static func tap(
+        feed: SpeechFeed,
+        owner: HoldToTalk
+    ) -> @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void {
         { [weak owner] buffer, _ in
             feed.append(buffer)
             let level = SpeechFeed.level(of: buffer)
@@ -196,23 +201,24 @@ private struct SpeechListener: Sendable {
     }
 
     static func make(preferring preferred: Locale) async -> SpeechListener? {
-        if SpeechTranscriber.isAvailable,
-           let locale = await self.supported(preferred, dictation: false),
-           let listener = await self.install(locale: locale, dictation: false) {
-            return listener
+        for requested in [preferred, Locale(identifier: "en-US")] {
+            if SpeechTranscriber.isAvailable,
+               let locale = self.closest(to: requested, in: await SpeechTranscriber.supportedLocales),
+               let listener = await self.install(locale: locale, dictation: false) {
+                return listener
+            }
+            if let locale = self.closest(to: requested, in: await DictationTranscriber.supportedLocales),
+               let listener = await self.install(locale: locale, dictation: true) {
+                return listener
+            }
         }
-        guard let locale = await self.supported(preferred, dictation: true) else { return nil }
-        return await self.install(locale: locale, dictation: true)
+        return nil
     }
 
-    private static func supported(_ preferred: Locale, dictation: Bool) async -> Locale? {
-        let fallback = Locale(identifier: "en-US")
-        if dictation {
-            if let locale = await DictationTranscriber.supportedLocale(equivalentTo: preferred) { return locale }
-            return await DictationTranscriber.supportedLocale(equivalentTo: fallback)
-        }
-        if let locale = await SpeechTranscriber.supportedLocale(equivalentTo: preferred) { return locale }
-        return await SpeechTranscriber.supportedLocale(equivalentTo: fallback)
+    static func closest(to requested: Locale, in supported: [Locale]) -> Locale? {
+        let candidates = supported.filter { $0.language.languageCode == requested.language.languageCode }
+        let region = requested.region ?? Locale.Language(identifier: requested.language.maximalIdentifier).region
+        return candidates.first { $0.region == region } ?? candidates.first
     }
 
     private static func install(locale: Locale, dictation: Bool) async -> SpeechListener? {

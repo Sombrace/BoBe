@@ -136,6 +136,7 @@ private struct TalkButton: View {
         .overlay { Circle().strokeBorder(self.theme.hairline, lineWidth: self.holding ? 0 : 1) }
         .scaleEffect(self.holding ? 1.12 : 1)
         .animation(BobeMotion.snappy, value: self.holding)
+        .sensoryFeedback(.impact(weight: .medium), trigger: self.holding) { _, holding in holding }
         .opacity(self.enabled ? 1 : 0.45)
         .gesture(
             DragGesture(minimumDistance: 0)
@@ -143,7 +144,6 @@ private struct TalkButton: View {
                     guard self.enabled else { return }
                     if !self.holding {
                         self.holding = true
-                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
                         self.model.talk.start()
                     }
                     self.cancelArmed = value.translation.height < -60

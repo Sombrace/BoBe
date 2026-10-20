@@ -68,9 +68,8 @@ nonisolated struct AgentScheduleWire: Decodable, Identifiable, Sendable {
     let lastError: String?
 
     var nextRunDate: Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.date(from: self.nextRunAt)
+        (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(self.nextRunAt))
+            ?? (try? Date.ISO8601FormatStyle().parse(self.nextRunAt))
     }
 
     enum CodingKeys: String, CodingKey {

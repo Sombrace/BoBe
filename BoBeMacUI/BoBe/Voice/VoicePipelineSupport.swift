@@ -108,6 +108,34 @@ nonisolated func convertSingleBuffer(
     return (status, err)
 }
 
+@available(macOS 27, *)
+nonisolated func computePlaybackRms(_ buffer: AVReadOnlyAudioPCMBuffer) -> Float {
+    let frames = buffer.frameLength
+    guard frames > 0 else { return 0 }
+    let stride = buffer.stride
+    var sumSq: Double = 0
+    switch buffer.channelData(0) {
+    case let .float(span):
+        for frame in 0 ..< frames {
+            let s = Double(span[frame * stride])
+            sumSq += s * s
+        }
+    case let .int16(span):
+        for frame in 0 ..< frames {
+            let s = Double(span[frame * stride]) / 32_768.0
+            sumSq += s * s
+        }
+    case let .int32(span):
+        for frame in 0 ..< frames {
+            let s = Double(span[frame * stride]) / 2_147_483_648.0
+            sumSq += s * s
+        }
+    @unknown default:
+        return 0
+    }
+    return Float(sqrt(sumSq / Double(frames)))
+}
+
 nonisolated func computePlaybackRms(_ buffer: AVAudioPCMBuffer) -> Float {
     let frames = Int(buffer.frameLength)
     guard frames > 0 else { return 0 }

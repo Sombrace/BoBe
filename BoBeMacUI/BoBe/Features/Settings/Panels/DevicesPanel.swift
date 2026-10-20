@@ -379,7 +379,7 @@ private struct PairPhoneSheet: View {
     }
 
     private static func clock(_ seconds: Int) -> String {
-        String(format: "%d:%02d", max(seconds, 0) / 60, max(seconds, 0) % 60)
+        Duration.seconds(max(seconds, 0)).formatted(.time(pattern: .minuteSecond))
     }
 }
 
