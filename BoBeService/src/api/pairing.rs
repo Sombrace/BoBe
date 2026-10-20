@@ -601,8 +601,7 @@ mod tests {
         assert!(manager.finish(&altered).is_err());
         assert!(matches!(
             manager.finish(&client.attempt(ScopeProfile::Phone)),
-            Ok(Finished::Delivered(redelivered)) if redelivered == sealed()
-        ));
+            Ok(Finished::Delivered(redelivered)) if redelivered == sealed()));
         assert!(
             manager
                 .finish(&client.attempt(ScopeProfile::Phone))

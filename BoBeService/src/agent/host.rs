@@ -1283,6 +1283,7 @@ fn lock<T>(mutex: &SyncMutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn worker_fixture_matches_authoritative_rust_execution_limits() {
@@ -1605,12 +1606,11 @@ input.on("line", line => {
             .await
             .unwrap();
         let mut events = request.events.take().unwrap();
-        assert!(matches!(
+        assert_matches!(
             tokio::time::timeout(Duration::from_secs(5), events.recv())
                 .await
                 .unwrap(),
-            Some(ChatDelta::MessageDelta { text, .. }) if text == "partial"
-        ));
+            Some(ChatDelta::MessageDelta { text, .. }) if text == "partial");
         let reply = tokio::time::timeout(Duration::from_secs(5), request.reply)
             .await
             .unwrap()

@@ -155,6 +155,7 @@ fn bounded(value: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn header_lists_known_actions_and_ignores_the_rest() {
@@ -197,10 +198,10 @@ mod tests {
         assert_eq!(reading.text.chars().count(), SCREEN_TEXT_MAX_CHARS);
         assert_eq!(reading.application.as_deref(), Some("Safari"));
         assert_eq!(reading.window_title, None);
-        assert!(matches!(
+        assert_matches!(
             ScreenReading::from_result(serde_json::json!({"text": "a", "image": "..."})),
             Err(BodyRequestError::Invalid(_))
-        ));
+        );
     }
 
     #[test]

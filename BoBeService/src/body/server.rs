@@ -474,8 +474,8 @@ mod tests {
 
         assert!(
             arguments
-                .windows(2)
-                .any(|pair| { pair == ["bobe-body-hub.local", "192.0.2.10"] })
+                .array_windows()
+                .any(|[host, address]| host == "bobe-body-hub.local" && address == "192.0.2.10")
         );
         assert!(arguments.iter().any(|value| value == "auth=mtls-pinned"));
         assert!(arguments.iter().any(|value| value == "kid=test-kid"));

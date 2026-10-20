@@ -24,6 +24,7 @@ pub(crate) struct MessageRequests {
     shutdown: CancellationToken,
 }
 
+#[derive(Debug)]
 enum RequestOutcome {
     Completed,
     Failed,
@@ -474,6 +475,7 @@ fn unsafe_replay_error() -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     async fn log_status_changes(pool: &sqlx::SqlitePool) {
         sqlx::raw_sql(
@@ -599,7 +601,7 @@ mod tests {
         drop(connection);
 
         let outcome = preparation.await.unwrap().unwrap();
-        assert!(matches!(outcome, Some(RequestOutcome::Deferred)));
+        assert_matches!(outcome, Some(RequestOutcome::Deferred));
         assert!(!bound.load(Ordering::Acquire));
         assert_eq!(
             status_history(&pool, request_id).await,
@@ -629,7 +631,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(matches!(outcome, Some(RequestOutcome::Deferred)));
+        assert_matches!(outcome, Some(RequestOutcome::Deferred));
         assert_eq!(
             status_history(&pool, request_id).await,
             (
@@ -654,7 +656,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(matches!(outcome, Some(RequestOutcome::Failed)));
+        assert_matches!(outcome, Some(RequestOutcome::Failed));
         assert_eq!(
             status_history(&pool, request_id).await,
             ("running".to_owned(), vec!["running".to_owned()])
@@ -683,7 +685,7 @@ mod tests {
             status_history(&pool, request_id).await,
             ("running".to_owned(), vec!["running".to_owned()])
         );
-        assert!(matches!(
+        assert_matches!(
             prepare_execution(
                 &pool,
                 &shutdown,
@@ -693,7 +695,7 @@ mod tests {
             )
             .await,
             Ok(Some(RequestOutcome::Deferred))
-        ));
+        );
     }
 
     #[tokio::test]

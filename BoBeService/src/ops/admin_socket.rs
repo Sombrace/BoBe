@@ -188,6 +188,7 @@ async fn exchange(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn unit_requests_reject_unknown_fields() {
@@ -231,20 +232,17 @@ mod tests {
             }
         });
         let pair = serde_json::json!({ "command": "pair", "kind": "phone", "label": "iPhone" });
-        assert!(matches!(
+        assert_matches!(
             request(&socket, pair.clone()).await,
-            Err(AppError::NotNetworked(message)) if message == "A phone cannot reach this BoBe"
-        ));
-        assert!(matches!(
+            Err(AppError::NotNetworked(message)) if message == "A phone cannot reach this BoBe");
+        assert_matches!(
             request(&socket, pair.clone()).await,
             Err(AppError::Validation(message))
-                if message == "device label must contain 1-128 characters"
-        ));
-        assert!(matches!(
+                if message == "device label must contain 1-128 characters");
+        assert_matches!(
             request(&socket, pair).await,
             Err(AppError::ServiceUnavailable(message))
-                if message == "Internal error: database closed"
-        ));
+                if message == "Internal error: database closed");
         daemon.await.expect("admin fixture");
         std::fs::remove_dir_all(root).expect("remove test directory");
     }

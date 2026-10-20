@@ -375,6 +375,7 @@ fn bearer_verifier(lookup_id: &str, secret: &[u8]) -> [u8; 32] {
 mod tests {
     use super::*;
     use crate::db::endpoint_repo::{EndpointRepo, EndpointUpsert};
+    use std::assert_matches;
 
     fn mac_endpoint(label: &str) -> EndpointUpsert {
         EndpointUpsert {
@@ -530,7 +531,7 @@ mod tests {
                 None,
             )
             .await;
-        assert!(matches!(refused, Err(AppError::Conflict(_))));
+        assert_matches!(refused, Err(AppError::Conflict(_)));
         let current = repo
             .authenticate_bearer(&mac.token, 4)
             .await

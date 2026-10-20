@@ -313,6 +313,7 @@ async fn wait_for_cancel(cancel_rx: &mut watch::Receiver<bool>) {
 mod tests {
     use super::BinaryManager;
     use super::download::current_artifact;
+    use std::assert_matches;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -503,7 +504,7 @@ mod tests {
             .expect("check should join")
             .expect_err("validation should be canceled");
 
-        assert!(matches!(error, crate::error::AppError::Canceled(_)));
+        assert_matches!(error, crate::error::AppError::Canceled(_));
         assert_group_gone(pid).await;
         let _ignored = std::fs::remove_dir_all(dir);
     }

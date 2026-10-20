@@ -246,6 +246,7 @@ async fn commit_then_reload<T>(
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
     use std::cell::{Cell, RefCell};
 
     use super::*;
@@ -338,7 +339,7 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert!(matches!(error, AppError::Validation(_)));
+        assert_matches!(error, AppError::Validation(_));
         assert!(!followed.load(Ordering::SeqCst));
     }
 
@@ -398,7 +399,7 @@ mod tests {
         )
         .await
         .unwrap_err();
-        assert!(matches!(error, AppError::Validation(_)));
+        assert_matches!(error, AppError::Validation(_));
         assert_eq!(*reloads.borrow(), [2, 1]);
 
         reloads.borrow_mut().clear();

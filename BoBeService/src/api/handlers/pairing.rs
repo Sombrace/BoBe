@@ -555,6 +555,7 @@ fn decode_fixed<const N: usize>(value: &str) -> Result<[u8; N], AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn canonicalizes_root_origins_and_marks_transport() {
@@ -668,10 +669,10 @@ mod tests {
         );
 
         let loopback = crate::config::ServerConfig::default();
-        assert!(matches!(
+        assert_matches!(
             invitation(&pairing, &loopback, ScopeProfile::Phone, "iPhone").await,
             Err(AppError::NotNetworked(_))
-        ));
+        );
         assert_eq!(pairing.invitation_profile(), Some(ScopeProfile::Phone));
         let mac = serde_json::to_value(
             invitation(&pairing, &loopback, ScopeProfile::MacApp, "Mac")

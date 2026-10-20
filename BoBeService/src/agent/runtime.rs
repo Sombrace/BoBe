@@ -691,6 +691,7 @@ mod tests {
     use axum::response::sse::{Event, Sse};
     use axum::routing::{get, post};
     use futures::StreamExt;
+    use std::assert_matches;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
@@ -934,7 +935,7 @@ mod tests {
                 .any(|event| matches!(event, ChatDelta::ToolComplete { success: true, .. })),
             "{events:?}"
         );
-        assert!(matches!(events.last(), Some(ChatDelta::Done)), "{events:?}");
+        assert_matches!(events.last(), Some(ChatDelta::Done), "{events:?}");
         assert!(activated_in_context.load(Ordering::Acquire));
         assert!(
             companion_prompt.load(Ordering::Acquire),
@@ -951,7 +952,7 @@ mod tests {
         let forged = tokio::time::timeout(Duration::from_secs(20), forged.collect::<Vec<_>>())
             .await
             .expect("the forged background request must settle");
-        assert!(matches!(forged.last(), Some(ChatDelta::Done)), "{forged:?}");
+        assert_matches!(forged.last(), Some(ChatDelta::Done), "{forged:?}");
         let queued = jobs
             .list()
             .await

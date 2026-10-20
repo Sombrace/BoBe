@@ -129,6 +129,7 @@ fn read_holder(file: &mut File) -> Option<HolderInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn lock_path() -> PathBuf {
         std::env::temp_dir().join(format!("bobe-lock-{}.lock", uuid::Uuid::new_v4()))
@@ -157,7 +158,7 @@ mod tests {
 
         let first = RuntimeLocks::acquire(&first_paths).expect("first locks");
         let error = RuntimeLocks::acquire(&second_paths).expect_err("shared database conflicts");
-        assert!(matches!(error, AppError::Conflict(_)));
+        assert_matches!(error, AppError::Conflict(_));
         drop(first);
         drop(std::fs::remove_dir_all(base));
     }
@@ -203,7 +204,7 @@ mod tests {
             RuntimeLocks::acquire_after_service_stop(&paths, std::time::Duration::from_millis(50))
                 .await
                 .expect_err("held lock times out");
-        assert!(matches!(error, AppError::Conflict(_)));
+        assert_matches!(error, AppError::Conflict(_));
         drop(first);
         drop(std::fs::remove_dir_all(base));
     }
@@ -213,7 +214,7 @@ mod tests {
         let path = lock_path();
         let first = RuntimeLock::acquire(&path, "test").expect("first lock");
         let error = RuntimeLock::acquire(&path, "test").expect_err("second lock conflicts");
-        assert!(matches!(error, AppError::Conflict(_)));
+        assert_matches!(error, AppError::Conflict(_));
         drop(first);
         let second = RuntimeLock::acquire(&path, "test").expect("lock after drop");
         drop(second);

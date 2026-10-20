@@ -212,7 +212,11 @@ mod tests {
         let played = (0..7)
             .map(|_| set.take().unwrap().len())
             .collect::<Vec<_>>();
-        assert!(played.windows(2).all(|pair| pair[0] != pair[1]));
+        assert!(
+            played
+                .array_windows()
+                .all(|[first, second]| first != second)
+        );
         assert_eq!(&played[..4], &[1, 2, 3, 1]);
     }
 

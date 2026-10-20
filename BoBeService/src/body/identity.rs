@@ -57,7 +57,7 @@ fn identity_from_record(
     if endpoint.kind != "physical_body" {
         return None;
     }
-    let digest: [u8; 32] = certificate_sha256.try_into().ok()?;
+    let digest = *certificate_sha256.as_array()?;
     Some(BodyPeerIdentity {
         endpoint_id: endpoint.id.clone(),
         certificate_sha256: digest,

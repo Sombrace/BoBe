@@ -289,9 +289,9 @@ impl MediaHeader {
         }
         let kind = header[1];
         let flags = u16::from_be_bytes([header[2], header[3]]);
-        let stream_id = u32::from_be_bytes(header[4..8].try_into().ok()?);
-        let sequence = u32::from_be_bytes(header[8..12].try_into().ok()?);
-        let monotonic_us = u64::from_be_bytes(header[12..20].try_into().ok()?);
+        let stream_id = u32::from_be_bytes(*header[4..8].as_array()?);
+        let sequence = u32::from_be_bytes(*header[8..12].as_array()?);
+        let monotonic_us = u64::from_be_bytes(*header[12..20].as_array()?);
         if !matches!(kind, 0x01 | 0x02) || flags & !MEDIA_FLAG_DISCONTINUITY != 0 || stream_id == 0
         {
             return None;

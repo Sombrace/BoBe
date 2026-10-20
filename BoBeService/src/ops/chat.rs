@@ -314,9 +314,13 @@ fn render_recovered_content(partial: &str, complete: &str, json: bool) -> Result
 
 fn frame_end(buffer: &[u8]) -> Option<usize> {
     buffer
-        .windows(2)
+        .array_windows()
         .position(|window| window == b"\n\n")
-        .or_else(|| buffer.windows(4).position(|window| window == b"\r\n\r\n"))
+        .or_else(|| {
+            buffer
+                .array_windows()
+                .position(|window| window == b"\r\n\r\n")
+        })
 }
 
 fn drain_frame_separator(buffer: &mut Vec<u8>) {

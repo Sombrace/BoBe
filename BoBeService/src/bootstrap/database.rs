@@ -413,6 +413,7 @@ fn rename_frontmatter(content: &str, name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
     use std::collections::BTreeMap;
 
     use super::*;
@@ -946,7 +947,7 @@ mod tests {
 
             let error = open(&fixture.paths).await.expect_err("must refuse");
 
-            assert!(matches!(error, AppError::Conflict(_)));
+            assert_matches!(error, AppError::Conflict(_));
             let mut connection = fixture.connection(true).await;
             assert_eq!(normalized_schema(&mut connection).await, schema_before);
             assert_eq!(

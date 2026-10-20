@@ -653,6 +653,7 @@ fn systemd(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
     #[test]
     fn systemd_config_home_honors_xdg_override() {
         assert_eq!(
@@ -777,15 +778,9 @@ mod tests {
         let error = install(Path::new("/opt/bobe"), None, &service_paths)
             .await
             .unwrap_err();
-        assert!(matches!(error, AppError::Conflict(_)));
-        assert!(matches!(
-            stop(&service_paths).await,
-            Err(AppError::Conflict(_))
-        ));
-        assert!(matches!(
-            uninstall(&service_paths).await,
-            Err(AppError::Conflict(_))
-        ));
+        assert_matches!(error, AppError::Conflict(_));
+        assert_matches!(stop(&service_paths).await, Err(AppError::Conflict(_)));
+        assert_matches!(uninstall(&service_paths).await, Err(AppError::Conflict(_)));
 
         assert_eq!(
             tokio::fs::read_to_string(&service_paths.definition)
@@ -1021,10 +1016,10 @@ mod tests {
             .await
             .unwrap();
         assert!(!definition_manages_data_root(&service_paths).await.unwrap());
-        assert!(matches!(
+        assert_matches!(
             ensure_manages_data_root(&service_paths).await,
             Err(AppError::Conflict(_))
-        ));
+        );
 
         let definition = render(Path::new("/opt/bobe"), None, &service_paths).unwrap();
         tokio::fs::write(&service_paths.definition, definition)

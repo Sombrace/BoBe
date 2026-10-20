@@ -91,7 +91,7 @@ pub(crate) async fn run(command: VoiceCommands) -> Result<ExitCode, AppError> {
             "Speech speed must be between 0.5 and 2.0".into(),
         ));
     }
-    if cancel_after.is_some_and(|delay| delay > Duration::from_secs(600)) {
+    if cancel_after.is_some_and(|delay| delay > Duration::from_mins(10)) {
         return Err(AppError::Validation(
             "Cancellation delay must not exceed ten minutes".into(),
         ));
@@ -114,7 +114,7 @@ pub(crate) async fn run(command: VoiceCommands) -> Result<ExitCode, AppError> {
         .await
         .map_err(ws_error)?;
     let started = Instant::now();
-    let deadline = started + Duration::from_secs(600);
+    let deadline = started + Duration::from_mins(10);
     let mut cancel_at = None;
     let mut playback: Option<Child> = None;
     let mut turn_id = None;

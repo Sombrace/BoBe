@@ -279,6 +279,7 @@ mod tests {
     use super::*;
     use crate::util::sse::factories::text_delta_event;
     use crate::util::sse::types::EventType;
+    use std::assert_matches;
 
     #[tokio::test]
     async fn channel_subscriptions_do_not_receive_other_channel_text_or_replay() {
@@ -392,9 +393,9 @@ mod tests {
             queue.push(text_delta_event("message", "x", false));
         }
 
-        assert!(matches!(
+        assert_matches!(
             subscription.recv().await,
             Err(broadcast::error::RecvError::Lagged(1))
-        ));
+        );
     }
 }

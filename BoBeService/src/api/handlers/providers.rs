@@ -706,6 +706,7 @@ mod tests {
     use super::*;
     use crate::secrets::SecretStore;
     use crate::secrets::memory::MemorySecretStore;
+    use std::assert_matches;
 
     fn disk_full() -> Result<(), AppError> {
         Err(AppError::Io(std::io::Error::other("disk full")))
@@ -737,7 +738,7 @@ mod tests {
         .unwrap_err();
 
         assert!(!failure.config_committed);
-        assert!(matches!(failure.error, AppError::Io(_)));
+        assert_matches!(failure.error, AppError::Io(_));
         assert_eq!(secrets.read("acct").as_deref(), Some("old-key"));
         let reopened = crate::secrets::file::FileSecretStore::at_path(secrets_path).unwrap();
         assert_eq!(reopened.read("acct").as_deref(), Some("old-key"));

@@ -769,11 +769,9 @@ async fn clean_prepared_replacements(
             failures.push(format!("remove {}: {error}", staged.display()));
         }
     }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(AppError::Internal(failures.join("; ")))
-    }
+    failures
+        .is_empty()
+        .ok_or_else(|| AppError::Internal(failures.join("; ")))
 }
 
 async fn prepare_replacements(
@@ -1521,6 +1519,7 @@ mod tests {
     use crate::bootstrap::database::{
         CURRENT_SCHEMA_VERSION, OLDEST_UPGRADABLE_SCHEMA_VERSION, SUPPORTED_SCHEMA_VERSIONS,
     };
+    use std::assert_matches;
 
     #[tokio::test]
     async fn backup_accepts_the_actual_pi_worker_pointer_contract() {
@@ -2202,10 +2201,10 @@ mod tests {
             .iter()
             .position(|point| *point == RestorePoint::Committed)
             .unwrap();
-        assert!(matches!(
+        assert_matches!(
             points[committed - 1],
             RestorePoint::Installed | RestorePoint::MovedAside
-        ));
+        );
         assert!(points.len() > committed + 1);
 
         for (interrupted_at, point) in points.iter().enumerate() {
@@ -2289,7 +2288,7 @@ mod tests {
         let error = reconcile_interrupted_restore(fixture.config.parent().unwrap())
             .await
             .expect_err("a held authority must block reconciliation");
-        assert!(matches!(error, AppError::Conflict(_)), "{error}");
+        assert_matches!(error, AppError::Conflict(_), "{error}");
         assert_eq!(tokio::fs::read(&journal).await.unwrap(), before);
         assert!(
             crate::bootstrap::initialize_storage(&fixture.paths)

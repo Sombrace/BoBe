@@ -2440,13 +2440,11 @@ fn remove_offline_config(loaded: &config::LoadedConfig, key: &str) -> Result<(),
         .config_file
         .parent()
         .ok_or_else(|| error::AppError::Config("config file has no parent directory".into()))?;
-    if config::manager_persistence::remove(config_root, key) {
-        Ok(())
-    } else {
-        Err(error::AppError::Io(std::io::Error::other(
+    config::manager_persistence::remove(config_root, key).ok_or_else(|| {
+        error::AppError::Io(std::io::Error::other(
             "failed to remove persisted configuration override",
-        )))
-    }
+        ))
+    })
 }
 
 fn unset_config_report(
@@ -2508,16 +2506,11 @@ fn persist_offline_config(
         .config_file
         .parent()
         .ok_or_else(|| error::AppError::Config("config file has no parent directory".into()))?;
-    if config::manager_persistence::persist(
+    config::manager_persistence::persist(
         config_root,
         &std::collections::BTreeMap::from([(key.to_owned(), value.clone())]),
-    ) {
-        Ok(())
-    } else {
-        Err(error::AppError::Io(std::io::Error::other(
-            "failed to persist configuration",
-        )))
-    }
+    )
+    .ok_or_else(|| error::AppError::Io(std::io::Error::other("failed to persist configuration")))
 }
 
 async fn wait_for_model_install(
@@ -3157,6 +3150,7 @@ async fn run_graceful_shutdown(state: &Arc<app_state::AppState>) {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
     #[test]
     fn a_managed_daemon_stops_once_its_app_is_no_longer_its_parent() {
         assert!(!managing_app_is_gone(4_242, 4_242));
@@ -3356,7 +3350,7 @@ mod tests {
             "TLS private key",
         )
         .expect_err("missing key must fail");
-        assert!(matches!(error, error::AppError::Validation(_)));
+        assert_matches!(error, error::AppError::Validation(_));
         let message = error.to_string();
         assert!(message.contains("TLS private key"));
         assert!(message.contains(&root.join("missing-key.pem").to_string_lossy().into_owned()));

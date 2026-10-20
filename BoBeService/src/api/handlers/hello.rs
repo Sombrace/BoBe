@@ -229,6 +229,7 @@ fn negotiate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn endpoint_identity_comparison_accepts_uuid_casing() {
@@ -271,7 +272,7 @@ mod tests {
             "phone",
             r#"{"microphone":true,"playback":true,"local_stt":true}"#,
         );
-        assert!(matches!(phone.surface_kind, SurfaceKind::Phone));
+        assert_matches!(phone.surface_kind, SurfaceKind::Phone);
         assert!(validate_request(&phone).is_ok());
         for capability in ["wake", "local_tts", "screen_context"] {
             let phone = hello_request("phone", &format!(r#"{{"{capability}":true}}"#));

@@ -1173,7 +1173,7 @@ async fn local_runtime_snapshot(
     let mut buffer = Vec::new();
     while let Some(chunk) = stream.next().await {
         buffer.extend_from_slice(&chunk?);
-        while let Some(end) = buffer.windows(2).position(|window| window == b"\n\n") {
+        while let Some(end) = buffer.array_windows().position(|window| window == b"\n\n") {
             let frame = buffer.drain(..end).collect::<Vec<_>>();
             buffer.drain(..2);
             let frame = String::from_utf8(frame)?;

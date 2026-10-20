@@ -115,6 +115,7 @@ fn validate_content(content: &str) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use crate::db::test_helpers::in_memory_pool;
+    use std::assert_matches;
 
     async fn service<K: DocumentKind>() -> DocumentService<K> {
         DocumentService::new(Arc::new(SqliteDocumentRepo::new(in_memory_pool().await)))
@@ -228,14 +229,14 @@ mod tests {
             .await
             .expect("fork")
             .expect("owner copy");
-        assert!(matches!(
+        assert_matches!(
             souls.delete(owned.id).await.expect("delete owner copy"),
             DeleteOutcome::Deleted
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             souls.delete(owned.id).await.expect("delete again"),
             DeleteOutcome::NotFound
-        ));
+        );
 
         let profiles = service::<UserProfiles>().await;
         let flagged = profiles
@@ -248,9 +249,9 @@ mod tests {
             ))
             .await
             .expect("insert");
-        assert!(matches!(
+        assert_matches!(
             profiles.delete(flagged.id).await.expect("delete"),
             DeleteOutcome::Deleted
-        ));
+        );
     }
 }

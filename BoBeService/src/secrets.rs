@@ -257,6 +257,7 @@ pub(crate) mod file {
     mod tests {
         use super::*;
         use crate::secrets::SecretStore;
+        use std::assert_matches;
 
         fn tmpfile() -> PathBuf {
             std::env::temp_dir().join(format!("bobe-secrets-{}.json", uuid::Uuid::new_v4()))
@@ -398,10 +399,7 @@ pub(crate) mod file {
 
             let result = store.store("other", "new");
 
-            assert!(matches!(
-                result,
-                Err(super::super::SecretError::Serialize(_))
-            ));
+            assert_matches!(result, Err(super::super::SecretError::Serialize(_)));
             assert_eq!(std::fs::read(&path).unwrap(), corrupt);
             assert_eq!(store.read("acct").as_deref(), Some("recoverable"));
             drop(std::fs::remove_file(&path));

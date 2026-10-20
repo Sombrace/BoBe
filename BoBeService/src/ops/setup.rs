@@ -9,7 +9,7 @@ use crate::error::AppError;
 use crate::ops;
 use crate::ops::status::OpsTarget;
 
-const READY_WAIT: Duration = Duration::from_secs(120);
+const READY_WAIT: Duration = Duration::from_mins(2);
 const SHOWN_MODELS: usize = 9;
 
 struct Service {

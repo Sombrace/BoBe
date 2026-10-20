@@ -302,11 +302,7 @@ fn restore_document(
     let document = match previous {
         Some(bytes) => crate::util::durable_fs::atomic_write_sync_mode(path, bytes, 0o600),
         None => std::fs::remove_file(path).or_else(|error| {
-            if error.kind() == std::io::ErrorKind::NotFound {
-                Ok(())
-            } else {
-                Err(AppError::Io(error))
-            }
+            (error.kind() == std::io::ErrorKind::NotFound).ok_or(AppError::Io(error))
         }),
     };
     if let Err(error) = document {
@@ -324,11 +320,7 @@ fn restore_document(
             failures.push(format!("MCP secret {account}: {error}"));
         }
     }
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(failures.join("; "))
-    }
+    failures.is_empty().ok_or_else(|| failures.join("; "))
 }
 
 fn read_document(path: &Path) -> Result<Option<Vec<u8>>, AppError> {
@@ -566,6 +558,7 @@ fn secret_accounts_in(file: &McpConfigFile) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn validate_only_reports_mcp_policy_errors_as_invalid_documents() {
@@ -579,7 +572,7 @@ mod tests {
     fn validate_only_propagates_operational_errors() {
         let error = invalid_document_response(AppError::Io(std::io::Error::other("disk")))
             .expect_err("I/O errors must propagate");
-        assert!(matches!(error, AppError::Io(_)));
+        assert_matches!(error, AppError::Io(_));
     }
 
     #[test]
@@ -588,7 +581,7 @@ mod tests {
             let raw = r#"{"mcpServers":{"test":{"command":"server","timeout_seconds":$TIMEOUT}}}"#
                 .replace("$TIMEOUT", timeout);
             let error = parse_document(&raw, &[], &[]).expect_err("invalid timeout");
-            assert!(matches!(error, AppError::Validation(_)));
+            assert_matches!(error, AppError::Validation(_));
             assert!(error.to_string().contains("timeout_seconds"));
         }
     }
@@ -601,7 +594,7 @@ mod tests {
 
         let error = parse_document(&raw.replace("$ENABLED", "true"), &[], &[])
             .expect_err("unresolvable enabled server");
-        assert!(matches!(error, AppError::Validation(message) if message.contains(&variable)));
+        assert_matches!(error, AppError::Validation(message) if message.contains(&variable));
 
         let (file, servers) = parse_document(&raw.replace("$ENABLED", "false"), &[], &[])
             .expect("disabled servers are not resolved");
@@ -802,6 +795,6 @@ mod tests {
     fn a_resolved_blocked_command_is_rejected_before_saving() {
         let raw = r#"{"mcpServers":{"test":{"command":"${BOBE_TEST_COMMAND:-rm}"}}}"#;
         let error = parse_document(raw, &[], &[]).expect_err("blocked after resolution");
-        assert!(matches!(error, AppError::Validation(_)));
+        assert_matches!(error, AppError::Validation(_));
     }
 }
