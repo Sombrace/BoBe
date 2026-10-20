@@ -1,7 +1,9 @@
 import { Type, type Static } from "typebox";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { assertActive } from "./errors.js";
-import { json, taskBudgetSchema, type JsonObject } from "./protocol.js";
+import type { Usage } from "@earendil-works/pi-ai";
+import { assertActive, rejections } from "./errors.ts";
+import { addUsage } from "./events.ts";
+import { json, taskBudgetSchema, type JsonObject } from "./protocol.ts";
 
 const taskSchema = Type.Object({
   agent: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
@@ -12,7 +14,7 @@ const taskSchema = Type.Object({
 export type DelegateTask = Static<typeof taskSchema>;
 
 const parameters = Type.Object({
-  mode: Type.Union([Type.Literal("parallel"), Type.Literal("chain")]),
+  mode: Type.Enum(["parallel", "chain"]),
   tasks: Type.Array(taskSchema, { minItems: 1, maxItems: 8 }),
 }, { additionalProperties: false });
 
@@ -25,31 +27,29 @@ export interface DelegateResult {
   truncated: boolean;
 }
 
+export interface DelegateOutcome {
+  result: DelegateResult;
+  usage: Usage | undefined;
+}
+
 interface DelegateRunner {
-  run(task: DelegateTask, signal?: AbortSignal): Promise<DelegateResult>;
+  run(task: DelegateTask, signal?: AbortSignal): Promise<DelegateOutcome>;
 }
 
 async function boundedParallel<T, R>(
   items: readonly T[], concurrency: number, execute: (item: T) => Promise<R>, signal?: AbortSignal,
 ): Promise<R[]> {
-  let cursor = 0;
-  const results = new Map<number, R>();
+  const queue = items.entries();
+  const results: R[] = [];
   const workers = Array.from({ length: Math.min(items.length, concurrency) }, async () => {
-    while (cursor < items.length) {
+    for (const [index, item] of queue) {
       assertActive(signal);
-      const index = cursor++;
-      const item = items[index];
-      if (item !== undefined) results.set(index, await execute(item));
+      results[index] = await execute(item);
     }
   });
-  const settled = await Promise.allSettled(workers);
-  const failed = settled.find(result => result.status === "rejected");
-  if (failed?.status === "rejected") throw failed.reason;
-  return items.map((_, index) => {
-    const result = results.get(index);
-    if (result === undefined) throw new Error("Delegated task did not settle");
-    return result;
-  });
+  const [failure] = rejections(await Promise.allSettled(workers));
+  if (failure !== undefined) throw failure;
+  return results;
 }
 
 export function subagentTool(runner: DelegateRunner): ToolDefinition {
@@ -59,26 +59,29 @@ export function subagentTool(runner: DelegateRunner): ToolDefinition {
     description: "Delegate bounded work to isolated pi sessions with the same tools, skills, workspace, provider, and owner authority. Always provide mode and a tasks list. mode=parallel runs independent tasks concurrently (up to eight tasks, four active); a one-item list runs one child. mode=chain runs tasks in order, replacing {previous} with the prior result. Put each task's agent, task and context inside the list. This call waits for all children; cancellation cancels and settles them.",
     parameters,
     execute: async (_id, args, signal) => {
-      let results: DelegateResult[];
+      let outcomes: DelegateOutcome[];
       if (args.mode === "parallel") {
-        results = await boundedParallel(args.tasks, 4, task => runner.run(task, signal), signal);
+        outcomes = await boundedParallel(args.tasks, 4, task => runner.run(task, signal), signal);
       } else {
-        results = [];
+        outcomes = [];
         let previous = "";
         for (const task of args.tasks) {
           assertActive(signal);
-          const result = await runner.run({ ...task, task: task.task.replaceAll("{previous}", previous) }, signal);
-          results.push(result);
-          if (!result.success) break;
-          previous = result.text;
+          const outcome = await runner.run({ ...task, task: task.task.replaceAll("{previous}", previous) }, signal);
+          outcomes.push(outcome);
+          if (!outcome.result.success) break;
+          previous = outcome.result.text;
         }
       }
+      const results = outcomes.map(outcome => outcome.result);
+      const usage = outcomes.reduce<Usage | undefined>(
+        (total, outcome) => outcome.usage ? addUsage(total, outcome.usage) : total, undefined);
       const value: JsonObject = { mode: args.mode, results: json(results) };
       return {
         content: [{ type: "text", text: JSON.stringify(value) }],
         details: value,
-        structuredContent: value,
         isError: results.some(result => !result.success),
+        ...(usage ? { usage } : {}),
       };
     },
   });
@@ -86,12 +89,7 @@ export function subagentTool(runner: DelegateRunner): ToolDefinition {
 
 export function boundedOutput(text: string): { text: string; truncated: boolean } {
   const limit = 50 * 1024;
-  const bytes = Buffer.from(text);
-  if (bytes.length <= limit) return { text, truncated: false };
-  let end = limit;
-  while (end > 0 && (bytes[end]! & 0xc0) === 0x80) end--;
-  return {
-    text: `${bytes.subarray(0, end).toString("utf8")}\n[Delegated output truncated; narrow the task for more detail.]`,
-    truncated: true,
-  };
+  if (Buffer.byteLength(text) <= limit) return { text, truncated: false };
+  const { read } = new TextEncoder().encodeInto(text, new Uint8Array(limit));
+  return { text: `${text.slice(0, read)}\n[Delegated output truncated; narrow the task for more detail.]`, truncated: true };
 }

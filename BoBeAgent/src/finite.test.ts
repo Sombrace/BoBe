@@ -3,8 +3,8 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { getCurrentSystemMessage, type TranscriptContext } from "@earendil-works/pi-ai";
-import { configuration, fixture, host, userText } from "./test-support.js";
-import { isRecord, type Json } from "./protocol.js";
+import { configuration, fixture, host, userText } from "./test-support.ts";
+import { isRecord, type Json } from "./protocol.ts";
 
 test("auxiliary structured-result tool is a real SDK tool and does not enter the main transcript", async t => {
   const paths = await fixture(t);

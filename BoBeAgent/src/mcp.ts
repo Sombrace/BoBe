@@ -2,13 +2,13 @@ import { join } from "node:path";
 import {
   createMcpExtension, defineTool, type ExtensionFactory, type McpServerEntry, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import {
-  type JsonRpcMessage, type McpTransport,
-  type McpTransportCloseListener, type McpTransportErrorListener, type McpTransportMessageListener,
+import type {
+  JsonRpcMessage, McpTransport, McpTransportSendOptions,
+  McpTransportCloseListener, McpTransportErrorListener, McpTransportMessageListener,
 } from "@earendil-works/pi-mcp";
-import { assertActive, abortableDelay, type Redactor } from "./errors.js";
-import { isRecord, type Json, type McpConfig } from "./protocol.js";
-import { OwnedMcpTransport, type ProcessClient } from "./process.js";
+import { assertActive, onAbort, rejections, type Redactor } from "./errors.ts";
+import { isRecord, type Json, type McpConfig } from "./protocol.ts";
+import { OwnedMcpTransport, environment, type ProcessClient } from "./process.ts";
 
 interface ServerStatus {
   name: string;
@@ -20,43 +20,53 @@ interface ServerStatus {
 
 class ObservedTransport implements McpTransport {
   private readonly pending = new Map<string | number, { method: string; replace: boolean }>();
+  private readonly transport: McpTransport;
+  private readonly state: ServerStatus;
+  private readonly redactor: Redactor;
+  private readonly changed: () => void;
 
-  constructor(
-    private readonly transport: McpTransport,
-    private readonly state: ServerStatus,
-    private readonly redactor: Redactor,
-  ) {
+  constructor(transport: McpTransport, state: ServerStatus, redactor: Redactor, changed: () => void) {
+    this.transport = transport;
+    this.state = state;
+    this.redactor = redactor;
+    this.changed = changed;
     transport.onMessage(message => this.observe(message));
-    transport.onError(error => {
-      state.connected = false;
-      state.status = "failed";
-      state.error = redactor.message(error);
-    });
-    transport.onClose(() => {
-      state.connected = false;
-      if (state.status !== "failed" && state.status !== "closed") state.status = "disconnected";
-    });
+    transport.onError(error => this.update({ connected: false, status: "failed", error: redactor.message(error) }));
+    transport.onClose(() => this.update({
+      connected: false,
+      ...(state.status !== "failed" && state.status !== "closed" ? { status: "disconnected" } : {}),
+    }));
+  }
+
+  private update(change: Partial<ServerStatus>): void {
+    Object.assign(this.state, change);
+    this.changed();
   }
 
   async start(): Promise<void> {
-    this.state.status = "connecting";
+    this.update({ status: "connecting" });
     try {
       await this.transport.start();
     } catch (error) {
-      this.state.status = "failed";
-      this.state.error = this.redactor.message(error);
+      this.update({ status: "failed", error: this.redactor.message(error) });
       throw error;
     }
   }
 
-  async send(message: JsonRpcMessage): Promise<void> {
-    if ("method" in message && "id" in message) {
-      this.pending.set(message.id, {
+  async send(message: JsonRpcMessage, options?: McpTransportSendOptions): Promise<void> {
+    const id = "method" in message && "id" in message ? message.id : undefined;
+    if (id !== undefined && "method" in message) {
+      this.pending.set(id, {
         method: message.method,
         replace: message.method === "tools/list" && (!isRecord(message.params) || !message.params.cursor),
       });
     }
-    await this.transport.send(message);
+    try {
+      await this.transport.send(message, options);
+    } catch (error) {
+      if (id !== undefined) this.pending.delete(id);
+      throw error;
+    }
   }
 
   private observe(message: JsonRpcMessage): void {
@@ -66,52 +76,44 @@ class ObservedTransport implements McpTransport {
     this.pending.delete(message.id);
     if (method !== "initialize" && method !== "tools/list") return;
     if ("error" in message) {
-      this.state.status = "failed";
-      this.state.connected = false;
-      this.state.error = this.redactor.message(new Error(message.error.message));
+      this.update({ status: "failed", connected: false, error: this.redactor.message(new Error(message.error.message)) });
       return;
     }
     if (method === "initialize") {
       const result = message.result;
       if (isRecord(result) && isRecord(result.capabilities) && !("tools" in result.capabilities)) {
-        this.state.status = "connected";
-        this.state.connected = true;
-        this.state.error = null;
+        this.update({ status: "connected", connected: true, error: null });
       }
-    } else {
-      if (!isRecord(message.result) || !Array.isArray(message.result.tools)) {
-        this.state.status = "failed";
-        this.state.error = "MCP returned an invalid tool catalog";
+      return;
+    }
+    if (!isRecord(message.result) || !Array.isArray(message.result.tools)) {
+      this.update({ status: "failed", error: "MCP returned an invalid tool catalog" });
+      return;
+    }
+    const tools: ServerStatus["tools"] = [];
+    for (const tool of message.result.tools) {
+      if (!isRecord(tool) || typeof tool.name !== "string") {
+        this.update({ status: "failed", error: "MCP returned an invalid tool definition" });
         return;
       }
-      const tools: ServerStatus["tools"] = [];
-      for (const tool of message.result.tools) {
-        if (!isRecord(tool) || typeof tool.name !== "string") {
-          this.state.status = "failed";
-          this.state.error = "MCP returned an invalid tool definition";
-          return;
-        }
-        tools.push({ name: tool.name, description: typeof tool.description === "string" ? tool.description : "" });
-      }
-      this.state.tools = [...new Map([
-        ...(pending?.replace ? [] : this.state.tools),
-        ...tools,
-      ].map(tool => [tool.name, tool])).values()];
-      const more = typeof message.result.nextCursor === "string" && message.result.nextCursor.length > 0;
-      this.state.connected = !more;
-      this.state.status = more ? "connecting" : "connected";
-      this.state.error = null;
+      tools.push({ name: tool.name, description: typeof tool.description === "string" ? tool.description : "" });
     }
+    const more = typeof message.result.nextCursor === "string" && message.result.nextCursor.length > 0;
+    this.update({
+      tools: [...new Map([...(pending?.replace ? [] : this.state.tools), ...tools].map(tool => [tool.name, tool])).values()],
+      connected: !more,
+      status: more ? "connecting" : "connected",
+      error: null,
+    });
   }
 
   async close(): Promise<void> {
-    this.state.status = "closed";
-    this.state.connected = false;
+    this.update({ status: "closed", connected: false });
     await this.transport.close();
   }
 
   hasActiveRequest(): boolean {
-    return [...this.pending.values()].some(({ method }) => method === "tools/call" || method.startsWith("resources/"));
+    return this.pending.values().some(({ method }) => method === "tools/call" || method.startsWith("resources/"));
   }
 
   onMessage(listener: McpTransportMessageListener): () => void { return this.transport.onMessage(listener); }
@@ -132,9 +134,23 @@ export class McpResources {
   private readonly states = new Map<string, ServerStatus>();
   private readonly transports = new Set<ObservedTransport>();
   private restartRequired = false;
+  private changes = Promise.withResolvers<void>();
 
-  constructor(private config: McpConfig, private readonly agentDir: string, private readonly redactor: Redactor,
-    private readonly processes: ProcessClient, private readonly guardTool: (tool: ToolDefinition) => ToolDefinition) {
+  private config: McpConfig;
+  private readonly agentDir: string;
+  private readonly redactor: Redactor;
+  private readonly processes: ProcessClient;
+  private readonly guardTool: (tool: ToolDefinition) => ToolDefinition;
+
+  constructor(
+    config: McpConfig, agentDir: string, redactor: Redactor, processes: ProcessClient,
+    guardTool: (tool: ToolDefinition) => ToolDefinition,
+  ) {
+    this.config = config;
+    this.agentDir = agentDir;
+    this.redactor = redactor;
+    this.processes = processes;
+    this.guardTool = guardTool;
     this.reset(config);
   }
 
@@ -148,6 +164,12 @@ export class McpResources {
       }
       this.states.set(name, { name, connected: false, status: "starting", error: null, tools: [] });
     }
+    this.changed();
+  }
+
+  private changed(): void {
+    this.changes.resolve();
+    this.changes = Promise.withResolvers();
   }
 
   extension(): ExtensionFactory {
@@ -175,9 +197,8 @@ export class McpResources {
           args: entry.config.args ?? [],
           cwd,
           purpose: "mcp",
-          env: { ...Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) =>
-            value === undefined ? [] : [[key, value]])), ...entry.config.env },
-        }), state, this.redactor);
+          env: { ...environment(), ...entry.config.env },
+        }), state, this.redactor, () => this.changed());
         this.transports.add(transport);
         transport.onClose(() => this.transports.delete(transport));
         return transport;
@@ -206,16 +227,15 @@ export class McpResources {
   }
 
   async cancelActive(): Promise<void> {
-    const active = [...this.transports].filter(transport => transport.hasActiveRequest());
+    const active = this.transports.values().filter(transport => transport.hasActiveRequest()).toArray();
     if (active.length === 0) return;
     this.restartRequired = true;
-    const outcomes = await Promise.allSettled(active.map(transport => transport.close()));
-    const failures = outcomes.filter(outcome => outcome.status === "rejected");
-    if (failures.length) throw new AggregateError(failures.map(failure => failure.reason), "MCP cancellation failed");
+    const failures = rejections(await Promise.allSettled(active.map(transport => transport.close())));
+    if (failures.length) throw new AggregateError(failures, "MCP cancellation failed");
   }
 
   needsRestart(): boolean {
-    return this.restartRequired || [...this.states.values()].some(state =>
+    return this.restartRequired || this.states.values().some(state =>
       state.status === "disconnected" || state.status === "closed" || state.status === "failed");
   }
 
@@ -228,8 +248,8 @@ export class McpResources {
       starting: "pending", connecting: "pending", connected: "connected",
       disconnected: "stopped", failed: "failed", closed: "stopped",
     } satisfies Record<ServerStatus["status"], string>;
-    return [...this.states.values()].map(({ name, connected, status, error }) =>
-      ({ name, connected, status: wireStatus[status], error }));
+    return this.states.values().map(({ name, connected, status, error }) =>
+      ({ name, connected, status: wireStatus[status], error })).toArray();
   }
 
   tools(name: string): Json {
@@ -237,26 +257,28 @@ export class McpResources {
     const config = this.config.servers[name];
     if (!state || !config) throw new Error("Unknown MCP server");
     if (!state.connected) throw new Error(`MCP server ${name} is ${state.status}`);
-    return state.tools.filter(tool => !config.excluded_tools.some(pattern =>
-      new RegExp(`^${pattern.split("*").map(part => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`).test(tool.name)));
+    const excluded = config.excluded_tools.map(pattern =>
+      new RegExp(`^${pattern.split("*").map(part => RegExp.escape(part)).join(".*")}$`));
+    return state.tools.filter(tool => !excluded.some(pattern => pattern.test(tool.name)));
   }
 
   async ready(signal?: AbortSignal): Promise<void> {
-    const deadline = Date.now() + Math.max(20_000, ...Object.values(this.config.servers).map(server => server.timeout_ms));
-    while ([...this.states.values()].some(state => !state.connected)) {
+    const deadline = AbortSignal.timeout(Math.max(20_000, ...Object.values(this.config.servers).map(server => server.timeout_ms)));
+    const wake = signal ? AbortSignal.any([signal, deadline]) : deadline;
+    while (this.states.values().some(state => !state.connected)) {
       assertActive(signal);
-      const failed = [...this.states.values()].find(state =>
-        ["failed", "closed", "disconnected"].includes(state.status));
+      const failed = this.states.values().find(state => ["failed", "closed", "disconnected"].includes(state.status));
       if (failed) throw new Error(`MCP server ${failed.name}: ${failed.error ?? failed.status}`);
-      if (Date.now() >= deadline) throw new Error("MCP startup timed out");
-      await abortableDelay(10, signal);
+      if (deadline.aborted) throw new Error("MCP startup timed out");
+      const aborted = Promise.withResolvers<void>();
+      using _abort = onAbort(wake, aborted.resolve);
+      await Promise.race([this.changes.promise, aborted.promise]);
     }
   }
 
   async close(): Promise<void> {
-    const outcomes = await Promise.allSettled([...this.transports].map(transport => transport.close()));
-    const failures = outcomes.filter(outcome => outcome.status === "rejected");
-    if (failures.length) throw new AggregateError(failures.map(failure => failure.reason), "MCP shutdown failed");
+    const failures = rejections(await Promise.allSettled(Array.from(this.transports, transport => transport.close())));
+    if (failures.length) throw new AggregateError(failures, "MCP shutdown failed");
     this.transports.clear();
   }
 }

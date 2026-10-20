@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { isRecord } from "./protocol.js";
+import { isRecord } from "./protocol.ts";
 
 const pidFile = process.env.BOBE_TEST_PID_FILE;
 if (pidFile) writeFileSync(pidFile, String(process.pid), { mode: 0o600 });

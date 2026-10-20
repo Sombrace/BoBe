@@ -1,9 +1,9 @@
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { readdir, open, unlink } from "node:fs/promises";
 import { SessionManager, CURRENT_SESSION_VERSION } from "@earendil-works/pi-coding-agent";
-import { atomicPrivateWrite, privateDirectory, privateRead, syncFile } from "./files.js";
-import { isJson, isRecord } from "./protocol.js";
-import { AGENT_LAYOUT } from "./layout.js";
+import { atomicPrivateWrite, privateDirectory, privateRead, syncFile } from "./files.ts";
+import { isJson, isRecord } from "./protocol.ts";
+import { AGENT_LAYOUT } from "./layout.ts";
 
 interface Pointer {
   version: 1;
@@ -57,7 +57,7 @@ function content(value: unknown, allowed: ReadonlySet<string>, allowString = tru
 const textBlocks = new Set(["text"]);
 const inputBlocks = new Set(["text", "image"]);
 const assistantBlocks = new Set(["text", "thinking", "toolCall"]);
-const editableBlocks = new Set([...inputBlocks, ...assistantBlocks]);
+const editableBlocks = inputBlocks.union(assistantBlocks);
 const stopReasons = new Set(["stop", "length", "toolUse", "error", "aborted", "deferred"]);
 const thinkingLevels = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
@@ -212,12 +212,10 @@ async function persistNewSession(manager: SessionManager): Promise<SessionManage
   const file = manager.getSessionFile();
   const header = manager.getHeader();
   if (!file || !header) throw new Error("pi did not create a persistent session identity");
-  const handle = await open(file, "wx", 0o600);
-  try {
+  {
+    await using handle = await open(file, "wx", 0o600);
     await handle.writeFile(`${JSON.stringify(header)}\n`, "utf8");
     await handle.sync();
-  } finally {
-    await handle.close();
   }
   await syncFile(manager.getSessionDir());
   return SessionManager.open(file, manager.getSessionDir(), manager.getCwd());

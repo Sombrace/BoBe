@@ -1,8 +1,7 @@
-import { createHash } from "node:crypto";
 import { Type } from "typebox";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { object, taskBudgetSchema } from "./protocol.js";
-import type { JobControl } from "./background.js";
+import { object, taskBudgetSchema } from "./protocol.ts";
+import { sourceKey, type JobControl } from "./background.ts";
 
 export interface DeferredOwnerInput {
   id: string;
@@ -19,7 +18,7 @@ export function ownerInputTool(
     parameters: Type.Union([
       Type.Object({
         operation: Type.Literal("ask"),
-        kind: Type.Union([Type.Literal("approval"),Type.Literal("information")]),
+        kind: Type.Enum(["approval","information"]),
         question: Type.String({ minLength:1,maxLength:2000 }),
         action: Type.String({ minLength:1,maxLength:2000 }),
         task: Type.String({ minLength:1,maxLength:32768 }),
@@ -32,21 +31,20 @@ export function ownerInputTool(
       },{additionalProperties:false}),
       Type.Object({operation:Type.Literal("list")},{additionalProperties:false}),
       Type.Object({
-        operation:Type.Union([Type.Literal("get"),Type.Literal("present"),Type.Literal("cancel")]),
+        operation:Type.Enum(["get","present","cancel"]),
         request_id:Type.String({format:"uuid"}),
       },{additionalProperties:false}),
     ]),
     execute:async (callId,args,signal) => {
       const {operation,...parameters}=args;
-      const source=createHash("sha256").update(`${control.invocationScope()}:${callId}`).digest("hex");
-      const value=await control.call(operation,object(parameters),source,signal);
+      const value=await control.call(operation,object(parameters),sourceKey(control,callId),signal);
       const stop=operation==="ask" || operation==="present";
       if (stop) {
         const input=object(value);
         if (typeof input.id!=="string" || typeof input.prompt!=="string") throw new Error("Invalid durable owner question");
         defer({id:input.id,prompt:input.prompt});
       }
-      return {content:[{type:"text",text:JSON.stringify(value)}],details:value,structuredContent:value,terminate:stop};
+      return {content:[{type:"text",text:JSON.stringify(value)}],details:value,terminate:stop};
     },
   });
 }

@@ -1,39 +1,27 @@
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtempDisposable, readFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { TestContext } from "node:test";
 import {
   createAssistantMessageEventStream, createProvider, type Api, type AssistantMessage,
   type Model, type SimpleStreamOptions, type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import { Redactor, assertActive } from "./errors.js";
-import { ModelProfiles } from "./models.js";
-import { WorkerHost, initializeParams, type HostConnection } from "./worker.js";
+import { Redactor, assertActive } from "./errors.ts";
+import { ModelProfiles } from "./models.ts";
+import { WorkerHost, initializeParams, type HostConnection } from "./worker.ts";
 import {
   initializeSchema, object, validate, toolNames, type Initialize, type Json, type JsonObject, type Notification,
-} from "./protocol.js";
-import { ProcessFixture } from "./process-fixture.js";
+} from "./protocol.ts";
+import { ProcessFixture } from "./process-fixture.ts";
 
 const cleanups = new Map<string, (() => Promise<void>)[]>();
 const contract = object(JSON.parse(await readFile(new URL("../fixtures/host-contract-v1.json", import.meta.url), "utf8")));
 const initialization = validate(initializeSchema, object(contract.initialize_request).params, "shared initialization fixture");
 
-export function deferred<T>(): {
-  promise: Promise<T>;
-  resolve(value: T): void;
-  reject(error: Error): void;
-} {
-  let resolve: (value: T) => void = () => { throw new Error("Deferred is not initialized"); };
-  let reject: (error: Error) => void = () => { throw new Error("Deferred is not initialized"); };
-  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
-  return { promise, resolve, reject };
-}
-
 export async function fixture(t: TestContext): Promise<{ root: string; workspace: string; skills: string }> {
-  const relative = join(".test-state", randomUUID());
-  await mkdir(relative, { recursive: true, mode: 0o700 });
-  const root = resolve(relative);
+  await mkdir(".test-state", { recursive: true, mode: 0o700 });
+  const directory = await mkdtempDisposable(join(".test-state", "run-"));
+  const root = resolve(directory.path);
   const workspace = join(root, "workspace");
   const skills = join(root, "skills/learned");
   await mkdir(workspace, { mode: 0o700 });
@@ -45,7 +33,7 @@ export async function fixture(t: TestContext): Promise<{ root: string; workspace
       for (const dispose of cleanup.reverse()) await dispose();
     } finally {
       cleanups.delete(root);
-      await rm(relative, { recursive: true, force: true });
+      await directory.remove();
     }
   });
   return { root, workspace, skills };
@@ -65,7 +53,7 @@ export function configuration(paths: { root: string; workspace: string; skills: 
   };
 }
 
-export const mcpFixture = fileURLToPath(new URL("./mcp-fixture.js", import.meta.url));
+export const mcpFixture = fileURLToPath(new URL("./mcp-fixture.ts", import.meta.url));
 
 export const mcpChat: JsonObject = { text: "Use MCP", channel: "text", context: "" };
 
@@ -165,7 +153,7 @@ export function controlledProvider(
         events.end(message);
       } catch (error) {
         message.stopReason = options?.signal?.aborted ? "aborted" : "error";
-        message.errorMessage = error instanceof Error ? error.message : "Controlled provider failed";
+        message.errorMessage = Error.isError(error) ? error.message : "Controlled provider failed";
         events.push({ type: "error", reason: message.stopReason, error: message });
         events.end(message);
       }

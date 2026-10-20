@@ -1,7 +1,6 @@
 import type { Readable, Writable } from "node:stream";
-import { TextDecoder } from "node:util";
-import { Cancelled, Redactor, WorkerFault, assertActive } from "./errors.js";
-import { MAX_LINE_BYTES, json, object, isRecord, parseEnvelope, type Json, type JsonObject, type Notification, type Request } from "./protocol.js";
+import { Cancelled, Redactor, WorkerFault, asError, assertActive } from "./errors.ts";
+import { MAX_LINE_BYTES, json, object, isRecord, parseEnvelope, type Json, type JsonObject, type Notification, type Request } from "./protocol.ts";
 
 interface Pending {
   resolve(value: Json): void;
@@ -23,7 +22,8 @@ export class JsonlRpc {
   private queuedWrites = 0;
   private queuedBytes = 0;
   private handler: RpcHandler | undefined;
-  private buffer = Buffer.alloc(0);
+  private pending: Buffer[] = [];
+  private pendingBytes = 0;
   private closed = false;
   private ending = false;
   private completion: Promise<void> | undefined;
@@ -31,12 +31,15 @@ export class JsonlRpc {
   private terminalError: Error | undefined;
   private readonly decoder = new TextDecoder("utf-8", { fatal: true });
   private readonly outputError = (error: Error): void => { this.terminate(error); };
+  private readonly input: Readable;
+  private readonly output: Writable;
+  readonly redactor: Redactor;
 
-  constructor(
-    private readonly input: Readable,
-    private readonly output: Writable,
-    readonly redactor = new Redactor(),
-  ) {}
+  constructor(input: Readable, output: Writable, redactor = new Redactor()) {
+    this.input = input;
+    this.output = output;
+    this.redactor = redactor;
+  }
 
   start(handler: RpcHandler): Promise<void> {
     if (this.handler) throw new Error("RPC transport already started");
@@ -63,24 +66,27 @@ export class JsonlRpc {
     }
     this.queuedWrites++;
     this.queuedBytes += bytes;
-    this.writes = this.writes.then(() => new Promise<void>((resolve, reject) => {
-      const deadline = setTimeout(() => {
-        const error = new Error("RPC output did not drain within 15 seconds");
-        this.output.destroy(error);
-        reject(error);
-      }, 15_000);
-      this.output.write(line, error => {
-        clearTimeout(deadline);
-        if (error) reject(error);
-        else resolve();
-      });
-    })).finally(() => {
+    this.writes = this.writes.then(() => this.write(line)).finally(() => {
       this.queuedWrites--;
       this.queuedBytes -= bytes;
     });
     void this.writes.catch(error => {
-      this.terminate(error instanceof Error ? error : new Error("RPC write failed"));
+      this.terminate(asError(error, "RPC write failed"));
     });
+  }
+
+  private async write(line: string): Promise<void> {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    using _deadline = setTimeout(() => {
+      const error = new Error("RPC output did not drain within 15 seconds");
+      this.output.destroy(error);
+      reject(error);
+    }, 15_000);
+    this.output.write(line, error => {
+      if (error) reject(error);
+      else resolve();
+    });
+    await promise;
   }
 
   async flush(): Promise<void> {
@@ -93,15 +99,13 @@ export class JsonlRpc {
     if (this.callbacks.size >= 256) throw new Error("RPC callback capacity reached");
     const id = this.nextId--;
     if (!Number.isSafeInteger(id)) throw new Error("RPC callback id space exhausted");
-    const response = new Promise<Json>((resolve, reject) => {
-      this.callbacks.set(id, { resolve, reject });
-    });
+    const { promise: response, resolve, reject } = Promise.withResolvers<Json>();
+    this.callbacks.set(id, { resolve, reject });
     try {
       this.enqueue({ id, method, params });
     } catch (error) {
-      const pending = this.callbacks.get(id);
       this.callbacks.delete(id);
-      pending?.reject(error instanceof Error ? error : new Error("RPC callback could not be sent"));
+      reject(asError(error, "RPC callback could not be sent"));
     }
     const value = await response;
     assertActive(signal);
@@ -123,8 +127,7 @@ export class JsonlRpc {
       this.lastRequest = envelope.id;
       const handler = this.handler;
       if (!handler) throw new Error("RPC handler missing");
-      const task = Promise.resolve()
-        .then(() => handler.request(envelope))
+      const task = Promise.try(() => handler.request(envelope))
         .then(
           result => this.enqueue({ id: envelope.id, result: json(result) }),
           error => {
@@ -143,7 +146,7 @@ export class JsonlRpc {
         },
         error => {
           this.handlers.delete(task);
-          this.terminate(error instanceof Error ? error : new Error("RPC dispatch failed"));
+          this.terminate(asError(error, "RPC dispatch failed"));
         },
       );
     } else {
@@ -158,13 +161,14 @@ export class JsonlRpc {
   private async read(): Promise<void> {
     try {
       for await (const raw of this.input) {
-        const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw));
-        this.buffer = Buffer.concat([this.buffer, chunk]);
-        let newline = this.buffer.indexOf(10);
+        let chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw));
+        let newline = chunk.indexOf(10);
         while (newline !== -1) {
-          if (newline > MAX_LINE_BYTES) throw new Error("RPC input exceeds 16 MiB");
-          const line = this.buffer.subarray(0, newline);
-          this.buffer = this.buffer.subarray(newline + 1);
+          if (this.pendingBytes + newline > MAX_LINE_BYTES) throw new Error("RPC input exceeds 16 MiB");
+          const line = Buffer.concat([...this.pending, chunk.subarray(0, newline)]);
+          this.pending = [];
+          this.pendingBytes = 0;
+          chunk = chunk.subarray(newline + 1);
           if (line.length === 0) throw new Error("Empty RPC message");
           let parsed: unknown;
           try {
@@ -173,16 +177,19 @@ export class JsonlRpc {
             throw new Error("Malformed RPC JSON or UTF-8", { cause: error });
           }
           this.dispatch(parsed);
-          newline = this.buffer.indexOf(10);
+          newline = chunk.indexOf(10);
         }
-        if (this.buffer.length > MAX_LINE_BYTES) throw new Error("RPC input exceeds 16 MiB");
+        if (chunk.length) {
+          this.pending.push(chunk);
+          this.pendingBytes += chunk.length;
+        }
+        if (this.pendingBytes > MAX_LINE_BYTES) throw new Error("RPC input exceeds 16 MiB");
       }
-      if (this.buffer.length !== 0) throw new Error("Incomplete RPC message at EOF");
+      if (this.pendingBytes !== 0) throw new Error("Incomplete RPC message at EOF");
       if (!this.closed) await this.finish();
     } catch (error) {
       if (!this.closed) {
-        const failure = error instanceof Error ? error : new Error("RPC read failed");
-        this.terminate(failure);
+        this.terminate(asError(error, "RPC read failed"));
       }
     }
     await this.finishing;
@@ -201,7 +208,7 @@ export class JsonlRpc {
 
   private observeTermination(promise: Promise<void>): void {
     void promise.catch(error => {
-      this.terminalError ??= error instanceof Error ? error : new Error("RPC shutdown failed");
+      this.terminalError ??= asError(error, "RPC shutdown failed");
     });
   }
 
@@ -220,7 +227,7 @@ export class JsonlRpc {
       if (failure?.status === "rejected") throw failure.reason;
       await this.flush();
     } catch (error) {
-      this.terminalError ??= error instanceof Error ? error : new Error("RPC shutdown failed");
+      this.terminalError ??= asError(error, "RPC shutdown failed");
     } finally {
       this.closed = true;
       this.input.destroy();

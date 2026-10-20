@@ -1,13 +1,19 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
-import { object, type Json, type JsonObject } from "./protocol.js";
+import { object, type Json, type JsonObject } from "./protocol.ts";
 
 export class ProcessFixture {
   private readonly processes = new Map<string, { child: ChildProcessWithoutNullStreams; closed: Promise<void> }>();
   readonly programs:string[]=[];
   failingStops = 0;
 
-  constructor(private readonly notify: (params: JsonObject) => void,private readonly capacity=64) {}
+  private readonly notify: (params: JsonObject) => void;
+  private readonly capacity: number;
+
+  constructor(notify: (params: JsonObject) => void, capacity = 64) {
+    this.notify = notify;
+    this.capacity = capacity;
+  }
 
   async invoke(params: JsonObject): Promise<Json> {
     const id = params.process_id;
@@ -65,7 +71,7 @@ export class ProcessFixture {
     if (!child.pid) return;
     try { process.kill(-child.pid, "SIGKILL"); }
     catch (error) {
-      const code = error instanceof Error && "code" in error ? error.code : undefined;
+      const code = Error.isError(error) && "code" in error ? error.code : undefined;
       if (code !== "ESRCH" && code !== "EPERM") throw error;
     }
   }

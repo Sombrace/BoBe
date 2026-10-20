@@ -2,14 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { configuration, deferred, fixture, host, userText } from "./test-support.js";
-import { PriorityGate } from "./execution.js";
-import { abortableDelay } from "./errors.js";
+import { configuration, fixture, host, userText } from "./test-support.ts";
+import { PriorityGate } from "./execution.ts";
 
 test("an active channel does not block another channel and remains single-flight itself", async t => {
   const paths = await fixture(t);
-  const started = deferred<void>();
-  const release = deferred<void>();
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
   const { worker } = await host(t, configuration(paths), async context => {
     if (userText(context) === "held channel") {
       started.resolve();
@@ -35,8 +34,8 @@ test("an active channel does not block another channel and remains single-flight
 for (const followUp of [false, true]) {
   test(`native pi ${followUp ? "follow-up" : "steering"} is consumed by the correlated active run`, async t => {
     const paths = await fixture(t);
-    const started = deferred<void>();
-    const release = deferred<void>();
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
     const seen: string[] = [];
     const { worker } = await host(t, configuration(paths), async context => {
       const text = userText(context);
@@ -69,13 +68,13 @@ for (const followUp of [false, true]) {
 for (const followUp of [false, true]) {
   test(`an aborted run discards its unconsumed ${followUp ? "follow-up" : "steering"} before the next turn`, async t => {
     const paths = await fixture(t);
-    const started = deferred<void>();
+    const started = Promise.withResolvers<void>();
     const contexts: string[] = [];
     const { worker } = await host(t, configuration(paths), async (context, options) => {
       contexts.push(JSON.stringify(context.messages));
       if (userText(context) === "interrupted task") {
         started.resolve();
-        await abortableDelay(30_000, options?.signal);
+        await delay(30_000, undefined, { signal: options?.signal });
       }
       return { text: "next result" };
     });
@@ -99,16 +98,16 @@ for (const followUp of [false, true]) {
 
 test("background admission reserves an interactive slot and queued cancellation releases no capacity", async () => {
   const gate = new PriorityGate(4, 1);
-  const releases = await Promise.all([0, 1, 2].map(() => gate.acquire("background")));
-  const cancel = new AbortController();
-  const waiting = gate.acquire("background", cancel.signal);
-  const rejected = assert.rejects(waiting);
-  const foreground = await gate.acquire("interactive");
-  assert.deepEqual(gate.snapshot(), { active: 4, queued: 1, background: 3, capacity: 4 });
-  cancel.abort();
-  await rejected;
-  foreground();
-  for (const release of releases) release();
+  {
+    using leases = new DisposableStack();
+    for (const lease of await Promise.all([0, 1, 2].map(() => gate.acquire("background")))) leases.use(lease);
+    const cancel = new AbortController();
+    const rejected = assert.rejects(gate.acquire("background", cancel.signal));
+    leases.use(await gate.acquire("interactive"));
+    assert.deepEqual(gate.snapshot(), { active: 4, queued: 1, background: 3, capacity: 4 });
+    cancel.abort();
+    await rejected;
+  }
   assert.deepEqual(gate.snapshot(), { active: 0, queued: 0, background: 0, capacity: 4 });
 });
 
@@ -149,8 +148,8 @@ test("a runtime-selected background turn limit stops an otherwise continuing too
 
 test("one foreground root and two background roots share an aggregate four-call inference limit", async t => {
   const paths = await fixture(t);
-  const release = deferred<void>();
-  const firstLeaf = deferred<void>();
+  const release = Promise.withResolvers<void>();
+  const firstLeaf = Promise.withResolvers<void>();
   const parents = new Set<string>();
   let active = 0;
   let peak = 0;

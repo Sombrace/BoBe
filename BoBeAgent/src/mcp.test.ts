@@ -1,19 +1,17 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { configuration, configureMcp, deferred, fixture, host, mcpChat, userText } from "./test-support.js";
-import { abortableDelay } from "./errors.js";
-import { isRecord } from "./protocol.js";
-import type { WorkerHost } from "./worker.js";
+import { configuration, configureMcp, fixture, host, mcpChat, userText } from "./test-support.ts";
+import { isRecord } from "./protocol.ts";
+import type { WorkerHost } from "./worker.ts";
 
-async function connected(worker: WorkerHost): Promise<void> {
-  for (let count = 0; count < 300; count++) {
-    const status = await worker.request({ id: 100 + count, method: "mcp_status", params: {} });
-    if (Array.isArray(status) && status.every(server => isRecord(server) && server.connected)) return;
-    await abortableDelay(50);
-  }
-  throw new Error("MCP fixture did not connect");
+async function connected(t: TestContext, worker: WorkerHost): Promise<void> {
+  let id = 100;
+  await t.waitFor(async () => {
+    const status = await worker.request({ id: id++, method: "mcp_status", params: {} });
+    assert.ok(Array.isArray(status) && status.every(server => isRecord(server) && server.connected), "MCP fixture connects");
+  }, { interval: 50, timeout: 15_000 });
 }
 
 test("native pi MCP connects, honors exclusions, executes, reloads, and closes its process", async t => {
@@ -28,7 +26,7 @@ test("native pi MCP connects, honors exclusions, executes, reloads, and closes i
       ? { tools: [{ id: "mcp-1", name: "mcp__sample__echo", arguments: { text: "echo value" } }] }
       : { text: "MCP completed." };
   });
-  await connected(worker);
+  await connected(t, worker);
   const tools = await worker.request({ id: 500, method: "mcp_tools", params: { server_name: "sample" } });
   assert.deepEqual(tools, [
     { name: "echo", description: "Controlled echo tool" },
@@ -46,23 +44,20 @@ test("native MCP in-flight tools settle on abort and owned servers stop at shutd
   const paths = await fixture(t);
   const config = configuration(paths);
   configureMcp(config);
-  const toolRequested = deferred<void>();
+  const toolRequested = Promise.withResolvers<void>();
   const { worker, notifications } = await host(t, config, context => {
     if (userText(context) === "After abort") return { text: "Recovered." };
     toolRequested.resolve();
     return { tools: [{ id: "mcp-wait", name: "mcp__sample__wait", arguments: { text: "never finish" } }] };
   });
-  await connected(worker);
+  await connected(t, worker);
   const pid = Number(await readFile(join(paths.workspace, "mcp.pid"), "utf8"));
   const pointer = await readFile(join(paths.root, "agent/session.json"), "utf8");
   const running = worker.request({ id: 500, method: "chat", params: mcpChat });
   const rejected = assert.rejects(running);
   await toolRequested.promise;
-  for (let attempt = 0; attempt < 100; attempt++) {
-    if (notifications.some(notification => notification.method === "event" &&
-      notification.params.delta.type === "tool_start")) break;
-    await abortableDelay(5);
-  }
+  await t.waitFor(() => assert.ok(notifications.some(notification => notification.method === "event" &&
+    notification.params.delta.type === "tool_start")), { interval: 5, timeout: 5_000 });
   await worker.request({ id: 501, method: "abort", params: { request_id: 500 } });
   await rejected;
   assert.throws(() => process.kill(pid, 0), error => isRecord(error) && error.code === "ESRCH");

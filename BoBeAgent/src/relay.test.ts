@@ -4,11 +4,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { once } from "node:events";
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
-import { ModelProfiles } from "./models.js";
-import { Redactor } from "./errors.js";
-import { configuration, fixture } from "./test-support.js";
-import { WorkerHost, initializeParams } from "./worker.js";
-import { isRecord, type Json, type Notification } from "./protocol.js";
+import { ModelProfiles } from "./models.ts";
+import { Redactor } from "./errors.ts";
+import { configuration, fixture } from "./test-support.ts";
+import { WorkerHost, initializeParams } from "./worker.ts";
+import { isRecord, type Json, type Notification } from "./protocol.ts";
 
 const responsesCatalog = [
   { id: "responses-model", api: "responses", context_window: 128_000, max_input_tokens: 96_000, max_prompt_tokens: 64_000 },

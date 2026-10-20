@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PassThrough, Writable } from "node:stream";
-import { JsonlRpc } from "./rpc.js";
-import { WorkerFault } from "./errors.js";
-import { MAX_LINE_BYTES, object, type JsonObject } from "./protocol.js";
-import { deferred } from "./test-support.js";
+import { JsonlRpc } from "./rpc.ts";
+import { WorkerFault } from "./errors.ts";
+import { MAX_LINE_BYTES, object, type JsonObject } from "./protocol.ts";
 
 function wire() {
   const input = new PassThrough();
@@ -34,7 +33,7 @@ function wire() {
 
 test("a stalled RPC consumer has a bounded output queue and fails explicitly", async () => {
   const input = new PassThrough();
-  const blocked = deferred<(error?: Error | null) => void>();
+  const blocked = Promise.withResolvers<(error?: Error | null) => void>();
   const output = new Writable({ write(_chunk, _encoding, callback) { blocked.resolve(callback); } });
   const rpc = new JsonlRpc(input, output);
   const running = rpc.start({ request: async () => ({}), close: async () => {} });
@@ -121,7 +120,7 @@ test("unknown responses, duplicate request IDs, malformed frames, and oversized 
 
 test("EOF fails a partial frame and settles outstanding callbacks before shutdown", async () => {
   const { input, next, rpc } = wire();
-  const callbackSettled = deferred<void>();
+  const callbackSettled = Promise.withResolvers<void>();
   const running = rpc.start({
     request: async () => {
       try {

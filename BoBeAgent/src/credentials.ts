@@ -1,11 +1,11 @@
-import { createHash, randomUUID } from "node:crypto";
+import { hash, randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { unlink } from "node:fs/promises";
 import type { AuthOperationOptions, Credential, CredentialInfo, CredentialStore, OAuthCredential } from "@earendil-works/pi-ai";
-import { Serial, assertActive, type Redactor } from "./errors.js";
-import { atomicPrivateWrite, isMissing, privateRead, syncFile } from "./files.js";
-import { isJson, isRecord } from "./protocol.js";
-import { AGENT_LAYOUT } from "./layout.js";
+import { Serial, assertActive, type Redactor } from "./errors.ts";
+import { atomicPrivateWrite, isMissing, privateRead, syncFile } from "./files.ts";
+import { isJson, isRecord } from "./protocol.ts";
+import { AGENT_LAYOUT } from "./layout.ts";
 
 interface Scope {
   nativeProvider: string;
@@ -27,7 +27,13 @@ function credential(value: unknown): OAuthCredential {
 export class AuthorityCredentials implements CredentialStore {
   private readonly scopes = new Map<string, Scope>();
 
-  constructor(private readonly agentDir: string, private readonly redactor: Redactor) {}
+  private readonly agentDir: string;
+  private readonly redactor: Redactor;
+
+  constructor(agentDir: string, redactor: Redactor) {
+    this.agentDir = agentDir;
+    this.redactor = redactor;
+  }
 
   register(provider: string, nativeProvider: string, oauth: boolean, apiKey?: string): void {
     if (this.scopes.has(provider)) throw new Error("Duplicate credential scope");
@@ -36,7 +42,7 @@ export class AuthorityCredentials implements CredentialStore {
   }
 
   private path(provider: string): string {
-    const key = createHash("sha256").update(provider).digest("hex");
+    const key = hash("sha256", provider);
     return join(this.agentDir, AGENT_LAYOUT.credentials, `${key}.json`);
   }
 
@@ -88,7 +94,6 @@ export class AuthorityCredentials implements CredentialStore {
       const checked = credential(next);
       this.redactor.add(checked.access);
       this.redactor.add(checked.refresh);
-      assertActive(options?.signal);
       await atomicPrivateWrite(this.path(provider), `${JSON.stringify({
         version: 1,
         provider: scope.nativeProvider,

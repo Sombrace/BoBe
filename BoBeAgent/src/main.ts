@@ -1,9 +1,10 @@
-import { JsonlRpc } from "./rpc.js";
-import { Cancelled, Redactor } from "./errors.js";
+import { JsonlRpc } from "./rpc.ts";
+import { Cancelled, Redactor } from "./errors.ts";
+import { setGlobalProxyFromEnv } from "node:http";
 import { delimiter, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { emptySchema, initializeSchema, validate, type Json, type Request } from "./protocol.js";
-import type { WorkerHost } from "./worker.js";
+import { emptySchema, initializeSchema, validate, type Json, type JsonObject, type Request } from "./protocol.ts";
+import type { WorkerHost } from "./worker.ts";
 
 const safeEnvironment = new Set([
   "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "LC_ALL", "LC_CTYPE",
@@ -11,9 +12,8 @@ const safeEnvironment = new Set([
   "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "HTTP_PROXY", "HTTPS_PROXY",
   "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
 ]);
-for (const name of Object.keys(process.env)) {
-  if (!safeEnvironment.has(name)) delete process.env[name];
-}
+for (const name of new Set(Object.keys(process.env)).difference(safeEnvironment)) delete process.env[name];
+setGlobalProxyFromEnv();
 process.umask(0o077);
 
 const redactor = new Redactor();
@@ -22,7 +22,7 @@ let loading: Promise<WorkerHost> | undefined;
 let loaded: WorkerHost | undefined;
 let closing = false;
 const bootstrap = {
-  notification: (method: string, params: import("./protocol.js").JsonObject): void => {
+  notification: (method: string, params: JsonObject): void => {
     if (!loaded) throw new Error("Process event before worker initialization");
     loaded.notification(method, params);
   },
@@ -39,10 +39,9 @@ const bootstrap = {
       if (!isAbsolute(config.data_root)) throw new Error("data_root must be absolute");
       process.env.PI_CODING_AGENT_DIR = join(config.data_root, "agent");
       process.env.PI_OFFLINE = "1";
-      process.env.PI_SKIP_VERSION_CHECK = "1";
       const packagedBin = fileURLToPath(new URL("../bin/", import.meta.url));
       process.env.PATH = [packagedBin, process.env.PATH].filter(value => value !== undefined).join(delimiter);
-      loading = import("./worker.js").then(({ WorkerHost }) => {
+      loading = import("./worker.ts").then(({ WorkerHost }) => {
         loaded = new WorkerHost(rpc);
         return loaded;
       });
@@ -67,10 +66,8 @@ const report = (error: unknown): void => {
 };
 
 try {
-  const [major, minor] = process.versions.node.split(".").map(Number);
-  if (major === undefined || minor === undefined || major < 22 || (major === 22 && minor < 19)) {
-    throw new Error("BoBe pi requires Node.js 22.19.0 or later");
-  }
+  const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
+  if (major < 24 || (major === 24 && minor < 22)) throw new Error("BoBe pi requires Node.js 24.22.0 or later");
   const stop = (): void => { void rpc.finish().catch(report); };
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);

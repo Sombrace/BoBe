@@ -1,8 +1,7 @@
-import { createHash } from "node:crypto";
 import { Type } from "typebox";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { object, taskBudgetSchema } from "./protocol.js";
-import type { JobControl } from "./background.js";
+import { object, taskBudgetSchema } from "./protocol.ts";
+import { sourceKey, type JobControl } from "./background.ts";
 
 export function scheduleTool(control: JobControl): ToolDefinition {
   const identity = { schedule_id: Type.String({ format: "uuid" }) };
@@ -23,7 +22,7 @@ export function scheduleTool(control: JobControl): ToolDefinition {
       }, { additionalProperties: false }),
       Type.Object({ action: Type.Literal("list") }, { additionalProperties: false }),
       Type.Object({
-        action: Type.Union([Type.Literal("get"),Type.Literal("pause"),Type.Literal("resume"),Type.Literal("cancel")]),
+        action: Type.Enum(["get","pause","resume","cancel"]),
         ...identity,
       }, { additionalProperties: false }),
       Type.Object({
@@ -33,9 +32,8 @@ export function scheduleTool(control: JobControl): ToolDefinition {
     ]),
     execute: async (callId, args, signal) => {
       const { action, ...parameters } = args;
-      const source = createHash("sha256").update(`${control.invocationScope()}:${callId}`).digest("hex");
-      const value = await control.call(action, object(parameters), source, signal);
-      return { content: [{ type: "text", text: JSON.stringify(value) }], details: value, structuredContent: value };
+      const value = await control.call(action, object(parameters), sourceKey(control, callId), signal);
+      return { content: [{ type: "text", text: JSON.stringify(value) }], details: value };
     },
   });
 }

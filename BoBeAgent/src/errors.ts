@@ -1,3 +1,5 @@
+import { addAbortListener } from "node:events";
+
 export class Cancelled extends Error {
   constructor(message = "Operation canceled") {
     super(message);
@@ -14,18 +16,36 @@ export class WorkerFault extends Error {
 
 export function assertActive(signal?: AbortSignal): void {
   if (signal?.aborted) {
-    if (signal.reason instanceof Error && signal.reason.name === "TimeoutError") throw signal.reason;
+    if (Error.isError(signal.reason) && signal.reason.name === "TimeoutError") throw signal.reason;
     throw new Cancelled();
   }
 }
 
+export function onAbort(signal: AbortSignal | undefined, listener: () => void): Disposable | undefined {
+  return signal ? addAbortListener(signal, listener) : undefined;
+}
+
+export function asError(error: unknown, fallback: string): Error {
+  return Error.isError(error) ? error : new Error(fallback);
+}
+
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Operation failed";
+  if (error instanceof SuppressedError) return failureDetail([error]);
+  return Error.isError(error) ? error.message : "Operation failed";
+}
+
+function causes(error: unknown): unknown[] {
+  if (error instanceof AggregateError) return error.errors.flatMap(causes);
+  if (error instanceof SuppressedError) return [...causes(error.suppressed), ...causes(error.error)];
+  return [error];
 }
 
 export function failureDetail(failures: readonly unknown[]): string {
-  const causes = (error: unknown): unknown[] => error instanceof AggregateError ? error.errors.flatMap(causes) : [error];
   return failures.flatMap(causes).map(errorMessage).join("; ");
+}
+
+export function rejections(outcomes: readonly PromiseSettledResult<unknown>[]): unknown[] {
+  return outcomes.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
 }
 
 export async function settleEach(operations: readonly (() => unknown)[]): Promise<unknown[]> {
@@ -66,20 +86,4 @@ export class Serial {
     this.tail = next.then(() => {}, () => {});
     return next;
   }
-}
-
-export function abortableDelay(milliseconds: number, signal?: AbortSignal): Promise<void> {
-  assertActive(signal);
-  return new Promise((resolve, reject) => {
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      reject(new Cancelled());
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, milliseconds);
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
 }

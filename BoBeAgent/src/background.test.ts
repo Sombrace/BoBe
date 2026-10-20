@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { getCurrentSystemMessage, getCurrentTools } from "@earendil-works/pi-ai";
 
-import { configuration, deferred, fixture, host, userText } from "./test-support.js";
-import { abortableDelay } from "./errors.js";
-import { isRecord } from "./protocol.js";
+import { configuration, fixture, host, userText } from "./test-support.ts";
+import { isRecord } from "./protocol.ts";
 
 test("background execution does not occupy the canonical chat and has no recursive job authority", async t => {
   const paths = await fixture(t);
-  const started = deferred<void>();
-  const finished = deferred<void>();
+  const started = Promise.withResolvers<void>();
+  const finished = Promise.withResolvers<void>();
   const { worker, notifications } = await host(t, configuration(paths), async context => {
     if (userText(context) === "Background work") {
       started.resolve();
@@ -47,11 +47,11 @@ test("background execution does not occupy the canonical chat and has no recursi
 
 test("aborting a background job settles only that job and permits a later foreground turn", async t => {
   const paths = await fixture(t);
-  const started = deferred<void>();
+  const started = Promise.withResolvers<void>();
   const { worker } = await host(t, configuration(paths), async (context, options) => {
     if (userText(context) === "Wait") {
       started.resolve();
-      await abortableDelay(30_000, options?.signal);
+      await delay(30_000, undefined, { signal: options?.signal });
     }
     return { text: "Ready." };
   });

@@ -1,5 +1,5 @@
 import { Type, type Static, type TSchema } from "typebox";
-import { Check } from "typebox/value";
+import { Compile, type Validator } from "typebox/compile";
 
 export const PROTOCOL_VERSION = 1;
 export const HARNESS_VERSION = "1.3.0";
@@ -29,8 +29,16 @@ export function object(value: unknown): JsonObject {
   return value;
 }
 
+const validators = new WeakMap<TSchema, Validator>();
+
+function compiled<T extends TSchema>(schema: T): Validator<{}, T> {
+  let validator = validators.get(schema);
+  if (!validator) validators.set(schema, validator = Compile(schema));
+  return validator as Validator<{}, T>;
+}
+
 export function validate<T extends TSchema>(schema: T, value: unknown, label: string): Static<T> {
-  if (!Check(schema, value)) throw new Error(`Invalid ${label}`);
+  if (!compiled(schema).Check(value)) throw new Error(`Invalid ${label}`);
   return value;
 }
 
@@ -41,24 +49,17 @@ const text = Type.String();
 const nonempty = Type.String({ minLength: 1 });
 const nullableText = Type.Union([text, Type.Null()]);
 const strings = Type.Array(text);
-const thinkingSchema = Type.Union([
-  Type.Literal("off"), Type.Literal("minimal"), Type.Literal("low"),
-  Type.Literal("medium"), Type.Literal("high"), Type.Literal("xhigh"), Type.Literal("max"),
-]);
+const thinkingSchema = Type.Enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 export type Thinking = Static<typeof thinkingSchema>;
 
 const profileSchema = Type.Object({
-  kind: Type.Union([
-    Type.Literal("copilot"), Type.Literal("open_ai"), Type.Literal("anthropic"),
-    Type.Literal("deepseek"), Type.Literal("open_router"), Type.Literal("rail_relay"),
-    Type.Literal("open_ai_compatible"),
-  ]),
+  kind: Type.Enum(["copilot", "open_ai", "anthropic", "deepseek", "open_router", "rail_relay", "open_ai_compatible"]),
   base_url: Type.Optional(nullableText),
   api_key: Type.Optional(nullableText),
   organization: Type.Optional(nullableText),
   offline: Type.Optional(Type.Boolean()),
   local_runtime: Type.Optional(Type.Union([Type.Literal("ollama"), Type.Null()])),
-  auth_method: Type.Union([Type.Literal("api_key"), Type.Literal("oauth")]),
+  auth_method: Type.Enum(["api_key", "oauth"]),
 }, strict);
 export type Profile = Static<typeof profileSchema>;
 
@@ -130,9 +131,9 @@ export type Initialize = Static<typeof initializeSchema>;
 
 export const chatSchema = Type.Object({
   session_key: Type.Optional(Type.String({ format: "uuid" })),
-  priority: Type.Optional(Type.Union([Type.Literal("interactive"), Type.Literal("background")])),
+  priority: Type.Optional(Type.Enum(["interactive", "background"])),
   text,
-  channel: Type.Union([Type.Literal("text"), Type.Literal("voice")]),
+  channel: Type.Enum(["text", "voice"]),
   context: text,
   memory_context: Type.Optional(text),
   persona: Type.Optional(personaSchema),
@@ -140,7 +141,7 @@ export const chatSchema = Type.Object({
 export type Chat = Static<typeof chatSchema>;
 
 export const auxiliarySchema = Type.Object({
-  class: Type.Union([Type.Literal("consolidate"), Type.Literal("small")]),
+  class: Type.Enum(["consolidate", "small"]),
   job: Type.Object({
     job_id: nonempty,
     kind: nonempty,

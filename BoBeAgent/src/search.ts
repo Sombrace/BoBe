@@ -8,9 +8,9 @@ import {
   createFindToolDefinition, createGrepToolDefinition, DEFAULT_MAX_BYTES, formatSize,
   truncateHead, truncateLine, type GrepToolDetails,
 } from "@earendil-works/pi-coding-agent";
-import { assertActive } from "./errors.js";
-import { isRecord } from "./protocol.js";
-import type { ProcessClient } from "./process.js";
+import { asError, assertActive, onAbort } from "./errors.ts";
+import { isRecord } from "./protocol.ts";
+import { environment, type ProcessClient } from "./process.ts";
 
 function absolutePath(value: string, cwd: string): string {
   let path = value.replace(/[\u00a0\u2000-\u200a\u202f\u205f\u3000]/g, " ").replace(/^@/, "");
@@ -21,11 +21,7 @@ function absolutePath(value: string, cwd: string): string {
 }
 
 async function exists(path: string): Promise<boolean> {
-  try { await access(path); return true; }
-  catch (error) {
-    if (isRecord(error) && error.code === "ENOENT") return false;
-    throw error;
-  }
+  return await stat(path, { throwIfNoEntry: false }) !== undefined;
 }
 
 async function executable(program:"rg"|"fd",agentDir:string):Promise<string> {
@@ -35,12 +31,9 @@ async function executable(program:"rg"|"fd",agentDir:string):Promise<string> {
       (program==="fd" ? ["fd","fdfind"] : ["rg"]).map(name=>join(directory,name))),
   ];
   for (const candidate of candidates) {
-    try {
-      await access(candidate,constants.X_OK);
-      if ((await stat(candidate)).isFile()) return candidate;
-    } catch (error) {
-      if (!isRecord(error) || error.code!=="ENOENT") throw error;
-    }
+    if (!(await stat(candidate, { throwIfNoEntry: false }))?.isFile()) continue;
+    await access(candidate, constants.X_OK);
+    return candidate;
   }
   throw new Error(`${program} is not installed in the authority runtime`);
 }
@@ -65,10 +58,9 @@ async function runSearch(
       void stopping.catch(() => {});
     }
   };
-  const env = Object.fromEntries(Object.entries(process.env).flatMap(([key, value]) => value === undefined ? [] : [[key, value]]));
-  signal?.addEventListener("abort", stop, { once: true });
   try {
-    child = await owner.start({ program:await executable(program,agentDir), args, cwd, env, purpose: "shell", request_id: requestId }, (stream, data) => {
+    using _abort = onAbort(signal, stop);
+    child = await owner.start({ program:await executable(program,agentDir), args, cwd, env: environment(), purpose: "shell", request_id: requestId }, (stream, data) => {
       if (stream === "stderr") { stderr = (stderr + data.toString("utf8")).slice(-65536); return; }
       if (stopRequested) return;
       try {
@@ -83,7 +75,7 @@ async function runSearch(
           newline = pending.indexOf("\n");
         }
       } catch (error) {
-        failure = error instanceof Error ? error : new Error("Search output could not be read");
+        failure = asError(error, "Search output could not be read");
         stop();
       }
     });
@@ -100,7 +92,6 @@ async function runSearch(
       if (pending) line(pending);
     }
   } finally {
-    signal?.removeEventListener("abort", stop);
     await child?.stop();
     await stopping;
   }

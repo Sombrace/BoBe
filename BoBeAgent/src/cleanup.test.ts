@@ -2,22 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { configuration, configureMcp, fixture, host, mcpChat, userText } from "./test-support.js";
-import { WorkerFault, abortableDelay } from "./errors.js";
-import { isRecord } from "./protocol.js";
-
-async function created(path: string): Promise<void> {
-  for (let attempt = 0; attempt < 1_000; attempt++) {
-    try {
-      await access(path);
-      return;
-    } catch (error) {
-      if (!isRecord(error) || error.code !== "ENOENT") throw error;
-      await abortableDelay(10);
-    }
-  }
-  throw new Error(`${path} was not created`);
-}
+import { configuration, configureMcp, fixture, host, mcpChat, userText } from "./test-support.ts";
+import { WorkerFault } from "./errors.ts";
+import { isRecord } from "./protocol.ts";
 
 test("a run whose cleanup cannot stop its MCP server is a worker fault and leaves no subscriber behind", async t => {
   const paths = await fixture(t);
@@ -32,7 +19,7 @@ test("a run whose cleanup cannot stop its MCP server is a worker fault and leave
   const running = worker.request({ id: 2, method: "chat", params: mcpChat });
   const rejected = assert.rejects(running,
     error => error instanceof WorkerFault && /Run cleanup failed: .*Injected process stop failure/.test(error.message));
-  await created(waiting);
+  await t.waitFor(() => access(waiting), { interval: 10, timeout: 10_000 });
   const pid = Number(await readFile(join(paths.workspace, "mcp.pid"), "utf8"));
   processes.failingStops = 1;
   assert.deepEqual(await worker.request({ id: 3, method: "abort", params: { request_id: 2 } }), {});
