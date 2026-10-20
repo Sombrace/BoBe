@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { AGENT_LAYOUT } from "./layout.js";
+import { AGENT_LAYOUT } from "./layout.ts";
 import {
   HARNESS_VERSION, MAX_LINE_BYTES, PROTOCOL_VERSION, abortSchema, chatSchema,
   domainResultSchema, emptySchema, initializeSchema, object, parseEnvelope, validate,
-} from "./protocol.js";
+} from "./protocol.ts";
 
 test("Rust can mirror the exact host-contract-v1 fixture and authority filenames", async () => {
   const parsed: unknown = JSON.parse(await readFile(new URL("../fixtures/host-contract-v1.json", import.meta.url), "utf8"));
@@ -21,7 +21,7 @@ test("Rust can mirror the exact host-contract-v1 fixture and authority filenames
   assert.equal(auth.provider_id, `bobe-profile:${auth.profile_id}`);
   assert.equal(typeof auth.provider_id, "string");
   if (typeof auth.provider_id !== "string") throw new Error("Invalid fixture provider ID");
-  const digest = createHash("sha256").update(auth.provider_id).digest("hex");
+  const digest = hash("sha256", auth.provider_id);
   assert.equal(auth.path, `agent/${AGENT_LAYOUT.credentials}/${digest}.json`);
   for (const [name, schema] of [
     ["initialize_request", initializeSchema], ["chat_request", chatSchema],

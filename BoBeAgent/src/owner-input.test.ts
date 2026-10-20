@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
-import { configuration,fixture,host } from "./test-support.js";
-import { isRecord } from "./protocol.js";
+import { configuration,fixture,host } from "./test-support.ts";
+import { isRecord } from "./protocol.ts";
 import {access} from "node:fs/promises";
 import {join} from "node:path";
 
@@ -59,5 +59,6 @@ test("an important question blocks effects requested in the same parallel tool r
   },async()=>{requests++;return {id:randomUUID(),prompt:"Create this file?",status:"pending"};});
   await worker.request({id:2,method:"chat",params:{text:"Decide first",channel:"text",context:""}});
   assert.equal(requests,1,observed);
+  assert.equal(calls,1,observed);
   await assert.rejects(access(join(paths.workspace,"must-not-exist.txt")),error=>isRecord(error)&&error.code==="ENOENT");
 });

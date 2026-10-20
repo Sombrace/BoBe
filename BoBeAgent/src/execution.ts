@@ -4,8 +4,8 @@ import {
   type AssistantMessageEventStream, type Model, type Provider, type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { estimateTokens, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { assertActive, Cancelled } from "./errors.js";
-import type { Initialize, TaskBudget } from "./protocol.js";
+import { assertActive, Cancelled, onAbort } from "./errors.ts";
+import type { Initialize, TaskBudget } from "./protocol.ts";
 
 export type Workload = keyof Initialize["workload_budgets"];
 export type ExecutionPriority = "interactive" | "background";
@@ -14,10 +14,8 @@ type Budget = Initialize["workload_budgets"][Workload];
 
 interface Waiter {
   priority: ExecutionPriority;
-  signal: AbortSignal | undefined;
-  grant(release: () => void): void;
-  reject(error: Error): void;
-  cancel(): void;
+  grant(lease: Disposable): void;
+  abort: Disposable | undefined;
 }
 
 function outputOptions<T extends { maxTokens?: number }>(options: T | undefined, maximum: number): T | undefined {
@@ -28,27 +26,28 @@ export class PriorityGate {
   private readonly pending: Waiter[] = [];
   private active = 0;
   private background = 0;
+  private readonly capacity: number;
+  private readonly reserve: number;
 
-  constructor(private readonly capacity: number, private readonly reserve: number) {
+  constructor(capacity: number, reserve: number) {
     if (capacity < 1 || reserve < 0 || reserve >= capacity) throw new Error("Invalid execution gate");
+    this.capacity = capacity;
+    this.reserve = reserve;
   }
 
-  acquire(priority: ExecutionPriority, signal?: AbortSignal): Promise<() => void> {
+  acquire(priority: ExecutionPriority, signal?: AbortSignal): Promise<Disposable> {
     assertActive(signal);
-    return new Promise((grant, reject) => {
-      const waiter: Waiter = {
-        priority, signal, grant, reject,
-        cancel: () => {
-          const index = this.pending.indexOf(waiter);
-          if (index >= 0) this.pending.splice(index, 1);
-          reject(new Cancelled("Queued execution was cancelled"));
-          this.drain();
-        },
-      };
-      this.pending.push(waiter);
-      signal?.addEventListener("abort", waiter.cancel, { once: true });
+    const { promise, resolve, reject } = Promise.withResolvers<Disposable>();
+    const waiter: Waiter = { priority, grant: resolve, abort: undefined };
+    waiter.abort = onAbort(signal, () => {
+      const index = this.pending.indexOf(waiter);
+      if (index >= 0) this.pending.splice(index, 1);
+      reject(new Cancelled("Queued execution was cancelled"));
       this.drain();
     });
+    this.pending.push(waiter);
+    this.drain();
+    return promise;
   }
 
   private drain(): void {
@@ -58,18 +57,20 @@ export class PriorityGate {
         index = this.pending.findIndex(waiter => waiter.priority === "background");
       }
       if (index < 0) return;
-      const waiter = this.pending.splice(index, 1)[0];
+      const [waiter] = this.pending.splice(index, 1);
       if (!waiter) return;
-      waiter.signal?.removeEventListener("abort", waiter.cancel);
+      waiter.abort?.[Symbol.dispose]();
       this.active++;
       if (waiter.priority === "background") this.background++;
       let released = false;
-      waiter.grant(() => {
-        if (released) return;
-        released = true;
-        this.active--;
-        if (waiter.priority === "background") this.background--;
-        this.drain();
+      waiter.grant({
+        [Symbol.dispose]: () => {
+          if (released) return;
+          released = true;
+          this.active--;
+          if (waiter.priority === "background") this.background--;
+          this.drain();
+        },
       });
     }
   }
@@ -146,11 +147,9 @@ export class ExecutionControl {
     return {
       ...tool,
       execute: async (id, args, signal, update, context) => {
-        const release = await this.tools.acquire(this.priority(), signal);
-        try {
-          assertActive(signal);
-          return await tool.execute(id, args, signal, update, context);
-        } finally { release(); }
+        using _slot = await this.tools.acquire(this.priority(), signal);
+        assertActive(signal);
+        return await tool.execute(id, args, signal, update, context);
       },
     };
   }
@@ -160,10 +159,10 @@ export class ExecutionControl {
     start: () => AssistantMessageEventStream,
   ): AssistantMessageEventStream {
     const output = createAssistantMessageEventStream();
+    const started = Date.now();
     void (async () => {
-      let release: (() => void) | undefined;
       try {
-        release = await this.models.acquire(this.priority(), signal);
+        using _slot = await this.models.acquire(this.priority(), signal);
         assertActive(signal);
         const estimated = context.messages.reduce((sum, message) => sum + estimateTokens(message), 0);
         if (estimated > this.budget().max_prompt_tokens) {
@@ -176,13 +175,13 @@ export class ExecutionControl {
         const message: AssistantMessage = {
           role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id,
           stopReason: signal?.aborted ? "aborted" : "error",
-          errorMessage: error instanceof Error ? error.message : "Model admission failed",
-          timestamp: Date.now(), usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+          errorMessage: Error.isError(error) ? error.message : "Model admission failed",
+          timestamp: started, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
         };
         output.push({ type: "error", reason: signal?.aborted ? "aborted" : "error", error: message });
         output.end(message);
-      } finally { release?.(); }
+      }
     })();
     return output;
   }

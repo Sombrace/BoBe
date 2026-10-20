@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { BashOperations } from "@earendil-works/pi-coding-agent";
 import {
-  parseJsonRpcMessage, type JsonRpcMessage, type McpTransport,
+  McpAbortError, parseJsonRpcMessage, type JsonRpcMessage, type McpTransport, type McpTransportSendOptions,
   type McpTransportMessageListener, type McpTransportErrorListener, type McpTransportCloseListener,
 } from "@earendil-works/pi-mcp";
-import { assertActive, Cancelled } from "./errors.js";
-import { isRecord, type Json, type JsonObject } from "./protocol.js";
+import { Serial, asError, assertActive, Cancelled, onAbort } from "./errors.ts";
+import { isRecord, type Json, type JsonObject } from "./protocol.ts";
 
 interface ProcessState {
   output(stream: "stdout" | "stderr", bytes: Buffer): void;
@@ -23,11 +23,18 @@ interface ProcessSpec {
   request_id?: number;
 }
 
+export function environment(source: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  return Object.fromEntries(Object.entries(source).filter((entry): entry is [string, string] => entry[1] !== undefined));
+}
+
 export class ProcessClient {
   private readonly active = new Map<string, ProcessState>();
   private available = true;
+  private readonly call: (method: string, params: JsonObject) => Promise<Json>;
 
-  constructor(private readonly call: (method: string, params: JsonObject) => Promise<Json>) {}
+  constructor(call: (method: string, params: JsonObject) => Promise<Json>) {
+    this.call = call;
+  }
 
   event(params: JsonObject): void {
     const id = params.process_id;
@@ -49,9 +56,7 @@ export class ProcessClient {
   async start(spec: ProcessSpec, output: ProcessState["output"]): Promise<OwnedProcess> {
     if (!this.available) throw new Cancelled("Process owner is unavailable");
     const id = randomUUID();
-    let resolve: (code: number) => void = () => {};
-    let reject: (error: Error) => void = () => {};
-    const completion = new Promise<number>((yes, no) => { resolve = yes; reject = no; });
+    const { promise: completion, resolve, reject } = Promise.withResolvers<number>();
     void completion.catch(() => {});
     this.active.set(id, { output, resolve, reject, completion });
     const process = new OwnedProcess(id, completion, this);
@@ -61,7 +66,7 @@ export class ProcessClient {
       return process;
     } catch (error) {
       this.active.delete(id);
-      reject(error instanceof Error ? error : new Error("Process launch failed"));
+      reject(asError(error, "Process launch failed"));
       throw error;
     }
   }
@@ -93,11 +98,10 @@ export class ProcessClient {
     return {
       exec: async (command, cwd, options) => {
         assertActive(options.signal);
-        const environment = Object.fromEntries(Object.entries(options.env ?? process.env)
-          .flatMap(([key, value]) => value === undefined ? [] : [[key, value]]));
+        const timeout = options.timeout === undefined ? undefined : shellTimeout(options.timeout);
         const child = await this.start({
           purpose: "shell", request_id: requestId(), program: "/bin/bash", args: ["-c", command],
-          cwd, env: environment,
+          cwd, env: environment(options.env),
         }, (_stream, data) => options.onData(data));
         let timedOut = false;
         let cancellation: Promise<void> | undefined;
@@ -105,21 +109,18 @@ export class ProcessClient {
           cancellation ??= child.stop();
           void cancellation.catch(() => {});
         };
-        const timer = options.timeout === undefined ? undefined : setTimeout(() => {
-          timedOut = true;
-          stop();
-        }, options.timeout * 1000);
-        options.signal?.addEventListener("abort", stop, { once: true });
-        if (options.signal?.aborted) stop();
         try {
+          using _timeout = timeout === undefined ? undefined : setTimeout(() => {
+            timedOut = true;
+            stop();
+          }, timeout);
+          using _abort = onAbort(options.signal, stop);
           const exitCode = await child.completion;
           await cancellation;
           assertActive(options.signal);
           if (timedOut) throw new Error(`timeout:${options.timeout}`);
           return { exitCode };
         } finally {
-          if (timer) clearTimeout(timer);
-          options.signal?.removeEventListener("abort", stop);
           await child.stop();
         }
       },
@@ -127,15 +128,33 @@ export class ProcessClient {
   }
 }
 
+const maximumTimeout = 2_147_483_647;
+
+function shellTimeout(seconds: number): number {
+  if (!Number.isFinite(seconds) || seconds <= 0) throw new Error("Invalid timeout: must be a finite number of seconds");
+  if (seconds * 1000 > maximumTimeout) throw new Error(`Invalid timeout: maximum is ${maximumTimeout / 1000} seconds`);
+  return seconds * 1000;
+}
+
 class OwnedProcess {
-  constructor(readonly id: string, readonly completion: Promise<number>, private readonly owner: ProcessClient) {}
+  readonly id: string;
+  readonly completion: Promise<number>;
+  private readonly owner: ProcessClient;
+
+  constructor(id: string, completion: Promise<number>, owner: ProcessClient) {
+    this.id = id;
+    this.completion = completion;
+    this.owner = owner;
+  }
+
   write(bytes: Buffer): Promise<void> { return this.owner.input(this.id, bytes); }
   stop(): Promise<void> { return this.owner.stop(this.id); }
 }
 
 export class OwnedMcpTransport implements McpTransport {
   private process: OwnedProcess | undefined;
-  private buffer = Buffer.alloc(0);
+  private pending: Buffer[] = [];
+  private pendingBytes = 0;
   private stderr = Buffer.alloc(0);
   private started = false;
   private closed = false;
@@ -144,8 +163,14 @@ export class OwnedMcpTransport implements McpTransport {
   private readonly messages = new Set<McpTransportMessageListener>();
   private readonly errors = new Set<McpTransportErrorListener>();
   private readonly closes = new Set<McpTransportCloseListener>();
+  private readonly writes = new Serial();
+  private readonly owner: ProcessClient;
+  private readonly spec: ProcessSpec;
 
-  constructor(private readonly owner: ProcessClient, private readonly spec: ProcessSpec) {}
+  constructor(owner: ProcessClient, spec: ProcessSpec) {
+    this.owner = owner;
+    this.spec = spec;
+  }
 
   async start(): Promise<void> {
     if (this.started || this.closed) throw new Error("MCP transport cannot be restarted");
@@ -163,9 +188,14 @@ export class OwnedMcpTransport implements McpTransport {
     );
   }
 
-  async send(message: JsonRpcMessage): Promise<void> {
-    if (!this.process || this.closed) throw new Error("MCP process is not available");
-    await this.process.write(Buffer.from(`${JSON.stringify(message)}\n`));
+  async send(message: JsonRpcMessage, options?: McpTransportSendOptions): Promise<void> {
+    const process = this.process;
+    if (!process || this.closed) throw new Error("MCP process is not available");
+    const frame = Buffer.from(`${JSON.stringify(message)}\n`);
+    await this.writes.run(async () => {
+      if (options?.signal?.aborted) throw new McpAbortError();
+      await process.write(frame);
+    });
   }
 
   close(): Promise<void> {
@@ -187,19 +217,12 @@ export class OwnedMcpTransport implements McpTransport {
   }
 
   private receive(data: Buffer): void {
-    this.buffer = Buffer.concat([this.buffer, data]);
-    for (;;) {
-      const newline = this.buffer.indexOf(10);
-      if (newline < 0) {
-        if (this.buffer.length > 16 * 1024 * 1024) {
-          this.buffer = Buffer.alloc(0);
-          this.error(new Error("MCP output exceeds the message limit"));
-          void this.close().catch(error => this.error(error));
-        }
-        return;
-      }
-      const line = this.buffer.subarray(0, newline);
-      this.buffer = this.buffer.subarray(newline + 1);
+    let chunk = data;
+    for (let newline = chunk.indexOf(10); newline >= 0; newline = chunk.indexOf(10)) {
+      const line = Buffer.concat([...this.pending, chunk.subarray(0, newline)]);
+      this.pending = [];
+      this.pendingBytes = 0;
+      chunk = chunk.subarray(newline + 1);
       if (!line.toString("utf8").trim()) continue;
       try {
         if (line.length > 16 * 1024 * 1024) throw new Error("MCP output exceeds the message limit");
@@ -207,18 +230,29 @@ export class OwnedMcpTransport implements McpTransport {
         for (const listener of this.messages) listener(message);
       } catch (error) { this.error(error); }
     }
+    if (chunk.length) {
+      this.pending.push(chunk);
+      this.pendingBytes += chunk.length;
+    }
+    if (this.pendingBytes > 16 * 1024 * 1024) {
+      this.pending = [];
+      this.pendingBytes = 0;
+      this.error(new Error("MCP output exceeds the message limit"));
+      void this.close().catch(error => this.error(error));
+    }
   }
 
   private error(error: unknown): void {
-    const failure = error instanceof Error ? error : new Error("MCP process failed");
+    const failure = asError(error, "MCP process failed");
     for (const listener of this.errors) listener(failure);
   }
 
   private finish(): void {
     if (this.closed) return;
     this.closed = true;
-    if (this.buffer.toString("utf8").trim()) this.error(new Error("MCP closed with an incomplete message"));
-    this.buffer = Buffer.alloc(0);
+    if (Buffer.concat(this.pending).toString("utf8").trim()) this.error(new Error("MCP closed with an incomplete message"));
+    this.pending = [];
+    this.pendingBytes = 0;
     for (const listener of this.closes) listener();
   }
 

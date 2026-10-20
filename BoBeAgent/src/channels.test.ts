@@ -3,8 +3,8 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { configuration, fixture, host, userText } from "./test-support.js";
-import { isRecord } from "./protocol.js";
+import { configuration, fixture, host, userText } from "./test-support.ts";
+import { isRecord } from "./protocol.ts";
 
 test("retiring live channel resources preserves each durable conversation", async t => {
   const paths = await fixture(t);
@@ -25,6 +25,29 @@ test("retiring live channel resources preserves each durable conversation", asyn
   assert.equal(original.session_id, restored.session_id);
   assert.equal(restored.user_messages, 2);
   assert.equal(restored.live_channels, 1);
+});
+
+test("idle live channels retire on the owner's schedule and later turns restore them", async t => {
+  t.mock.timers.enable({ apis: ["setInterval", "Date"], now: Date.now() });
+  const paths = await fixture(t);
+  const config = configuration(paths);
+  config.execution.idle_channel_seconds = 30;
+  const { worker } = await host(t, config, () => ({ text: "Retained context." }));
+  const idle = randomUUID();
+  await worker.request({ id: 2, method: "chat", params: {
+    text: "Keep this channel", session_key: idle, channel: "text", context: "",
+  } });
+  const original = await worker.request({ id: 3, method: "context_status", params: { session_key: idle } });
+  t.mock.timers.tick(20_000);
+  const active = await worker.request({ id: 4, method: "context_status", params: { session_key: randomUUID() } });
+  t.mock.timers.tick(20_000);
+  const retired = await worker.request({ id: 5, method: "context_status", params: { session_key: randomUUID() } });
+  const restored = await worker.request({ id: 6, method: "context_status", params: { session_key: idle } });
+  assert.ok(isRecord(original) && isRecord(active) && isRecord(retired) && isRecord(restored));
+  assert.equal(active.live_channels, 3);
+  assert.equal(retired.live_channels, 2);
+  assert.equal(restored.session_id, original.session_id);
+  assert.equal(restored.user_messages, 1);
 });
 
 test("communication channels keep independent histories and share the exact workspace across restart", async t => {

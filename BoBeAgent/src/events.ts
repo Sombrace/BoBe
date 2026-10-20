@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { type Delta } from "./protocol.js";
+import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
+import { type Delta } from "./protocol.ts";
 
 interface ReplyMessage {
   id: string;
@@ -9,22 +9,38 @@ interface ReplyMessage {
   message: AssistantMessage | undefined;
 }
 
+export function addUsage(total: Usage | undefined, next: Usage): Usage {
+  const sum = (key: "input" | "output" | "cacheRead" | "cacheWrite"): number => (total?.[key] ?? 0) + next[key];
+  const cost = (key: keyof Usage["cost"]): number => (total?.cost[key] ?? 0) + next.cost[key];
+  return {
+    input: sum("input"), output: sum("output"), cacheRead: sum("cacheRead"), cacheWrite: sum("cacheWrite"),
+    totalTokens: (total?.totalTokens ?? 0) + next.totalTokens,
+    cost: {
+      input: cost("input"), output: cost("output"), cacheRead: cost("cacheRead"),
+      cacheWrite: cost("cacheWrite"), total: cost("total"),
+    },
+  };
+}
+
 export class TurnEvents {
   private current: ReplyMessage | undefined;
   private final: ReplyMessage | undefined;
   private readonly openTools = new Map<string, { id: string; name: string }>();
   private failure: string | undefined;
-  private visibleOutput = false;
   last: AssistantMessage | undefined;
+  usage: Usage | undefined;
   textDeltas = 0;
   completedTools = 0;
   failedTools = 0;
   turns = 0;
 
-  constructor(
-    private readonly send: ((delta: Delta) => void) | undefined,
-    private readonly activity: ((name: string) => void) | undefined,
-  ) {}
+  private readonly send: ((delta: Delta) => void) | undefined;
+  private readonly activity: ((name: string) => void) | undefined;
+
+  constructor(send: ((delta: Delta) => void) | undefined, activity: ((name: string) => void) | undefined) {
+    this.send = send;
+    this.activity = activity;
+  }
 
   event(event: AgentSessionEvent): void {
     if (event.type === "message_start" && event.message.role === "assistant") {
@@ -34,13 +50,15 @@ export class TurnEvents {
       this.textDeltas++;
       this.current?.chunks.push(event.assistantMessageEvent.delta);
       if (this.current && !this.failure) {
-        this.visibleOutput = true;
         this.send?.({
           type: "message_delta", message_id: this.current.id, text: event.assistantMessageEvent.delta,
         });
       }
+    } else if (event.type === "message_end" && event.message.role === "toolResult" && event.message.usage) {
+      this.usage = addUsage(this.usage, event.message.usage);
     } else if (event.type === "message_end" && event.message.role === "assistant") {
       this.last = event.message;
+      this.usage = addUsage(this.usage, event.message.usage);
       if (this.current) {
         this.current.message = event.message;
         if (event.message.stopReason === "stop") this.final = this.current;
@@ -65,11 +83,6 @@ export class TurnEvents {
       });
     } else if (event.type === "compaction_end" && event.errorMessage) {
       this.failure = `Session compaction failed: ${event.errorMessage}`;
-    } else if (event.type === "auto_retry_start") {
-      this.final = undefined;
-      if (this.visibleOutput) this.failure = "Provider attempted a retry after visible reply text";
-    } else if (event.type === "auto_retry_end" && !event.success) {
-      this.failure = event.finalError ?? "Provider retries exhausted";
     } else if (event.type === "turn_end") {
       this.turns++;
     }
@@ -118,7 +131,6 @@ export class TurnEvents {
     }
     const remaining = content.slice(streamed.length);
     if (remaining) {
-      this.visibleOutput = true;
       this.send?.({ type: "message_delta", message_id: reply.id, text: remaining });
     }
     this.send?.({

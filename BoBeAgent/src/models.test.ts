@@ -5,13 +5,13 @@ import { once } from "node:events";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { WorkerHost, initializeParams } from "./worker.js";
-import { ModelProfiles } from "./models.js";
-import { Redactor } from "./errors.js";
-import { configuration, deferred, fixture } from "./test-support.js";
-import { isRecord, object, type Notification } from "./protocol.js";
+import { WorkerHost, initializeParams } from "./worker.ts";
+import { ModelProfiles } from "./models.ts";
+import { Redactor } from "./errors.ts";
+import { configuration, fixture } from "./test-support.ts";
+import { isRecord, object, type Notification } from "./protocol.ts";
 import { join } from "node:path";
-import { ProcessFixture } from "./process-fixture.js";
+import { ProcessFixture } from "./process-fixture.ts";
 
 async function listen(
   handler: (request: IncomingMessage, response: ServerResponse) => void,
@@ -105,8 +105,8 @@ test("Ollama discovery preserves actual vision capability and model context limi
 
 test("real native pi OpenAI-compatible streaming arrives before the model finishes", async t => {
   const paths = await fixture(t);
-  const firstDelta = deferred<void>();
-  const finish = deferred<void>();
+  const firstDelta = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<void>();
   const requests: string[] = [];
   const server = await listen((request, response) => {
     requests.push(request.url ?? "");
@@ -152,7 +152,7 @@ test("real native pi OpenAI-compatible streaming arrives before the model finish
     const request = worker.request({
       id: 2, method: "chat", params: { text: "Say hello", channel: "text", context: "" },
     }).then(result => { settled = true; return result; });
-    const timeout = deferred<string>();
+    const timeout = Promise.withResolvers<string>();
     const timer = setTimeout(() => timeout.resolve("timeout"), 10_000);
     let observed: string;
     try {
@@ -240,7 +240,7 @@ test("entry initializes pi's native search cache inside the authority, never amb
     base_url: server.url, offline: true,
   };
   config.routes.chat.model = "fixture-local";
-  const child = spawn(process.execPath, [fileURLToPath(new URL("./main.js", import.meta.url))], {
+  const child = spawn(process.execPath, [fileURLToPath(new URL("./main.ts", import.meta.url))], {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, HOME: home, PI_CODING_AGENT_DIR: join(home, ".pi/agent") },
   });

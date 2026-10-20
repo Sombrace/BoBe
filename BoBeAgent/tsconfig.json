@@ -1,20 +1,25 @@
 {
   "compilerOptions": {
-    "target": "ES2023",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "target": "esnext",
+    "lib": ["es2025", "esnext.array", "esnext.disposable", "esnext.error"],
+    "module": "nodenext",
     "types": ["node"],
     "rootDir": "src",
     "outDir": "dist",
+    "noEmit": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "skipLibCheck": true,
-    "sourceMap": true
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "rewriteRelativeImportExtensions": true,
+    "skipLibCheck": true
   },
-  "include": [
-    "src/**/*.ts"
-  ]
+  "include": ["src/**/*.ts"]
 }

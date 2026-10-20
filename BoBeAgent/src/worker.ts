@@ -2,21 +2,21 @@ import { join, isAbsolute, relative } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import { VERSION, defineTool } from "@earendil-works/pi-coding-agent";
-import { ModelProfiles } from "./models.js";
-import { Sessions, type SessionBundle } from "./sessions.js";
-import { WorkerFault, assertActive, type Redactor } from "./errors.js";
-import { authorityPath, privateDirectory } from "./files.js";
+import { ModelProfiles } from "./models.ts";
+import { Sessions, type SessionBundle } from "./sessions.ts";
+import { WorkerFault, assertActive, type Redactor } from "./errors.ts";
+import { authorityPath, privateDirectory } from "./files.ts";
 import {
   HARNESS_VERSION, PROTOCOL_VERSION, abortSchema, authSubmitSchema, auxiliarySchema,
   backgroundSchema, chatSchema, compactSchema, contextStatusSchema, emptySchema, initializeSchema, json, mcpToolsSchema, object,
   profileRequestSchema, probeSchema, reloadSchema, steerSchema, validate,
   type Auxiliary, type Chat, type Initialize, type Json, type JsonObject,
   type Notification, type Request, type Route,
-} from "./protocol.js";
-import type { RpcHandler } from "./rpc.js";
-import { ProcessClient } from "./process.js";
-import type { Workload, ExecutionPriority } from "./execution.js";
-import { OWNER_CHANNEL } from "./persistence.js";
+} from "./protocol.ts";
+import type { RpcHandler } from "./rpc.ts";
+import { ProcessClient } from "./process.ts";
+import type { Workload, ExecutionPriority } from "./execution.ts";
+import { OWNER_CHANNEL } from "./persistence.ts";
 
 export interface HostConnection {
   redactor: Redactor;
@@ -43,10 +43,12 @@ export class WorkerHost implements RpcHandler {
   private closePromise: Promise<void> | undefined;
   private idleTimer: ReturnType<typeof setInterval> | undefined;
 
-  constructor(
-    private readonly connection: HostConnection,
-    private readonly createModels: typeof ModelProfiles.create = ModelProfiles.create,
-  ) {
+  private readonly connection: HostConnection;
+  private readonly createModels: typeof ModelProfiles.create;
+
+  constructor(connection: HostConnection, createModels: typeof ModelProfiles.create = ModelProfiles.create) {
+    this.connection = connection;
+    this.createModels = createModels;
     this.processes = new ProcessClient((method, params) => connection.call(method, params));
   }
 
@@ -239,7 +241,6 @@ export class WorkerHost implements RpcHandler {
     process.env.PI_CODING_AGENT_DIR = agentDir;
     process.env.PI_OFFLINE = "1";
     process.env.TMPDIR = runtimeFiles;
-    process.env.PI_SKIP_VERSION_CHECK = "1";
     assertActive(signal);
     this.models = await this.createModels(
       config, agentDir,
@@ -393,7 +394,7 @@ export class WorkerHost implements RpcHandler {
     if (this.idleTimer) clearInterval(this.idleTimer);
     for (const activity of this.active.values()) activity.controller.abort();
     await this.models?.close();
-    await Promise.allSettled([...this.active.values()].map(activity => activity.completion));
+    await Promise.allSettled(this.active.values().map(activity => activity.completion));
     await this.sessions?.close();
     this.processes.disconnect();
   }

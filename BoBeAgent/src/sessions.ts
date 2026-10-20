@@ -7,22 +7,24 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
-import { AuthorityResources } from "./resources.js";
-import { McpResources } from "./mcp.js";
-import { ModelProfiles } from "./models.js";
-import { TurnEvents } from "./events.js";
-import { boundedOutput, subagentTool, type DelegateTask, type DelegateResult } from "./delegation.js";
-import { Cancelled, Serial, WorkerFault, assertActive, failureDetail, settleEach, type Redactor } from "./errors.js";
-import { createChildSession, flushSession, openBackgroundSession, openChannelSession, OWNER_CHANNEL } from "./persistence.js";
-import { backgroundTools } from "./background.js";
-import { scheduleTool } from "./scheduling.js";
-import { ownerInputTool, type DeferredOwnerInput } from "./owner-input.js";
-import { ownedFind, ownedGrep } from "./search.js";
-import { ProcessClient } from "./process.js";
+import { AuthorityResources } from "./resources.ts";
+import { McpResources } from "./mcp.ts";
+import { ModelProfiles } from "./models.ts";
+import { TurnEvents } from "./events.ts";
+import { boundedOutput, subagentTool, type DelegateOutcome, type DelegateTask } from "./delegation.ts";
+import {
+  Cancelled, Serial, WorkerFault, assertActive, failureDetail, onAbort, rejections, settleEach, type Redactor,
+} from "./errors.ts";
+import { createChildSession, flushSession, openBackgroundSession, openChannelSession, OWNER_CHANNEL } from "./persistence.ts";
+import { backgroundTools } from "./background.ts";
+import { scheduleTool } from "./scheduling.ts";
+import { ownerInputTool, type DeferredOwnerInput } from "./owner-input.ts";
+import { ownedFind, ownedGrep } from "./search.ts";
+import { ProcessClient } from "./process.ts";
 import {
   domainResultSchema, isRecord, json, object, validate, type Delta, type Initialize,
   type BackgroundRequest, type Json, type JsonObject, type McpConfig, type Persona, type Route, type Thinking,
-} from "./protocol.js";
+} from "./protocol.ts";
 
 let packagedBehavior: Promise<string> | undefined;
 
@@ -53,10 +55,7 @@ function personaSection(persona: Persona): string {
 }
 
 const noPersona: Persona = { souls: [], profiles: [] };
-
-function rejections(outcomes: readonly PromiseSettledResult<unknown>[]): unknown[] {
-  return outcomes.flatMap(outcome => outcome.status === "rejected" ? [outcome.reason] : []);
-}
+const mcpTools = ["mcp__*", "list_mcp_resources", "list_mcp_resource_templates", "read_mcp_resource"];
 
 interface SessionCallbacks {
   domain(name: string, args: JsonObject, requestId: number, signal?: AbortSignal): Promise<Json>;
@@ -89,12 +88,17 @@ export class SessionBundle {
   private closePromise: Promise<void> | undefined;
   private readonly resourceChanges = new Serial();
 
-  constructor(
-    readonly session: AgentSession,
-    readonly resources: AuthorityResources,
-    readonly mcp: McpResources,
-    readonly fullCapabilities: boolean,
-  ) {}
+  readonly session: AgentSession;
+  readonly resources: AuthorityResources;
+  readonly mcp: McpResources;
+  readonly fullCapabilities: boolean;
+
+  constructor(session: AgentSession, resources: AuthorityResources, mcp: McpResources, fullCapabilities: boolean) {
+    this.session = session;
+    this.resources = resources;
+    this.mcp = mcp;
+    this.fullCapabilities = fullCapabilities;
+  }
 
   close(): Promise<void> {
     this.closePromise ??= this.resourceChanges.run(() => this.dispose());
@@ -125,8 +129,6 @@ export class SessionBundle {
   }
 }
 
-const builtins = ["read", "bash", "edit", "write", "grep", "find", "ls"] as const;
-
 export class Sessions {
   readonly bundles = new Set<SessionBundle>();
   private readonly skillRefresh = new Serial();
@@ -143,14 +145,23 @@ export class Sessions {
   private readonly activeRuns = new Set<Promise<TurnEvents>>();
   private closed = false;
 
+  private readonly config: Initialize;
+  readonly agentDir: string;
+  readonly models: ModelProfiles;
+  private readonly callbacks: SessionCallbacks;
+  private readonly redactor: Redactor;
+  private readonly processes: ProcessClient;
+
   constructor(
-    private readonly config: Initialize,
-    readonly agentDir: string,
-    readonly models: ModelProfiles,
-    private readonly callbacks: SessionCallbacks,
-    private readonly redactor: Redactor,
-    private readonly processes: ProcessClient,
+    config: Initialize, agentDir: string, models: ModelProfiles, callbacks: SessionCallbacks,
+    redactor: Redactor, processes: ProcessClient,
   ) {
+    this.config = config;
+    this.agentDir = agentDir;
+    this.models = models;
+    this.callbacks = callbacks;
+    this.redactor = redactor;
+    this.processes = processes;
     this.mcpConfig = config.mcp;
     this.skillDirectories = config.skill_directories;
   }
@@ -167,9 +178,10 @@ export class Sessions {
       const raced = this.channels.get(channel);
       if (raced) return raced;
       while (this.channels.size >= this.models.execution.limits.live_channels) {
-        const idle = [...this.channels.keys()]
+        const [idle] = this.channels.keys()
           .filter(key => !this.channelLeases.get(key))
-          .sort((a, b) => (this.channelAccess.get(a) ?? 0) - (this.channelAccess.get(b) ?? 0))[0];
+          .toArray()
+          .sort((a, b) => (this.channelAccess.get(a) ?? 0) - (this.channelAccess.get(b) ?? 0));
         if (!idle) throw new Error("All live conversation slots are active; wait for a turn to settle");
         await this.retireChannel(idle);
       }
@@ -245,7 +257,6 @@ export class Sessions {
     const mcp = new McpResources(mcpConfig, this.agentDir, this.redactor, this.processes,
       tool => this.models.execution.tool(tool));
     const settings = SettingsManager.inMemory({
-      defaultTools: full ? builtins.filter(name => this.config.enabled_tools.includes(name)) : [],
       retry: { enabled: false, provider: { maxRetries: 0, timeoutMs: 120_000 } },
       compaction: { enabled: full },
       cacheWarming: "off",
@@ -254,11 +265,6 @@ export class Sessions {
       enableAnalytics: false,
       enableSkillCommands: false,
       defaultProjectTrust: "never",
-      packages: [],
-      extensions: [],
-      skills: [],
-      prompts: [],
-      themes: [],
     }, { projectTrusted: false });
     let current: SessionBundle | undefined;
     const binding = (): SessionBundle => {
@@ -268,13 +274,13 @@ export class Sessions {
     const contextExtension: ExtensionFactory = pi => {
       pi.on("tool_call", event => {
         const bundle=binding();
-        if (bundle.current.deferredInput) return { block:true,reason:"This run is waiting for an important owner answer. Do not perform its deferred action." };
+        if (bundle.current.deferredInput) return { block:true,terminate:true,reason:"This run is waiting for an important owner answer. Do not perform its deferred action." };
         const assistant=bundle.session.messages.findLast(message=>message.role==="assistant");
         if (assistant?.role==="assistant") {
           const question=assistant.content.find(block=>block.type==="toolCall" && block.name==="bobe_owner_input"
             && isRecord(block.arguments) && (block.arguments.operation==="ask" || block.arguments.operation==="present"));
           if (question?.type==="toolCall" && question.id!==event.toolCallId) {
-            return {block:true,reason:"Settle the important owner question before starting other tools in this round."};
+            return {block:true,terminate:true,reason:"Settle the important owner question before starting other tools in this round."};
           }
         }
       });
@@ -312,6 +318,7 @@ export class Sessions {
       [contextExtension, mcp.extension()],
     );
     await resources.reload();
+    const enabled = new Set<string>(this.config.enabled_tools);
     const customTools = full
       ? [...[
         defineTool(createReadToolDefinition(this.config.workspace)),
@@ -320,12 +327,12 @@ export class Sessions {
         defineTool(ownedGrep(this.config.workspace,this.processes,() => binding().current.requestId,this.agentDir)),
         defineTool(ownedFind(this.config.workspace,this.processes,() => binding().current.requestId,this.agentDir)),
         defineTool(createLsToolDefinition(this.config.workspace)),
-      ].filter(tool => this.config.enabled_tools.some(name => name === tool.name)),
-      ...(this.config.enabled_tools.includes("bash") ? [defineTool(createBashToolDefinition(this.config.workspace, {
+      ].filter(tool => enabled.has(tool.name)),
+      ...(enabled.has("bash") ? [defineTool(createBashToolDefinition(this.config.workspace, {
         operations: this.processes.shell(() => binding().current.requestId),
-      }))] : []), ...this.domainTools(binding), ...(this.config.enabled_tools.includes("subagent") ? [subagentTool({
+      }))] : []), ...this.domainTools(binding), ...(enabled.has("subagent") ? [subagentTool({
         run: (task, signal) => this.delegate(binding(), task, signal),
-      })] : []), ...(this.config.enabled_tools.includes("background_jobs") ? [...backgroundTools({
+      })] : []), ...(enabled.has("background_jobs") ? [...backgroundTools({
         invocationScope: () => this.invocationScope(binding()),
         call: (action, args, sourceKey, signal) =>
           this.callbacks.job(action, args, sourceKey, binding().current.requestId, signal),
@@ -355,15 +362,8 @@ export class Sessions {
         settingsManager: settings,
         resourceLoader: resources,
         customTools: customTools.map(tool => this.models.execution.tool(tool)),
-        excludeTools: [
-          ...builtins.filter(name => !full || !this.config.enabled_tools.includes(name)),
-          ...(!full || !this.config.enabled_tools.includes("subagent") ? ["subagent"] : []),
-          ...(!isCanonical ? ["background_task"] : []),
-          ...(!this.config.enabled_tools.includes("background_jobs")
-            ? ["background_task", "background_tasks", "background_task_status", "background_task_cancel", "bobe_schedule", "bobe_owner_input"] : []),
-        ],
+        tools: [...customTools.map(tool => tool.name), ...mcpTools],
       });
-      session.setActiveToolsByName(customTools.map(tool => tool.name));
       current = new SessionBundle(session, resources, mcp, full);
       const ui = session.extensionRunner.createContext().ui;
       const noDialog = (): never => { throw new Error("Interactive dialogs are not available in the worker"); };
@@ -418,7 +418,7 @@ export class Sessions {
           if (!response.success) throw new Error(response.value.error);
 
           const value = json(response.value);
-          return { content: [{ type: "text", text: JSON.stringify(value) }], details: value, structuredContent: value };
+          return { content: [{ type: "text", text: JSON.stringify(value) }], details: value };
         },
       });
     });
@@ -519,7 +519,7 @@ export class Sessions {
 
   async steer(requestId: number, text: string, followUp: boolean): Promise<void> {
     if (!text.trim()) throw new Error("Run input must not be empty");
-    const bundle = [...this.bundles].find(candidate =>
+    const bundle = this.bundles.values().find(candidate =>
       candidate.fullCapabilities && candidate.current.depth === 0 && candidate.current.requestId === requestId);
     if (!bundle?.session.isStreaming || bundle.current.deferredInput) throw new Error("Run is not accepting input at this time");
     if (bundle.session.pendingMessageCount >= 16) throw new Error("Run input queue is full");
@@ -573,8 +573,8 @@ export class Sessions {
         cancel();
       }
     });
-    signal.addEventListener("abort", cancel, { once: true });
     try {
+      using _abort = onAbort(signal, cancel);
       if (bundle.mcp.needsRestart()) {
         await bundle.mcp.prepareRestart();
         bundle.errors.length = 0;
@@ -607,7 +607,6 @@ export class Sessions {
       await flushSession(bundle.session.sessionManager);
       return events;
     } finally {
-      signal.removeEventListener("abort", cancel);
       const failures = await settleEach([
         async () => {
           const failed = rejections((await Promise.all(cancellations)).flat());
@@ -674,8 +673,9 @@ export class Sessions {
       context_window: context?.contextWindow ?? null,
       context_percent: context?.percent ?? null,
       compactions: branch.filter(entry => entry.type === "compaction").length,
-      active_children: [...this.bundles].filter(candidate =>
-        candidate.current.depth > 0 && candidate.current.requestId === bundle.current.requestId && !candidate.session.isIdle).length,
+      active_children: this.bundles.values().filter(candidate =>
+        candidate.current.depth > 0 && candidate.current.requestId === bundle.current.requestId && !candidate.session.isIdle)
+        .toArray().length,
     };
   }
 
@@ -713,9 +713,8 @@ export class Sessions {
     if (keepRecentTokens !== undefined) settings.applyOverrides({
       compaction: { ...previous, keepRecentTokens },
     });
-    const cancel = (): void => bundle.session.abortCompaction();
-    signal.addEventListener("abort", cancel, { once: true });
     try {
+      using _abort = onAbort(signal, () => bundle.session.abortCompaction());
       const result = await bundle.session.compact(
         "This is BoBe's companion conversation. Preserve the person's stated goals, preferences, boundaries, unresolved commitments, verified tool outcomes and interrupted work. Retain uncertainty. Durable memory and goals remain owned by Rust; a summary does not mutate them.",
       );
@@ -729,12 +728,11 @@ export class Sessions {
         summary: result.summary,
       };
     } finally {
-      signal.removeEventListener("abort", cancel);
       settings.applyOverrides({ compaction: previous });
     }
   }
 
-  private async delegate(parent: SessionBundle, task: DelegateTask, signal?: AbortSignal): Promise<DelegateResult> {
+  private async delegate(parent: SessionBundle, task: DelegateTask, signal?: AbortSignal): Promise<DelegateOutcome> {
     assertActive(signal);
     if (parent.current.depth >= 2) throw new Error("Scoped delegation depth is limited to two");
     if (parent.current.childrenCreated.count >= 16) throw new Error("This turn reached its scoped subagent budget");
@@ -743,7 +741,7 @@ export class Sessions {
     if (!model) throw new Error("Parent session has no selected model");
     const controller = new AbortController();
     const budget = this.models.execution.taskBudget(task.budget, 600, 32);
-    const deadline = setTimeout(() => controller.abort(new DOMException("Scoped task exceeded its chosen deadline", "TimeoutError")), budget.timeout_seconds * 1000);
+    using _deadline = setTimeout(() => controller.abort(new DOMException("Scoped task exceeded its chosen deadline", "TimeoutError")), budget.timeout_seconds * 1000);
     const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
     let child: SessionBundle | undefined;
     const agent = task.agent ?? "worker";
@@ -759,18 +757,22 @@ export class Sessions {
       child.session.setThinkingLevel(parent.session.thinkingLevel, { persist: false });
       const result = await this.run(child, inertMarkers(task.task), combined, false, false, budget.max_turns);
       return {
-        agent, ...boundedOutput(result.text()), output_tokens: result.last?.usage.output ?? 0,
-        success: true, error: null,
+        result: {
+          agent, ...boundedOutput(result.text()), output_tokens: result.usage?.output ?? 0, success: true, error: null,
+        },
+        usage: result.usage,
       };
     } catch (error) {
       if (error instanceof WorkerFault) throw error;
       if (signal?.aborted) throw new Cancelled("Scoped subagent canceled");
       return {
-        agent, text: "", output_tokens: 0, success: false,
-        error: this.redactor.message(controller.signal.reason ?? error), truncated: false,
+        result: {
+          agent, text: "", output_tokens: 0, success: false,
+          error: this.redactor.message(controller.signal.reason ?? error), truncated: false,
+        },
+        usage: undefined,
       };
     } finally {
-      clearTimeout(deadline);
       if (child) await this.release(child);
     }
   }
@@ -789,12 +791,11 @@ export class Sessions {
 
   async close(): Promise<void> {
     this.closed = true;
-    await Promise.allSettled([...this.bundles].map(bundle => bundle.session.abort()));
+    await Promise.allSettled(this.bundles.values().map(bundle => bundle.session.abort()));
     await Promise.allSettled(this.activeRuns);
-    const results = await Promise.allSettled([...this.bundles].map(bundle => this.release(bundle)));
-    const failures = results.filter(result => result.status === "rejected");
+    const failures = rejections(await Promise.allSettled(Array.from(this.bundles, bundle => this.release(bundle))));
     this.channels.clear();
     this.channelAccess.clear();
-    if (failures.length) throw new AggregateError(failures.map(failure => failure.reason), "Session shutdown failed");
+    if (failures.length) throw new AggregateError(failures, "Session shutdown failed");
   }
 }

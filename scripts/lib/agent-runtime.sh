@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-BOBE_NODE_VERSION="22.23.3"
+BOBE_NODE_VERSION="24.22.0"
 BOBE_PI_VERSION="1.3.0"
 BOBE_RG_VERSION="15.2.0"
 BOBE_FD_VERSION="10.5.0"
@@ -24,10 +24,10 @@ bobe_node_platform() {
 
 bobe_node_archive_sha256() {
     case "$1" in
-        darwin-arm64) echo "23b25245dcfb9af7262f8ff142e9e2e0af025368117329e7a7458a51e5922f53" ;;
-        darwin-x64) echo "8a677b0219178efd6eb0e475457c4afb452b521a92f6e67845a73bd85727f2a8" ;;
-        linux-arm64) echo "5ced2d48d1d7198739b7f86804de0171aefb6823b684b12341d3321afc3cb0b2" ;;
-        linux-x64) echo "1084aa36196bba4c3a5e69a1ee388a6e4ff729dad09445fbcd434b28fe3c24af" ;;
+        darwin-arm64) echo "6a9724d9b50a5f22b4816cded441b5a8d9ddae546191a5e5b7efa5a5e2ee26d5" ;;
+        darwin-x64) echo "495e3f273c645f3c4677d438304cdfc701729ea5dec5728f5c8e76a2dece4b91" ;;
+        linux-arm64) echo "b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d" ;;
+        linux-x64) echo "28ea0a438de9a13bd7891fd758eee6c7819ee8af5442dfd8d45bd65e56d4228c" ;;
         *) echo "No pinned Node checksum for $1" >&2; return 1 ;;
     esac
 }

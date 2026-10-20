@@ -2,20 +2,19 @@ import {
   DefaultResourceLoader, loadSkills, type ExtensionFactory, type ResourceDiagnostic,
   type SettingsManager, type Skill,
 } from "@earendil-works/pi-coding-agent";
-import { authorityPath } from "./files.js";
+import { authorityPath } from "./files.ts";
 
 export class AuthorityResources extends DefaultResourceLoader {
   private readonly activeSkills: Skill[] = [];
   private diagnostics: ResourceDiagnostic[] = [];
+  private readonly authorityRoot: string;
+  private readonly workspace: string;
+  private readonly privateAgentDir: string;
+  private directories: string[];
 
   constructor(
-    private readonly authorityRoot: string,
-    private readonly workspace: string,
-    private readonly privateAgentDir: string,
-    private directories: string[],
-    settings: SettingsManager,
-    systemPrompt: string,
-    factories: ExtensionFactory[],
+    authorityRoot: string, workspace: string, privateAgentDir: string, directories: string[],
+    settings: SettingsManager, systemPrompt: string, factories: ExtensionFactory[],
   ) {
     super({
       cwd: workspace,
@@ -30,6 +29,10 @@ export class AuthorityResources extends DefaultResourceLoader {
       appendSystemPrompt: [],
       extensionFactories: factories,
     });
+    this.authorityRoot = authorityRoot;
+    this.workspace = workspace;
+    this.privateAgentDir = privateAgentDir;
+    this.directories = directories;
   }
 
   override getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {

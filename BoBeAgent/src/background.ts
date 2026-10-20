@@ -1,19 +1,22 @@
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { object, taskBudgetSchema, type Json, type JsonObject } from "./protocol.js";
-import { assertActive } from "./errors.js";
+import { object, taskBudgetSchema, type Json, type JsonObject } from "./protocol.ts";
+import { assertActive } from "./errors.ts";
 
 export interface JobControl {
   invocationScope(): string;
   call(action: string, arguments_: JsonObject, sourceKey: string | undefined, signal?: AbortSignal): Promise<Json>;
 }
 
+export function sourceKey(control: JobControl, callId: string): string {
+  return hash("sha256", `${control.invocationScope()}:${callId}`);
+}
+
 export function backgroundTools(control: JobControl, allowStart = true): ToolDefinition[] {
   const result = (value: Json) => ({
     content: [{ type: "text" as const, text: JSON.stringify(value) }],
     details: value,
-    structuredContent: value,
   });
   return [
     ...(allowStart ? [defineTool({
@@ -28,8 +31,7 @@ export function backgroundTools(control: JobControl, allowStart = true): ToolDef
       }, { additionalProperties: false }),
       execute: async (callId, args, signal) => {
         assertActive(signal);
-        const source = createHash("sha256").update(`${control.invocationScope()}:${callId}`).digest("hex");
-        return result(await control.call("start", object(args), source, signal));
+        return result(await control.call("start", object(args), sourceKey(control, callId), signal));
       },
     })] : []),
     defineTool({

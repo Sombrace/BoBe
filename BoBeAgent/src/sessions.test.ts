@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { getCurrentSystemMessage, getCurrentTools, type TranscriptContext } from "@earendil-works/pi-ai";
-import { openCanonicalSession } from "./persistence.js";
-import { configuration, configureMcp, deferred, fixture, host, userText } from "./test-support.js";
-import { isRecord, toolNames, type JsonObject } from "./protocol.js";
-import { abortableDelay, Cancelled } from "./errors.js";
+import { openCanonicalSession } from "./persistence.ts";
+import { configuration, configureMcp, fixture, host, userText } from "./test-support.ts";
+import { isRecord, toolNames, type JsonObject } from "./protocol.ts";
+import { Cancelled } from "./errors.ts";
 
 const chat = (text: string, channel: "text" | "voice" = "text"): JsonObject => ({
   text, channel, context: "Current owner memory.",
@@ -169,11 +170,11 @@ test("a resumed channel declares the configured tools, not the smaller set its t
     return { text: "Every configured tool is available." };
   });
   await second.worker.request({ id: 2, method: "chat", params: ask("Continue with the current tools") });
-  const current = new Set(declared.at(-1));
-  for (const name of ["read", "bash", "write", "subagent", "background_task", "bobe_memory_read", "mcp__sample__echo"]) {
-    assert.ok(current.has(name), `${name} is declared after resume: ${[...current].join(", ")}`);
-  }
-  assert.ok(!current.has("mcp__sample__hidden"));
+  assert.deepEqual(declared.at(-1)?.toSorted(), [
+    "background_task", "background_task_cancel", "background_task_status", "background_tasks", "bash",
+    "bobe_memory_read", "bobe_owner_input", "bobe_schedule", "edit", "find", "grep", "ls",
+    "mcp__sample__echo", "mcp__sample__wait", "read", "subagent", "write",
+  ]);
 });
 
 test("skill publication refreshes the next tool round without replacing the active session", async t => {
@@ -336,6 +337,9 @@ test("scoped parallel children use real isolated pi sessions and never speak the
   });
   await worker.request({ id: 2, method: "chat", params: chat("Delegate") });
   assert.equal(sessions.size, 3);
+  const status = await worker.request({ id: 3, method: "context_status", params: {} });
+  assert.ok(isRecord(status) && isRecord(status.tokens));
+  assert.deepEqual({ output: status.tokens.output, total: status.tokens.total }, { output: 8, total: 12 });
   const spoken = notifications.flatMap(notification => notification.method === "event" &&
     notification.params.delta.type === "message_delta" ? [notification.params.delta.text] : []).join("");
   assert.equal(spoken, "The two tasks are complete.");
@@ -354,7 +358,7 @@ test("scoped parallel children use real isolated pi sessions and never speak the
 
 test("abort cancels and settles every delegated model", async t => {
   const paths = await fixture(t);
-  const childrenStarted = deferred<void>();
+  const childrenStarted = Promise.withResolvers<void>();
   let started = 0;
   let settled = 0;
   const { worker, notifications } = await host(t, configuration(paths), async (context, options) => {
@@ -366,7 +370,7 @@ test("abort cancels and settles every delegated model", async t => {
     started++;
     if (started === 2) childrenStarted.resolve();
     try {
-      await abortableDelay(30_000, options?.signal);
+      await delay(30_000, undefined, { signal: options?.signal });
       throw new Error("Child cancellation was not delivered");
     } finally {
       settled++;
@@ -502,34 +506,42 @@ test("native bash tool process is gone before abort returns", async t => {
   }));
   const running = worker.request({ id: 2, method: "chat", params: chat("Run bounded shell test") });
   const rejected = assert.rejects(running);
-  let pid: number | undefined;
-  for (let attempt = 0; attempt < 200; attempt++) {
-    try {
-      pid = Number(await readFile(join(paths.workspace, "native-bash.pid"), "utf8"));
-      break;
-    } catch (error) {
-      if (!isRecord(error) || error.code !== "ENOENT") throw error;
-      await abortableDelay(10);
-    }
-  }
-  assert.ok(pid && Number.isSafeInteger(pid));
+  const pid = await t.waitFor(async () => Number(await readFile(join(paths.workspace, "native-bash.pid"), "utf8")),
+    { interval: 10, timeout: 5_000 });
+  assert.ok(Number.isSafeInteger(pid));
   await worker.request({ id: 3, method: "abort", params: { request_id: 2 } });
   await rejected;
   assert.throws(() => process.kill(pid, 0), error => isRecord(error) && error.code === "ESRCH");
+});
+
+test("a bash timeout beyond the timer range fails the tool without starting a process", async t => {
+  const paths = await fixture(t);
+  const results: string[] = [];
+  const { worker, processes } = await host(t, configuration(paths), context => {
+    const result = context.messages.findLast(message => message.role === "toolResult");
+    if (!result || result.role !== "toolResult") {
+      return { tools: [{ id: "bash-timeout", name: "bash", arguments: { command: "true", timeout: 3_000_000 } }] };
+    }
+    results.push(result.content.map(part => part.type === "text" ? part.text : "").join(""));
+    return { text: "The timeout was rejected." };
+  });
+  await worker.request({ id: 2, method: "chat", params: chat("Run with a long timeout") });
+  assert.match(results[0] ?? "", /Invalid timeout: maximum is 2147483.647 seconds/);
+  assert.deepEqual(processes.programs, []);
 });
 
 test("domain tools receive the pi abort signal and finish before abort acknowledgement", async t => {
   const paths = await fixture(t);
   const config = configuration(paths);
   config.tools = [{ name: "bobe_wait", description: "Wait", parameters: { type: "object", properties: {} } }];
-  const started = deferred<void>();
+  const started = Promise.withResolvers<void>();
   let settled = false;
   const { worker } = await host(t, config, () => ({
     tools: [{ id: "wait-1", name: "bobe_wait", arguments: {} }],
   }), async (_method, _params, signal) => {
     started.resolve();
     try {
-      await abortableDelay(30_000, signal);
+      await delay(30_000, undefined, { signal });
       throw new Cancelled();
     } finally {
       settled = true;

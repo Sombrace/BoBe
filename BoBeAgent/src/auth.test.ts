@@ -5,12 +5,12 @@ import type { Mode, PathLike } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import type { OAuthCredential } from "@earendil-works/pi-ai";
-import { ModelProfiles } from "./models.js";
-import { AuthorityCredentials } from "./credentials.js";
-import { Redactor } from "./errors.js";
-import { configuration, controlledProvider, deferred, fixture } from "./test-support.js";
-import { type AuthPhase, isRecord } from "./protocol.js";
-import { openCanonicalSession } from "./persistence.js";
+import { ModelProfiles } from "./models.ts";
+import { AuthorityCredentials } from "./credentials.ts";
+import { Redactor } from "./errors.ts";
+import { configuration, controlledProvider, fixture } from "./test-support.ts";
+import { type AuthPhase, isRecord } from "./protocol.ts";
+import { openCanonicalSession } from "./persistence.ts";
 
 const credential: OAuthCredential = {
   type: "oauth", access: "fixture-oauth-access", refresh: "fixture-oauth-refresh",
@@ -22,8 +22,8 @@ test("native model runtime OAuth uses callback input and persists only inside th
   const config = configuration(paths);
   config.profiles.test = { kind: "open_ai", auth_method: "oauth" };
   const phases: AuthPhase[] = [];
-  const awaitingSelect = deferred<void>();
-  const awaitingSecret = deferred<void>();
+  const awaitingSelect = Promise.withResolvers<void>();
+  const awaitingSecret = Promise.withResolvers<void>();
   const profiles = await ModelProfiles.create(config, join(paths.root, "agent"), (_profile, phase) => {
     phases.push(phase);
     if (phase.phase === "awaiting_input" && !phase.password) awaitingSelect.resolve();
@@ -133,7 +133,7 @@ test("OAuth cancel rejects an outstanding callback and settles login without a c
   const paths = await fixture(t);
   const config = configuration(paths);
   config.profiles.test = { kind: "open_ai", auth_method: "oauth" };
-  const input = deferred<void>();
+  const input = Promise.withResolvers<void>();
   const phases: AuthPhase[] = [];
   const profiles = await ModelProfiles.create(config, join(paths.root, "agent"), (_profile, phase) => {
     phases.push(phase);

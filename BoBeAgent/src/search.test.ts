@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdir,writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { configuration,fixture,host } from "./test-support.js";
+import { configuration,fixture,host } from "./test-support.ts";
 import {fileURLToPath} from "node:url";
 
 test("grep and find retain pi search results but launch through the daemon process owner",async t=>{
@@ -33,7 +33,7 @@ test("persistent MCP processes and native search share the same process capacity
   const paths=await fixture(t);
   const config=configuration(paths);
   config.mcp={servers:Object.fromEntries([0,1,2,3].map(index=>[`server${index}`,{
-    command:process.execPath,args:[fileURLToPath(new URL("./mcp-fixture.js",import.meta.url))],
+    command:process.execPath,args:[fileURLToPath(new URL("./mcp-fixture.ts",import.meta.url))],
     env:{},timeout_ms:15_000,excluded_tools:[],
   }]))};
   let calls=0;

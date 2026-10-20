@@ -50,7 +50,8 @@ fi
     cd "$agent"
     "$runtime/node" --input-type=module - "$BOBE_PI_VERSION" <<'JS'
 import assert from "node:assert/strict";
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import { glob } from "node:fs/promises";
 import { join } from "node:path";
 import { Agent } from "@earendil-works/pi-agent-core";
 import { createModels } from "@earendil-works/pi-ai";
@@ -63,11 +64,11 @@ const contract = JSON.parse(readFileSync("fixtures/host-contract-v1.json", "utf8
 assert.equal(contract.harness, "pi");
 assert.equal(contract.harness_version, version);
 assert.equal(contract.protocol_version, 1);
-for (const name of ["pi-agent-core", "pi-ai", "pi-coding-agent"]) {
+for (const name of ["pi-agent-core", "pi-ai", "pi-coding-agent", "pi-mcp"]) {
     const id = `@earendil-works/${name}`;
     const path = join("node_modules", id);
     const installed = JSON.parse(readFileSync(join(path, "package.json"), "utf8"));
-    assert.equal(manifest.dependencies[id], version, `${id} declared pin`);
+    if (name !== "pi-agent-core") assert.equal(manifest.dependencies[id], version, `${id} declared pin`);
     assert.equal(installed.version, version, `${id} installed pin`);
     assert.ok(existsSync(join(path, installed.main)), `${id} entry`);
 }
@@ -76,20 +77,13 @@ assert.equal(typeof createAgentSession, "function");
 assert.equal(typeof createModels, "function");
 assert.ok(openaiProvider().getModels().length > 0, "pi model catalog assets are available");
 assert.ok(!existsSync("node_modules/typescript"), "development compiler is not shipped");
+assert.ok(!existsSync("dist/test-support.js"), "test sources are not shipped");
 const coding = "node_modules/@earendil-works/pi-coding-agent";
 for (const asset of ["dist/modes/interactive/theme/dark.json", "dist/modes/interactive/theme/light.json",
     "dist/core/export-html/template.html"]) {
     assert.ok(readFileSync(join(coding, asset)).length > 0, `missing pi asset: ${asset}`);
 }
-const wasm = [];
-function visit(path) {
-    for (const entry of readdirSync(path, { withFileTypes: true })) {
-        const child = join(path, entry.name);
-        if (entry.isDirectory()) visit(child);
-        else if (entry.isFile() && child.endsWith(".wasm")) wasm.push(child);
-    }
-}
-visit("node_modules");
+const wasm = await Array.fromAsync(glob("node_modules/**/*.wasm"));
 assert.ok(wasm.length > 0, "pi WebAssembly assets are shipped");
 for (const asset of wasm) await WebAssembly.compile(readFileSync(asset));
 console.log(`Agent distribution verified: pi ${version}, ${wasm.length} WebAssembly asset(s)`);

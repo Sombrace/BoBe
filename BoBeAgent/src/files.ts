@@ -3,7 +3,7 @@ import {
 } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { isRecord } from "./protocol.js";
+import { isRecord } from "./protocol.ts";
 
 export function isMissing(error: unknown): boolean {
   return isRecord(error) && error.code === "ENOENT";
@@ -18,12 +18,8 @@ export async function privateDirectory(path: string): Promise<void> {
 }
 
 export async function syncFile(path: string): Promise<void> {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
+  await using handle = await open(path, "r");
+  await handle.sync();
 }
 
 export async function privateRead(path: string): Promise<string | undefined> {
@@ -42,19 +38,17 @@ export async function privateRead(path: string): Promise<string | undefined> {
 export async function atomicPrivateWrite(path: string, content: string): Promise<void> {
   await privateDirectory(dirname(path));
   const staged = `${path}.${randomUUID()}.pending`;
-  const file = await open(staged, "wx", 0o600);
-  let published = false;
-  try {
+  {
+    await using pending = new AsyncDisposableStack();
+    const file = pending.use(await open(staged, "wx", 0o600));
+    pending.defer(() => unlink(staged));
     await file.writeFile(content, "utf8");
     await file.sync();
     await file.close();
     await rename(staged, path);
-    published = true;
-    await syncFile(dirname(path));
-  } finally {
-    await file.close();
-    if (!published) await unlink(staged);
+    pending.move();
   }
+  await syncFile(dirname(path));
 }
 
 export async function authorityPath(root: string, path: string): Promise<string> {

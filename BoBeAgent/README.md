@@ -11,10 +11,12 @@ admission, identity, memory, goals, skills, secrets, voice and bodies.
 scripts/tasks/build-agent.sh        # pinned Node, npm ci, build, tests, staging
 ```
 
-Or, with Node 22.19 or later, `npm ci --ignore-scripts`, `npm run build`,
-`npm run check` and `npm test` in this folder. The entry point is
-`dist/main.js`. Tests use real pi sessions with controlled provider adapters;
-they do not prove that a real provider works.
+Or, with Node 24.22 or later, `npm ci --ignore-scripts`, `npm run check`,
+`npm test` and `npm run build` in this folder. Tests run the TypeScript
+sources directly through Node's type stripping, so the sources use only
+erasable syntax and `.ts` import specifiers; `npm run build` emits the shipped
+`dist/main.js` without tests or fixtures. Tests use real pi sessions with
+controlled provider adapters; they do not prove that a real provider works.
 
 ## Protocol
 

@@ -13,10 +13,10 @@ import { openrouterProvider } from "@earendil-works/pi-ai/providers/openrouter";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
-import { AuthorityCredentials, deviceId } from "./credentials.js";
-import { Cancelled, Redactor, Serial, assertActive } from "./errors.js";
-import { isRecord, type AuthPhase, type Initialize, type Json, type Profile, type Route } from "./protocol.js";
-import { ExecutionControl } from "./execution.js";
+import { AuthorityCredentials, deviceId } from "./credentials.ts";
+import { Cancelled, Redactor, Serial, assertActive, onAbort } from "./errors.ts";
+import { isRecord, type AuthPhase, type Initialize, type Json, type Profile, type Route } from "./protocol.ts";
+import { ExecutionControl } from "./execution.ts";
 
 const anonymousLocalKey = "bobe-local-no-auth";
 const noAmbientAuth = {
@@ -48,17 +48,18 @@ interface Login {
   code: string;
 }
 
-function failedMessage(model: Model<Api>, error: unknown): AssistantMessage {
+function failedMessage(model: Model<Api>, error: unknown, timestamp: number): AssistantMessage {
   return {
     role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id,
-    stopReason: "error", errorMessage: error instanceof Error ? error.message : "Provider stream failed",
-    timestamp: Date.now(),
+    stopReason: "error", errorMessage: Error.isError(error) ? error.message : "Provider stream failed",
+    timestamp,
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
   };
 }
 
 function scopedStream(source: AssistantMessageEventStream, model: Model<Api>): AssistantMessageEventStream {
+  const started = Date.now();
   const output = createAssistantMessageEventStream();
   void (async () => {
     try {
@@ -72,7 +73,7 @@ function scopedStream(source: AssistantMessageEventStream, model: Model<Api>): A
       result.provider = model.provider;
       output.end(result);
     } catch (error) {
-      const message = failedMessage(model, error);
+      const message = failedMessage(model, error, started);
       output.push({ type: "error", reason: "error", error: message });
       output.end(message);
     }
@@ -227,8 +228,7 @@ async function ollamaCatalog(baseUrl: string, headers: Headers, signal: AbortSig
   if (!tags.ok) throw new Error(`Ollama model catalog returned HTTP ${tags.status}`);
   const body: unknown = await tags.json();
   if (!isRecord(body) || !Array.isArray(body.models)) throw new Error("Ollama returned an invalid model catalog");
-  const models: unknown[] = [];
-  for (const entry of body.models) {
+  return Array.fromAsync(body.models, async (entry: unknown) => {
     assertActive(signal);
     if (!isRecord(entry) || typeof entry.name !== "string" || !entry.name) {
       throw new Error("Ollama returned a model without an identifier");
@@ -247,13 +247,12 @@ async function ollamaCatalog(baseUrl: string, headers: Headers, signal: AbortSig
     const info = isRecord(details.model_info) ? details.model_info : {};
     const context = minimumPositive(...Object.entries(info)
       .filter(([key]) => key.endsWith(".context_length")).map(([, value]) => value));
-    models.push({
+    return {
       id: entry.name, name: entry.name, api: "chat",
       vision: details.capabilities.includes("vision"),
       ...(context ? { context_window: context } : {}),
-    });
-  }
-  return models;
+    };
+  });
 }
 
 function compatibleProvider(
@@ -319,7 +318,7 @@ function compatibleProvider(
       for (const { model, contextWindow } of discovered.values()) {
         metadata.set(model.id, { contextWindow });
       }
-      return [...discovered.values()].map(entry => entry.model);
+      return discovered.values().map(entry => entry.model).toArray();
     },
   });
 }
@@ -343,14 +342,24 @@ export class ModelProfiles {
   private readonly logins = new Map<string, Login>();
   private readonly logouts = new Set<string>();
 
+  readonly runtime: ModelRuntime;
+  private readonly credentials: AuthorityCredentials;
+  private readonly installationId: string;
+  private readonly notify: (profile: string, phase: AuthPhase) => void;
+  private readonly redactor: Redactor;
+  readonly execution: ExecutionControl;
+
   private constructor(
-    readonly runtime: ModelRuntime,
-    private readonly credentials: AuthorityCredentials,
-    private readonly installationId: string,
-    private readonly notify: (profile: string, phase: AuthPhase) => void,
-    private readonly redactor: Redactor,
-    readonly execution: ExecutionControl,
-  ) {}
+    runtime: ModelRuntime, credentials: AuthorityCredentials, installationId: string,
+    notify: (profile: string, phase: AuthPhase) => void, redactor: Redactor, execution: ExecutionControl,
+  ) {
+    this.runtime = runtime;
+    this.credentials = credentials;
+    this.installationId = installationId;
+    this.notify = notify;
+    this.redactor = redactor;
+    this.execution = execution;
+  }
 
   static async create(
     config: Initialize,
@@ -361,7 +370,7 @@ export class ModelProfiles {
   ): Promise<ModelProfiles> {
     const credentials = new AuthorityCredentials(agentDir, redactor);
     const runtime = await ModelRuntime.create({
-      credentials, modelsPath: null, allowModelNetwork: false, refreshOnCreate: false,
+      credentials, modelsPath: null, refreshOnCreate: false,
       ...(signal ? { signal } : {}),
     });
     for (const provider of runtime.getProviders()) {
@@ -510,7 +519,7 @@ export class ModelProfiles {
     }
   }
 
-  private prompt(id: string, login: Login, prompt: AuthPrompt, signal: AbortSignal): Promise<string> {
+  private async prompt(id: string, login: Login, prompt: AuthPrompt, signal: AbortSignal): Promise<string> {
     const combined = prompt.signal ? AbortSignal.any([signal, prompt.signal]) : signal;
     assertActive(combined);
     if (login.input) throw new Error("Provider requested overlapping authentication input");
@@ -518,20 +527,20 @@ export class ModelProfiles {
     const message = prompt.type === "select"
       ? `${prompt.message}\n${prompt.options.map(option => `${option.id}: ${option.label}`).join("\n")}`
       : prompt.message;
-    return new Promise<string>((resolve, reject) => {
-      const cleanup = (): void => {
-        combined.removeEventListener("abort", onAbort);
-        login.input = undefined;
-      };
-      const onAbort = (): void => { cleanup(); reject(new Cancelled()); };
-      login.input = {
-        options,
-        resolve: value => { cleanup(); resolve(value); },
-        reject: error => { cleanup(); reject(error); },
-      };
-      combined.addEventListener("abort", onAbort, { once: true });
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const input: WaitingInput = {
+      options,
+      resolve: value => { login.input = undefined; resolve(value); },
+      reject: error => { login.input = undefined; reject(error); },
+    };
+    login.input = input;
+    try {
+      using _abort = onAbort(combined, () => input.reject(new Cancelled()));
       this.notify(id, { phase: "awaiting_input", message, password: prompt.type === "secret" });
-    });
+      return await promise;
+    } finally {
+      if (login.input === input) login.input = undefined;
+    }
   }
 
   private authEvent(id: string, login: Login, event: AuthEvent): void {

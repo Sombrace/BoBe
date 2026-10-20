@@ -19,25 +19,24 @@ test -f BoBeAgent/package-lock.json || {
     exit 1
 }
 mkdir -p "$work"
-cp BoBeAgent/package.json BoBeAgent/package-lock.json BoBeAgent/tsconfig.json "$work/"
+cp BoBeAgent/package.json BoBeAgent/package-lock.json BoBeAgent/tsconfig.json BoBeAgent/tsconfig.build.json "$work/"
 cp -RP BoBeAgent/src "$work/src"
 cp -RP BoBeAgent/assets "$work/assets"
 cp -RP BoBeAgent/fixtures "$work/fixtures"
 npm ci --prefix "$work" --include=dev --ignore-scripts --no-audit --no-fund
-npm run --prefix "$work" build
+npm run --prefix "$work" check
 if ! npm test --prefix "$work" >"$work/test.log" 2>&1; then
     cat "$work/test.log" >&2
     exit 1
 fi
 tail -n 9 "$work/test.log"
+npm run --prefix "$work" build
 
 mkdir -p "$stage/agent/licenses"
 install -m 0755 "$node_home/bin/node" "$stage/node"
 install -m 0644 "$node_home/LICENSE" "$stage/agent/licenses/node-LICENSE"
 cp BoBeAgent/package.json BoBeAgent/package-lock.json "$stage/agent/"
 cp -RP "$work/dist" "$stage/agent/dist"
-find "$stage/agent/dist" -maxdepth 1 -type f \
-    \( -name '*.test.*' -o -name 'test-support.*' -o -name 'mcp-fixture.*' -o -name 'process-fixture.*' \) -delete
 cp -RP "$work/assets" "$stage/agent/assets"
 cp -RP "$work/fixtures" "$stage/agent/fixtures"
 npm ci --prefix "$stage/agent" --omit=dev --ignore-scripts --bin-links=false --no-audit --no-fund

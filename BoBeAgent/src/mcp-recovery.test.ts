@@ -3,9 +3,9 @@ import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { configuration, configureMcp, fixture, host, mcpChat, mcpFixture, userText } from "./test-support.js";
-import { WorkerFault, abortableDelay } from "./errors.js";
-import { isRecord } from "./protocol.js";
+import { configuration, configureMcp, fixture, host, mcpChat, mcpFixture, userText } from "./test-support.ts";
+import { WorkerFault } from "./errors.ts";
+import { isRecord } from "./protocol.ts";
 
 test("an MCP reload that fails on one live channel restores every channel's previous servers", async t => {
   const paths = await fixture(t);
@@ -53,12 +53,10 @@ test("an MCP reload whose rollback cannot restore the previous servers is a work
   config.mcp = { servers: { previous: previous.config } };
   const { worker } = await host(t, config, () => ({ text: "unused" }));
   let id = 1;
-  for (let attempt = 0; ; attempt++) {
+  await t.waitFor(async () => {
     const status = await worker.request({ id: ++id, method: "mcp_status", params: {} });
-    if (Array.isArray(status) && status.every(entry => isRecord(entry) && entry.connected)) break;
-    if (attempt === 400) throw new Error("MCP fixture did not connect");
-    await abortableDelay(50);
-  }
+    assert.ok(Array.isArray(status) && status.every(entry => isRecord(entry) && entry.connected), "MCP fixture connects");
+  }, { interval: 50, timeout: 20_000 });
   await assert.rejects(worker.request({ id: ++id, method: "reload", params: { mcp: { servers: { next: next.config } } } }),
     error => error instanceof WorkerFault && /previous servers could not be restored/.test(error.message));
   assert.equal((await readdir(previous.starts)).length, 2);

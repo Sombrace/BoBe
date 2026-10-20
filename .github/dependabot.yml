@@ -18,7 +18,7 @@ updates:
           - "@earendil-works/*"
     ignore:
       - dependency-name: "@types/node"
-        update-types: ["version-update:semver-major"]
+        versions: [">=25"]
       - dependency-name: "typebox"
     open-pull-requests-limit: 5
 
