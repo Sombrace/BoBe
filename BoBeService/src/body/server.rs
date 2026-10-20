@@ -23,8 +23,9 @@ use secrecy::ExposeSecret;
 use sha2::Digest;
 #[cfg(target_os = "macos")]
 use tokio::process::{Child, Command as TokioCommand};
+use tokio_util::sync::CancellationToken;
 #[cfg(target_os = "macos")]
-use tokio_util::sync::{CancellationToken, DropGuard};
+use tokio_util::sync::DropGuard;
 #[cfg(target_os = "macos")]
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
@@ -200,7 +201,7 @@ enum MdnsRegistration {
 impl MdnsRegistration {
     #[cfg_attr(
         not(target_os = "macos"),
-        allow(
+        expect(
             clippy::unused_async_trait_impl,
             reason = "macOS shutdown awaits native mDNS task completion"
         )
