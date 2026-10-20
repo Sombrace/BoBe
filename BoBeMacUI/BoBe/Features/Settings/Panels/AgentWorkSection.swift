@@ -108,8 +108,11 @@ struct AgentWorkSection: View {
         .task(id: self.endpoint) {
             while !Task.isCancelled {
                 if !self.working { await self.refresh() }
-                do { try await Task.sleep(for: .seconds(5)) }
-                catch { return }
+                do {
+                    try await Task.sleep(for: .seconds(5))
+                } catch {
+                    return
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .bobeEndpointIdentityChanged)) { _ in
@@ -120,7 +123,6 @@ struct AgentWorkSection: View {
         }
     }
 
-    @MainActor
     private func refresh() async {
         let endpoint = EndpointStore.shared.selection
         do {
@@ -139,7 +141,6 @@ struct AgentWorkSection: View {
         }
     }
 
-    @MainActor
     private func setTool(_ tool: AgentToolWire, enabled: Bool) async {
         guard !self.working, let selection, EndpointStore.shared.selection == self.endpoint else { return }
         let endpoint = self.endpoint
@@ -158,7 +159,6 @@ struct AgentWorkSection: View {
         }
     }
 
-    @MainActor
     private func changeJob(_ job: AgentJobWire, resume: Bool) async {
         guard !self.working, EndpointStore.shared.selection == self.endpoint else { return }
         let endpoint = self.endpoint
@@ -166,8 +166,11 @@ struct AgentWorkSection: View {
         defer { self.working = false }
         do {
             let client = DaemonClient(endpoint: endpoint.endpoint)
-            if resume { _ = try await client.resumeBackgroundJob(job.id) }
-            else { _ = try await client.cancelBackgroundJob(job.id) }
+            if resume {
+                _ = try await client.resumeBackgroundJob(job.id)
+            } else {
+                _ = try await client.cancelBackgroundJob(job.id)
+            }
             guard EndpointStore.shared.selection == endpoint else { return }
             await self.refresh()
         } catch {
@@ -176,7 +179,6 @@ struct AgentWorkSection: View {
         }
     }
 
-    @MainActor
     private func restart() async {
         guard !self.working, self.endpoint == EndpointStore.shared.selection,
               self.endpoint.endpoint.canRestartRuntime else { return }

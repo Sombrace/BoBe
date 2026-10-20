@@ -1,6 +1,5 @@
 import Foundation
 
-@MainActor
 final class ToolExecutionController {
     typealias StateMutation = (inout BobeContext) -> Void
     typealias StateApplier = (StateMutation) -> Void
@@ -42,7 +41,7 @@ final class ToolExecutionController {
 
         let completedId = complete.toolCallId
         self.cleanupTasks[completedId]?.cancel()
-        let cleanupTask = Task { @MainActor [weak self] in
+        let cleanupTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(StoreTiming.toolCompletionLingerSeconds))
             guard let self else { return }
             self.applyStateMutation { ctx in

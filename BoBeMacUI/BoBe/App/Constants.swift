@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-enum DaemonEndpoint: Sendable, Equatable {
+nonisolated enum DaemonEndpoint: Sendable, Equatable {
     case unavailable
     case managedLocal(bearerToken: String?)
     case attachedLocal(baseURL: URL, bearerToken: String?)
@@ -72,7 +72,7 @@ enum DaemonEndpoint: Sendable, Equatable {
     }
 }
 
-enum DaemonConfig {
+nonisolated enum DaemonConfig {
     static let defaultHost = "127.0.0.1"
     static let defaultPort = 8766
 
@@ -112,16 +112,16 @@ enum DaemonConfig {
     static var baseURL: String { self.endpoint.baseURL.absoluteString }
 }
 
-enum PrivacyWire {
+nonisolated enum PrivacyWire {
     static let purgeRequestTimeoutSeconds: TimeInterval = 60
 }
 
-struct BodyAdapterConfiguration: Sendable {
+nonisolated struct BodyAdapterConfiguration: Sendable {
     let baseURL: URL
     let bearerToken: String
 }
 
-enum BodyAdapterConfig {
+nonisolated enum BodyAdapterConfig {
     static func load(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> BodyAdapterConfiguration? {
@@ -143,37 +143,37 @@ enum BodyAdapterConfig {
     }
 }
 
-enum OllamaDefaults {
+nonisolated enum OllamaDefaults {
     static let baseURL = "http://127.0.0.1:11434"
     static let v1URL = "http://127.0.0.1:11434/v1"
 }
 
-enum BobePaths {
+nonisolated enum BobePaths {
     static let dataDirName = ".bobe"
 }
 
-enum ToolCallStatusWire {
+nonisolated enum ToolCallStatusWire {
     static let start = "start"
     static let complete = "complete"
 }
 
-enum PauseSensitivityMs {
+nonisolated enum PauseSensitivityMs {
     static let tight: Int = 400
     static let balanced: Int = 800
     static let patient: Int = 1500
 }
 
-enum VoiceSttEngineId {
+nonisolated enum VoiceSttEngineId {
     static let appleSpeechAnalyzer = "apple_speech_analyzer"
     static let fluidAudioParakeet = "fluidaudio_parakeet_eou"
     static let fluidAudioNemotron = "fluidaudio_nemotron"
 }
 
-enum VoiceSttTuning {
+nonisolated enum VoiceSttTuning {
     static let nemotronChunkMs = 1_120
 }
 
-enum InstallStatusWire: String, Codable, Sendable, Equatable {
+nonisolated enum InstallStatusWire: String, Codable, Sendable, Equatable {
     case idle
     case running
     case complete
@@ -181,7 +181,7 @@ enum InstallStatusWire: String, Codable, Sendable, Equatable {
     case failed
 }
 
-enum VoiceWire {
+nonisolated enum VoiceWire {
     static let ttsOutputSampleRate = 24_000
     static let pocketTtsModelDir = "pocket-tts-en-b6369a24-q8"
     static let defaultPersona = "alba"
@@ -189,14 +189,14 @@ enum VoiceWire {
     static let subprotocolV2 = "bobe.voice.v2"
 }
 
-enum McpServerStatusWire {
+nonisolated enum McpServerStatusWire {
     static let connected = "connected"
     static let failed = "failed"
     static let pending = "pending"
     static let stopped = "stopped"
 }
 
-enum WindowSizes {
+nonisolated enum WindowSizes {
     static let margin: CGFloat = 16
     static let shadowInset: CGFloat = 26
     static let clusterTrailing: CGFloat = 18
@@ -217,7 +217,7 @@ enum WindowSizes {
     static let settleMilliseconds = 560
 }
 
-enum StoreTiming {
+nonisolated enum StoreTiming {
     static let textDeltaFlushMilliseconds = 150
     static let lastMessageClearSeconds: TimeInterval = 30
     static let toolCompletionLingerSeconds: TimeInterval = 5
@@ -226,7 +226,7 @@ enum StoreTiming {
     static let screenGlanceMilliseconds = 1200
 }
 
-enum InactivityTiming {
+nonisolated enum InactivityTiming {
     static let timeoutSeconds: TimeInterval = 10 * 60
     static let settleSeconds: TimeInterval = 90
     static let checkIntervalSeconds: TimeInterval = 30

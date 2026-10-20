@@ -7,7 +7,7 @@ first; [AGENTS.md](AGENTS.md) has the repository rules. Bugs and ideas go to
 
 ## Setup
 
-You need macOS 26, Xcode 26 and [rustup](https://rustup.rs);
+You need macOS 26, Xcode 27 and [rustup](https://rustup.rs);
 `rust-toolchain.toml` selects the Rust version.
 
 ```bash

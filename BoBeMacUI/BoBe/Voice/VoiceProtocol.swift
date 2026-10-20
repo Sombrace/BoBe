@@ -1,26 +1,26 @@
 import Foundation
 
-extension VoiceWire {
+nonisolated extension VoiceWire {
     static let captureHeaderBytes = 13
     static let capturePayloadBytes = 640
     static let captureSampleRate = 16_000
     static let captureFrameSamples = 320
 }
 
-enum VoiceControlAction: String, Codable {
+nonisolated enum VoiceControlAction: String, Codable {
     case abort
     case mute
     case unmute
 }
 
-enum VoicePhaseWire: String, Codable {
+nonisolated enum VoicePhaseWire: String, Codable {
     case idle
     case listening
     case thinking
     case speaking
 }
 
-enum ClientVoiceMessage: Codable {
+nonisolated enum ClientVoiceMessage: Codable {
     case hello(sessionId: String, voiceId: String?, speed: Float?, speechOffer: SpeechOfferWire)
     case bargeIn(tsMs: UInt64, playbackMsPlayed: UInt64, partialText: String?, playheadChunk: UInt64, turnId: String?)
     case playbackAck(chunkId: UInt64, playedMs: UInt64, turnId: String?)
@@ -97,7 +97,7 @@ enum ClientVoiceMessage: Codable {
     }
 }
 
-enum ServerVoiceMessage: Decodable {
+nonisolated enum ServerVoiceMessage: Decodable {
     case speechPlan(SpeechPlanWire)
     case captureCredit(streamId: UInt32, creditFrames: UInt32)
     case sttPartial(turnId: String, text: String)
@@ -179,7 +179,7 @@ enum ServerVoiceMessage: Decodable {
     }
 }
 
-struct VoiceCaptureFrameEncoder {
+nonisolated struct VoiceCaptureFrameEncoder {
     static func encode(streamId: UInt32, sequence: UInt32, samples: ArraySlice<Float>) -> Data? {
         guard streamId != 0, samples.count == VoiceWire.captureFrameSamples else { return nil }
         var data = Data(capacity: VoiceWire.captureHeaderBytes + VoiceWire.capturePayloadBytes)
@@ -205,7 +205,7 @@ struct VoiceCaptureFrameEncoder {
     }
 }
 
-struct TtsFrameHeader {
+nonisolated struct TtsFrameHeader {
     let chunkId: UInt64
     let flags: UInt8
 

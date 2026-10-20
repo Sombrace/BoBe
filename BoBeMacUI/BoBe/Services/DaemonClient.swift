@@ -1,24 +1,24 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "com.bobe.app", category: "DaemonClient")
+nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "DaemonClient")
 
-private struct DaemonErrorEnvelope: Decodable {
+nonisolated private struct DaemonErrorEnvelope: Decodable {
     let error: DaemonErrorBody
 }
 
-private struct DaemonErrorBody: Decodable {
+nonisolated private struct DaemonErrorBody: Decodable {
     let message: String
     let code: String?
 }
 
-enum RuntimeConnectionState: Sendable, Equatable {
+nonisolated enum RuntimeConnectionState: Sendable, Equatable {
     case connected
     case disconnected
     case repairRequired(RuntimeIssue)
 }
 
-struct EventStreamCommandOrder {
+nonisolated struct EventStreamCommandOrder {
     private(set) var latest: UInt64 = 0
 
     mutating func accept(_ generation: UInt64) -> Bool {

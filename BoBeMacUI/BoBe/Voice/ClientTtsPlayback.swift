@@ -2,7 +2,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "com.bobe.app", category: "ClientTtsPlayback")
+nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "ClientTtsPlayback")
 
 struct ClientTtsSentence: Sendable {
     let turnId: String
@@ -95,7 +95,6 @@ actor ClientTtsSentenceQueue {
     }
 }
 
-@MainActor
 extension VoicePipeline {
     func enqueueClientTts(turnId: String, sequence: UInt64, text: String) async {
         if turnId == self.cancelledClientTtsTurnId {
@@ -172,7 +171,7 @@ extension VoicePipeline {
         let voiceId = self.sessionVoicePersona ?? settings?.voicePersona
         let speed = self.sessionVoiceSpeed ?? settings?.voiceSpeed ?? 1
 
-        self.clientTtsTask = Task { @MainActor [weak self] in
+        self.clientTtsTask = Task { [weak self] in
             guard let self else { return }
             while let sentence = await queue.next() {
                 guard !Task.isCancelled, sentence.turnId == turnId else { return }

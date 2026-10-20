@@ -4,17 +4,14 @@ import Foundation
 import SwiftUI
 import Testing
 
-@MainActor
 private final class Counter {
     var count = 0
 }
 
-@MainActor
 private final class Commits {
     var values: [Int] = []
 }
 
-@MainActor
 @Observable
 private final class NumberFieldModel {
     var value = 120
@@ -42,7 +39,6 @@ private struct NumberFieldHarness: View {
 @Suite("Settings controls")
 struct SettingsControlsTests {
     @Test
-    @MainActor
     func failedRuntimeRestartIsShownAndCanBeRetried() async {
         let attempts = Counter()
         let request = RuntimeRestartRequest {
@@ -66,7 +62,6 @@ struct SettingsControlsTests {
     }
 
     @Test
-    @MainActor
     func rapidNumberEditsCommitOnlyTheSettledValue() async throws {
         let debouncer = NumberInputDebouncer(delay: .milliseconds(40))
         let commits = Commits()
@@ -101,7 +96,6 @@ struct SettingsControlsTests {
     }
 
     @Test
-    @MainActor
     func aPendingNumberEditIsCommittedWhenTheFieldDisappears() async throws {
         let model = NumberFieldModel()
         let window = NSWindow(
@@ -135,7 +129,6 @@ struct SettingsControlsTests {
     }
 
     @Test
-    @MainActor
     func aPendingNumberEditIsCommittedWhenTheFieldLosesFocus() async throws {
         let model = NumberFieldModel()
         let window = NSWindow(
@@ -176,7 +169,6 @@ struct SettingsControlsTests {
     }
 
     @Test
-    @MainActor
     func rawEditorsNameTheirTextForAssistiveTechnology() throws {
         let editor = CodeEditor(
             text: .constant("# Soul"),
@@ -201,7 +193,6 @@ struct SettingsControlsTests {
     }
 
     @Test
-    @MainActor
     func toolServerSavesLeaveSecretClassificationToTheDaemon() throws {
         let json = #"{"mcpServers":{"github":{"command":"npx","env":{"GITHUB_TOKEN":"ghp_example","API_KEY":"k"}}}}"#
         let request = MCPServersPanel.mutationRequest(for: json)
@@ -213,7 +204,6 @@ struct SettingsControlsTests {
         #expect(encoded["secret_keys"] == nil)
     }
 
-    @MainActor
     private static func firstSubview<Found: NSView>(of type: Found.Type, in view: NSView) -> Found? {
         if let match = view as? Found {
             return match

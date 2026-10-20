@@ -5,7 +5,6 @@ import Testing
 @Suite("Localization")
 struct LocalizationTests {
     @Test
-    @MainActor
     func everySupportedLocaleResolvesToItsOwnCatalog() throws {
         for localeId in BobeStore.supportedLocales {
             let catalog = try #require(L10n.catalog(for: localeId), "No catalog for \(localeId)")

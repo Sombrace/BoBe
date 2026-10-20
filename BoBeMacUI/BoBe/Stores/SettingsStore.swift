@@ -3,7 +3,7 @@ import Observation
 import OSLog
 import SwiftUI
 
-private let logger = Logger(subsystem: "com.bobe.app", category: "SettingsStore")
+nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "SettingsStore")
 
 enum BodyThemeSaveState: Equatable {
     case idle
@@ -31,14 +31,13 @@ enum BodyThemeSaveState: Equatable {
     }
 }
 
-protocol SettingsClient: Sendable {
+nonisolated protocol SettingsClient: Sendable {
     func getSettings() async throws -> DaemonSettings
     func updateSettings(_ request: SettingsUpdateRequest) async throws -> SettingsUpdateResponse
 }
 
 extension DaemonClient: SettingsClient {}
 
-@MainActor
 @Observable
 final class SettingsStore {
     static let shared = SettingsStore()
@@ -148,7 +147,7 @@ final class SettingsStore {
         }
         let selection = self.selection
         let client = self.client(for: selection)
-        let task = Task<Void, Never> { @MainActor in
+        let task = Task<Void, Never> {
             self.isLoading = true
             defer { if self.isCurrent(selection) { self.isLoading = false } }
             await self.debouncer.flush()
@@ -198,7 +197,7 @@ final class SettingsStore {
 
     private func startBackendObserverIfNeeded() {
         guard self.backendObserverTask == nil else { return }
-        self.backendObserverTask = Task { @MainActor [weak self] in
+        self.backendObserverTask = Task { [weak self] in
             var wasCrashed = false
             let states = await BackendService.shared.stateStream
             for await state in states {
@@ -445,7 +444,7 @@ extension SettingsUpdateRequest {
     }
 }
 
-extension DaemonSettings {
+nonisolated extension DaemonSettings {
     mutating func apply(_ changes: SettingsUpdateRequest) {
         self.bodyTheme = changes.bodyTheme ?? self.bodyTheme
         self.captureEnabled = changes.captureEnabled ?? self.captureEnabled

@@ -2,7 +2,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "com.bobe.app", category: "TtsPlayback")
+nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "TtsPlayback")
 
 struct ScheduledTtsChunk {
     let chunkId: UInt64
@@ -15,7 +15,6 @@ struct ScheduledTtsChunk {
     }
 }
 
-@MainActor
 extension VoicePipeline {
 
     func ensureDecoder() {
@@ -155,7 +154,7 @@ extension VoicePipeline {
             return
         }
         self.serverDrainTask?.cancel()
-        self.serverDrainTask = Task { @MainActor [weak self] in
+        self.serverDrainTask = Task { [weak self] in
             guard let self else { return }
             let drained = await self.waitForPlaybackDrain()
             guard !Task.isCancelled,
@@ -186,7 +185,7 @@ extension VoicePipeline {
         guard self.playbackAckTask == nil else { return }
         self.playbackAckGeneration &+= 1
         let generation = self.playbackAckGeneration
-        self.playbackAckTask = Task { @MainActor [weak self] in
+        self.playbackAckTask = Task { [weak self] in
             defer {
                 if let self, self.playbackAckGeneration == generation {
                     self.playbackAckTask = nil
@@ -300,7 +299,7 @@ extension VoicePipeline {
             return
         }
         if level < self.audibleOffThreshold, self.isTtsAudible, self.audibleHangoverTask == nil {
-            self.audibleHangoverTask = Task { @MainActor [weak self] in
+            self.audibleHangoverTask = Task { [weak self] in
                 guard let self else { return }
                 try? await Task.sleep(for: .milliseconds(self.audibleHangoverMs))
                 guard !Task.isCancelled else { return }
@@ -314,7 +313,7 @@ extension VoicePipeline {
 
     func startTtsLevelDecay() {
         self.ttsLevelDecayTask?.cancel()
-        self.ttsLevelDecayTask = Task { @MainActor [weak self] in
+        self.ttsLevelDecayTask = Task { [weak self] in
             while let self, !Task.isCancelled {
                 if self.shouldExitDecayLoop() {
                     self.ttsOutputLevel = 0

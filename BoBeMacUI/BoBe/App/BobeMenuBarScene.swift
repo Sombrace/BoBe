@@ -2,7 +2,6 @@ import AppKit
 import Foundation
 import Observation
 
-@MainActor
 final class BobeStatusItemController: NSObject, NSMenuDelegate {
     private let store: BobeStore
     private let menu = NSMenu()
@@ -35,10 +34,8 @@ final class BobeStatusItemController: NSObject, NSMenuDelegate {
         self.statusItem = nil
     }
 
-    nonisolated func menuNeedsUpdate(_ menu: NSMenu) {
-        MainActor.assumeIsolated {
-            self.rebuildMenu()
-        }
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        self.rebuildMenu()
     }
 
     private func observeStatus() {

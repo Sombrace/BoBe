@@ -13,7 +13,6 @@ struct CompatibilityAndMessageWindowTests {
     }
 
     @Test
-    @MainActor
     func messageWindowRetainsNewestMessages() {
         var messages = (0 ..< 5).map {
             ChatMessage(id: "message-\($0)", sender: .bobe, content: "\($0)")
@@ -23,7 +22,6 @@ struct CompatibilityAndMessageWindowTests {
     }
 
     @Test
-    @MainActor
     func messageWindowProtectsPendingAndStreamingMessages() {
         var messages = [
             ChatMessage(id: "pending", sender: .user, content: "pending", isPending: true),

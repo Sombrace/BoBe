@@ -39,7 +39,6 @@ enum VoiceSttPreference: String, CaseIterable, Sendable {
     }
 }
 
-@MainActor
 @Observable
 final class VoiceSttPreferenceStore {
     static let shared = VoiceSttPreferenceStore()

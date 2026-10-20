@@ -20,7 +20,6 @@ struct OverlayPresentationTests {
     }
 
     @Test
-    @MainActor
     func reachoutsTrimmedFromAFullConversationStopWaiting() {
         let selection = EndpointSelection(generation: 1, profileID: UUID(), authorityID: UUID(), endpoint: .unavailable)
         let store = BobeStore(currentSelection: { selection }, sendRequest: { _, _, _ in
@@ -65,7 +64,6 @@ struct OverlayPresentationTests {
     }
 
     @Test
-    @MainActor
     func noticeActionsMoveUnderALongMessage() {
         let width = WindowSizes.columnAmbient
         let message = "BoBe kann den Bildschirm nicht lesen, bis du die Bildschirmaufnahme erlaubst."
@@ -101,7 +99,6 @@ struct OverlayPresentationTests {
         #expect(abs(inline.height - inlineMessageOnly.height) < 1)
     }
 
-    @MainActor
     private static func fittingSize(_ notice: OverlayNotice, width: CGFloat) -> CGSize {
         let host = NSHostingView(
             rootView: notice
@@ -112,7 +109,6 @@ struct OverlayPresentationTests {
     }
 
     @Test
-    @MainActor
     func sheStaysInTheWindowMenuWhenHiddenAndShownAgain() throws {
         let windows = try #require(NSApp.windowsMenu)
         let overlay = OverlayWindowManager.shared
@@ -126,7 +122,6 @@ struct OverlayPresentationTests {
     }
 
     @Test
-    @MainActor
     func replyCodeKeepsTheBoBeThemeColorsWhateverTheMacAppearance() throws {
         let light = try #require(allThemes.first { !$0.isDark })
         let dark = try #require(allThemes.first { $0.isDark })
@@ -159,7 +154,6 @@ struct OverlayPresentationTests {
         }
     }
 
-    @MainActor
     private static func renderedPixels(
         _ view: some View,
         size: CGSize,

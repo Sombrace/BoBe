@@ -6,7 +6,6 @@ enum ReceiptOutcome: Sendable, Equatable {
     case dropped
 }
 
-@MainActor
 final class ReceiptBook<Key: Hashable & Sendable> {
     private let deliver: @MainActor (Key) async -> ReceiptOutcome
     private var confirmed: Set<Key> = []

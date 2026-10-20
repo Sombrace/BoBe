@@ -4,25 +4,25 @@ import os
 import OSLog
 import Security
 
-private let logger = Logger(subsystem: "com.bobe.app", category: "BackendService")
+nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "BackendService")
 
-enum ServiceState: Sendable {
+nonisolated enum ServiceState: Sendable {
     case stopped, starting, ready, crashed, fatal
 }
 
-private enum ManagedProcessIdentity {
+nonisolated private enum ManagedProcessIdentity {
     case verifiedDaemon(path: String)
     case otherProcess(path: String)
     case notRunning
     case unverifiable
 }
 
-private let terminateGrace: Duration = .seconds(45)
-private let healthCheckInitialDelay: TimeInterval = 0.2
-private let healthCheckBackoffMultiplier: Double = 1.5
-private let healthCheckMaxDelay: TimeInterval = 5.0
-private let healthCheckMaxAttempts = 30
-private let stderrBufferMaxLines = 50
+nonisolated private let terminateGrace: Duration = .seconds(45)
+nonisolated private let healthCheckInitialDelay: TimeInterval = 0.2
+nonisolated private let healthCheckBackoffMultiplier: Double = 1.5
+nonisolated private let healthCheckMaxDelay: TimeInterval = 5.0
+nonisolated private let healthCheckMaxAttempts = 30
+nonisolated private let stderrBufferMaxLines = 50
 
 actor BackendService {
     static let shared = BackendService()
@@ -536,8 +536,11 @@ actor BackendService {
     }
 
     private func writePID(_ pid: Int32) {
-        do { try "\(pid)".write(to: self.pidFilePath, atomically: true, encoding: .utf8) }
-        catch { logger.error("Could not save managed daemon PID: \(error.localizedDescription, privacy: .public)") }
+        do {
+            try "\(pid)".write(to: self.pidFilePath, atomically: true, encoding: .utf8)
+        } catch {
+            logger.error("Could not save managed daemon PID: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func cleanStalePID() async {
@@ -693,7 +696,7 @@ actor BackendService {
     }
 }
 
-enum BackendServiceError: Error, LocalizedError {
+nonisolated enum BackendServiceError: Error, LocalizedError {
     case healthCheckFailed
     case spawnFailed(String)
     case stoppedDuringHealthCheck
@@ -711,7 +714,7 @@ enum BackendServiceError: Error, LocalizedError {
     }
 }
 
-private final class StderrBuffer: Sendable {
+nonisolated private final class StderrBuffer: Sendable {
     private let lines = OSAllocatedUnfairLock(initialState: [String]())
 
     func append(_ line: String) {

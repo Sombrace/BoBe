@@ -5,7 +5,6 @@ import Testing
 @Suite("Settings field-level saves")
 struct SettingsStoreTests {
     @Test
-    @MainActor
     func externalChangeSurvivesAnUnrelatedEdit() async throws {
         let client = SettingsClientStub(settings: SettingsClientStub.document())
         let store = SettingsStore(client: client)
@@ -25,7 +24,6 @@ struct SettingsStoreTests {
     }
 
     @Test
-    @MainActor
     func menuCaptureChangeSurvivesALaterSettingsEdit() async throws {
         let selection = SettingsClientStub.selection(generation: 1)
         var document = SettingsClientStub.document()
@@ -49,7 +47,6 @@ struct SettingsStoreTests {
     }
 
     @Test
-    @MainActor
     func forcedLoadRightAfterAnEditKeepsTheEditedValue() async {
         let client = SettingsClientStub(settings: SettingsClientStub.document())
         let store = SettingsStore(client: client)
@@ -63,7 +60,6 @@ struct SettingsStoreTests {
     }
 
     @Test
-    @MainActor
     func forcedLoadDuringAnUnsentEditKeepsTheEdit() async {
         let client = SettingsClientStub(settings: SettingsClientStub.document())
         let store = SettingsStore(client: client)
@@ -82,7 +78,6 @@ struct SettingsStoreTests {
     }
 
     @Test
-    @MainActor
     func queuedEditsMergeIntoOneSaveOfOnlyTheChangedFields() async throws {
         let client = SettingsClientStub(settings: SettingsClientStub.document())
         let store = SettingsStore(client: client)
@@ -101,7 +96,6 @@ struct SettingsStoreTests {
     }
 
     @Test
-    @MainActor
     func failedSaveShowsTheDaemonValueAgain() async {
         let client = SettingsClientStub(settings: SettingsClientStub.document(), failingFieldUpdates: 1)
         let store = SettingsStore(client: client)

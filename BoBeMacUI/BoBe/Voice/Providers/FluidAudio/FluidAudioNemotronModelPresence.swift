@@ -1,6 +1,6 @@
 import Foundation
 
-enum FluidAudioNemotronModelPresence {
+nonisolated enum FluidAudioNemotronModelPresence {
     static var modelDirectory: URL {
         FluidAudioCache.root
             .appendingPathComponent("nemotron-multilingual", isDirectory: true)

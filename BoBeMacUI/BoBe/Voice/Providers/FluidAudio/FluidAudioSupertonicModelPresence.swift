@@ -1,7 +1,7 @@
 import FluidAudio
 import Foundation
 
-enum FluidAudioSupertonicModelPresence {
+nonisolated enum FluidAudioSupertonicModelPresence {
     static func isInstalled() -> Bool {
         guard let cacheRoot = try? TtsCacheDirectory.ensure() else { return false }
         let modelDirectory = cacheRoot

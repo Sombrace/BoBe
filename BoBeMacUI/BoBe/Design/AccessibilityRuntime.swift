@@ -2,7 +2,6 @@ import AppKit
 import Observation
 import SwiftUI
 
-@MainActor
 @Observable
 final class AccessibilityRuntime {
     static let shared = AccessibilityRuntime()

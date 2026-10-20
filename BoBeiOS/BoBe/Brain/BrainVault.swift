@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-struct BrainRecord: Codable, Sendable, Equatable {
+nonisolated struct BrainRecord: Codable, Sendable, Equatable {
     var origins: [URL]
     let pin: Data
     var endpointId: UUID?
@@ -9,23 +9,23 @@ struct BrainRecord: Codable, Sendable, Equatable {
     var authorityEpoch: Int?
 }
 
-struct BrainPairing: Codable, Sendable, Equatable {
+nonisolated struct BrainPairing: Codable, Sendable, Equatable {
     var record: BrainRecord
     let credential: String
 }
 
-enum BrainVaultError: Error {
+nonisolated enum BrainVaultError: Error {
     case unavailable(OSStatus)
 }
 
-protocol SecretStore: Sendable {
+nonisolated protocol SecretStore: Sendable {
     func read(_ account: String) -> Data?
     func add(_ data: Data, account: String) -> OSStatus
     func update(_ data: Data, account: String) -> OSStatus
     func delete(_ account: String)
 }
 
-struct BrainVault: Sendable {
+nonisolated struct BrainVault: Sendable {
     static let keychain = BrainVault(store: KeychainSecrets(service: "com.bobe.ios.brain"))
 
     private static let pairedAccount = "paired"
@@ -66,7 +66,7 @@ struct BrainVault: Sendable {
     }
 }
 
-struct KeychainSecrets: SecretStore {
+nonisolated struct KeychainSecrets: SecretStore {
     let service: String
 
     func read(_ account: String) -> Data? {

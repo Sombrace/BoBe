@@ -7,7 +7,6 @@ enum BobeCommandOutcome: Equatable, Sendable {
     case unavailable
 }
 
-@MainActor
 final class BobeCommandRouter {
     static let shared = BobeCommandRouter()
 

@@ -3,13 +3,13 @@ import LocalAuthentication
 import OSLog
 import Security
 
-private let endpointLogger = Logger(subsystem: "com.bobe.app", category: "EndpointStore")
+nonisolated private let endpointLogger = Logger(subsystem: "com.bobe.app", category: "EndpointStore")
 
-extension Notification.Name {
+nonisolated extension Notification.Name {
     static let bobeEndpointIdentityChanged = Notification.Name("bobe.endpointIdentityChanged")
 }
 
-struct EndpointProfile: Codable, Sendable, Equatable {
+nonisolated struct EndpointProfile: Codable, Sendable, Equatable {
     enum TrustMode: String, Codable, Sendable {
         case loopback
         case pinnedSPKI = "pinned_spki"
@@ -94,7 +94,7 @@ struct EndpointProfile: Codable, Sendable, Equatable {
     }
 }
 
-struct EndpointCredentialConfiguration: Sendable, Equatable {
+nonisolated struct EndpointCredentialConfiguration: Sendable, Equatable {
     static let infoPlistKey = "BoBeEndpointCredentialAccessGroup"
     static let service = "com.bobe.app.endpoint-credential"
 
@@ -136,14 +136,14 @@ struct EndpointCredentialConfiguration: Sendable, Equatable {
     }
 }
 
-private extension String {
+nonisolated private extension String {
     func removingSuffix(_ suffix: String) -> String? {
         guard self.hasSuffix(suffix) else { return nil }
         return String(self.dropLast(suffix.count))
     }
 }
 
-final class EndpointCredentialMemory: Sendable {
+nonisolated final class EndpointCredentialMemory: Sendable {
     static let shared = EndpointCredentialMemory()
 
     private let credentials = OSAllocatedUnfairLock(initialState: [String: String]())
@@ -161,7 +161,7 @@ final class EndpointCredentialMemory: Sendable {
     }
 }
 
-enum EndpointCredentialBacking: Sendable {
+nonisolated enum EndpointCredentialBacking: Sendable {
     case keychain(EndpointCredentialConfiguration)
     case processMemory(EndpointCredentialMemory)
 
@@ -210,7 +210,7 @@ enum EndpointCredentialBacking: Sendable {
     }
 }
 
-struct EndpointCredentialStore: Sendable {
+nonisolated struct EndpointCredentialStore: Sendable {
     private let backing: @Sendable () throws -> EndpointCredentialBacking
 
     init(
@@ -313,7 +313,7 @@ struct EndpointCredentialStore: Sendable {
     }
 }
 
-enum EndpointStoreError: LocalizedError {
+nonisolated enum EndpointStoreError: LocalizedError {
     case profilePersistenceFailed
 
     var errorDescription: String? {
@@ -321,7 +321,7 @@ enum EndpointStoreError: LocalizedError {
     }
 }
 
-enum EndpointCredentialError: LocalizedError, Equatable {
+nonisolated enum EndpointCredentialError: LocalizedError, Equatable {
     case invalidApplicationIdentity
     case invalidCredentialData
     case missingEntitlement
@@ -357,14 +357,14 @@ enum EndpointCredentialError: LocalizedError, Equatable {
     }
 }
 
-struct EndpointSelection: Sendable, Equatable {
+nonisolated struct EndpointSelection: Sendable, Equatable {
     let generation: UInt64
     let profileID: UUID?
     let authorityID: UUID?
     let endpoint: DaemonEndpoint
 }
 
-final class EndpointStore: @unchecked Sendable {
+nonisolated final class EndpointStore: @unchecked Sendable {
     static let shared = EndpointStore()
 
     private static let profileKey = "bobe.endpoint_profile"

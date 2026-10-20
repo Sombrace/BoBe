@@ -82,7 +82,6 @@ struct ProviderDataFlow: View {
         }
     }
 
-    @MainActor
     private func load() async {
         let selection = self.selection
         do {

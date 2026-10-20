@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.4
 import PackageDescription
 
 let packageDirectory = Context.packageDirectory
@@ -12,7 +12,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
         .package(url: "https://github.com/gonzalezreal/textual", exact: "0.5.0"),
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7"),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.7", traits: []),
     ],
     targets: [
         .target(
@@ -20,6 +20,9 @@ let package = Package(
             path: "PairingClient",
             exclude: ["PairingClient-Bridging-Header.h"],
             swiftSettings: [
+                .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+                .enableUpcomingFeature("InferIsolatedConformances"),
+                .treatAllWarnings(as: .error),
                 .unsafeFlags([
                     "-import-objc-header", "\(packageDirectory)/PairingClient/PairingClient-Bridging-Header.h",
                 ])
@@ -48,9 +51,10 @@ let package = Package(
             ],
             swiftSettings: [
                 .define("SPM_BUILD"),
-                .unsafeFlags([
-                    "-warnings-as-errors",
-                ])
+                .defaultIsolation(MainActor.self),
+                .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+                .enableUpcomingFeature("InferIsolatedConformances"),
+                .treatAllWarnings(as: .error),
             ],
             linkerSettings: [
                 .unsafeFlags([

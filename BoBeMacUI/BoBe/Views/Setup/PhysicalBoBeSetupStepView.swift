@@ -118,7 +118,6 @@ struct PhysicalBoBeSetupStepView: View {
         }
     }
 
-    @MainActor
     private func configure() async {
         self.phase = .configuring
         self.error = nil

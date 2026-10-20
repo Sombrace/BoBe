@@ -2,7 +2,6 @@ import AppKit
 import Observation
 import SwiftUI
 
-@MainActor
 @Observable
 final class ThemeStore: NSObject {
     static let shared = ThemeStore()

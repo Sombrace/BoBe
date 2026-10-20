@@ -1,7 +1,6 @@
 import Observation
 import UIKit
 
-@MainActor
 @Observable
 final class AccessibilityRuntime {
     static let shared = AccessibilityRuntime()

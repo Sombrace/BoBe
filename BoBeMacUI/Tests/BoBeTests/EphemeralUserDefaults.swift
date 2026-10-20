@@ -1,6 +1,6 @@
 import Foundation
 
-final class EphemeralUserDefaults: UserDefaults, @unchecked Sendable {
+nonisolated final class EphemeralUserDefaults: UserDefaults, @unchecked Sendable {
     let suiteName: String
     let persistentFileURL: URL
     private let directory: URL

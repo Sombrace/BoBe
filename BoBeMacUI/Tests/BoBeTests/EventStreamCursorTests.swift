@@ -10,7 +10,6 @@ struct EventStreamCursorTests {
     )
 
     @Test
-    @MainActor
     func staleConversationChangeIsConsumedAndTheNewestSnapshotIsKept() async throws {
         let store = BobeStore(
             currentSelection: { Self.selection },
@@ -28,7 +27,6 @@ struct EventStreamCursorTests {
     }
 
     @Test
-    @MainActor
     func conversationChangeStaysUnacknowledgedWhenTheSnapshotCannotLoad() async throws {
         let store = BobeStore(
             currentSelection: { Self.selection },
@@ -47,7 +45,6 @@ struct EventStreamCursorTests {
     }
 
     @Test
-    @MainActor
     func malformedKnownPayloadDoesNotAdvanceTheCursor() async throws {
         let store = BobeStore(currentSelection: { Self.selection })
         let client = DaemonClient(endpoint: .unavailable)
@@ -68,7 +65,6 @@ struct EventStreamCursorTests {
         "indicator", "text_delta", "tool_call_start", "tool_call_complete", "conversation_closed",
         "conversation_changed", "snapshot_required", "error", "body_request",
     ])
-    @MainActor
     func everyKnownEventRejectsAnUndecodablePayload(type: String) async throws {
         let store = BobeStore(
             currentSelection: { Self.selection },
@@ -83,7 +79,6 @@ struct EventStreamCursorTests {
     }
 
     @Test
-    @MainActor
     func unknownEventTypesStayForwardCompatible() async throws {
         let store = BobeStore(currentSelection: { Self.selection })
         let bundle = try #require(try DaemonClient.decodeEvent(

@@ -19,7 +19,6 @@ struct VoiceSessionSettings: Equatable, Sendable {
         )
     }
 
-    @MainActor
     static func current() -> Self {
         let settings = SettingsStore.shared.settings
         let consent = RemoteSpeechConsent.shared

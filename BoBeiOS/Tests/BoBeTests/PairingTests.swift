@@ -3,7 +3,6 @@ import Foundation
 import Security
 import Testing
 
-@MainActor
 @Suite("iPhone pairing")
 struct PairingTests {
     private nonisolated static let next = Fixture.pairing(

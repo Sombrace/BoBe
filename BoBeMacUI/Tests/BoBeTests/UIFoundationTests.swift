@@ -3,7 +3,6 @@ import Foundation
 import SwiftUI
 import Testing
 
-@MainActor
 private final class EditorStateBox {
     var state = SettingsEditorState<String>()
 
@@ -51,7 +50,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func settingsWindowUsesProductiveInitialSize() {
         let size = SettingsWindowManager.initialSize(
             for: .init(x: 0, y: 0, width: 1512, height: 945)
@@ -67,7 +65,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func settingsWindowClampsRestoredFrameToVisibleDisplay() {
         let screen = CGRect(x: 100, y: 50, width: 1200, height: 800)
         let frame = SettingsWindowManager.clampedFrame(
@@ -81,7 +78,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func settingsWindowPreservesValidRestoredFrame() {
         let screen = CGRect(x: 0, y: 0, width: 1512, height: 945)
         let restored = CGRect(x: 180, y: 120, width: 1100, height: 720)
@@ -96,7 +92,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func settingsSearchMatchesLocalizedPanelConceptsAndAllTokens() {
         #expect(SettingsCategory.voice.matchesSearch("speech recognition"))
         #expect(SettingsCategory.behavior.matchesSearch("screen awareness"))
@@ -107,7 +102,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func commandTitlesReflectOnboardingPolicy() {
         let defaults = UserDefaults.standard
         let key = SetupWindowManager.onboardingCompletedKey
@@ -144,7 +138,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func onboardingCompletionIsScopedToCanonicalRuntimeAuthority() throws {
         let defaults = try #require(EphemeralUserDefaults(prefix: "UIFoundationTests.onboarding"))
 
@@ -176,7 +169,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func docklessAppProvidesPersistentQuitMenu() {
         let defaults = UserDefaults.standard
         let onboardingKey = SetupWindowManager.onboardingCompletedKey
@@ -218,7 +210,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func unsavedCoordinatorDefersAndDiscardsTransition() {
         let coordinator = SettingsEditCoordinator.shared
         var discarded = false
@@ -238,7 +229,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func unsavedCoordinatorCancelKeepsDraftAndDestination() {
         let coordinator = SettingsEditCoordinator.shared
         var transitioned = false
@@ -250,7 +240,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func creatingAnEntityAsksBeforeReplacingAnotherUnsavedDraft() {
         let coordinator = SettingsEditCoordinator.shared
         let editor = EditorStateBox(selectedId: "soul-a")
@@ -276,7 +265,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func creatingAGoalKeepsOrSavesTheOpenDraftBeforeSelectingIt() async {
         let coordinator = SettingsEditCoordinator.shared
         let editor = EditorStateBox(selectedId: "goal-a")
@@ -397,7 +385,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func failedMessagesCannotBeRetriedOnAnotherAuthority() async {
         var selection = EndpointSelection(
             generation: 1, profileID: UUID(), authorityID: UUID(), endpoint: .unavailable
@@ -420,7 +407,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func lateFailedSendDoesNotRecreatePreviousAuthorityRecovery() async {
         var selection = EndpointSelection(
             generation: 1, profileID: UUID(), authorityID: UUID(), endpoint: .unavailable
@@ -444,7 +430,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func lateSuccessfulSendCannotLockNewAuthorityComposer() async {
         var selection = EndpointSelection(
             generation: 1, profileID: UUID(), authorityID: UUID(), endpoint: .unavailable
@@ -467,7 +452,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func aQueuedMessageAndAnActiveTurnDoNotDisableTheComposer() async {
         let selection = EndpointSelection(generation: 1, profileID: UUID(), authorityID: UUID(), endpoint: .unavailable)
         let store = BobeStore(currentSelection: { selection }, sendRequest: { _, _, _ in
@@ -485,7 +469,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func presentationReceiptsUseTheActualCompactTurnWireIdentity() {
         let id = UUID(uuidString: "4cd96cab-bf3e-44af-96ff-07954f557030")
         #expect(BobeStore.turnIdentity("msg_4cd96cabbf3e44af96ff07954f557030") == id)
@@ -495,7 +478,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func settingsDebouncerFlushWaitsForOlderWriteBeforeLatest() async {
         let debouncer = SettingsDebouncer()
         var resume: CheckedContinuation<Void, Never>?
@@ -517,7 +499,6 @@ struct UIFoundationTests {
     }
 
     @Test
-    @MainActor
     func cancelingQueuedSettingsDoesNotRunThemOnNextFlush() async {
         let debouncer = SettingsDebouncer()
         var writes = 0

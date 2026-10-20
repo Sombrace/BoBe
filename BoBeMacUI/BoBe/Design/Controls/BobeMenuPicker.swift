@@ -99,7 +99,7 @@ private struct ThemedPopUpButton<Option: Hashable>: NSViewRepresentable {
             self.parent = parent
         }
 
-        @MainActor @objc
+        @objc
         func changed(_ sender: NSPopUpButton) {
             let idx = sender.indexOfSelectedItem
             guard idx >= 0, idx < self.parent.options.count else { return }

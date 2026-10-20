@@ -1,7 +1,7 @@
 import AppKit
 import OSLog
 
-private let logger = Logger(subsystem: "com.bobe.app", category: "SystemPower")
+nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "SystemPower")
 
 enum SurfacePowerState: Equatable {
     case stopped
@@ -22,7 +22,6 @@ enum SurfacePowerState: Equatable {
     }
 }
 
-@MainActor
 final class SystemPowerObserver {
     static let shared = SystemPowerObserver()
 

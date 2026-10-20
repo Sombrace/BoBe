@@ -83,8 +83,8 @@ require(
 )
 require(
     "BoBeMacUI/project.yml",
-    r'^\s*xcodeVersion:\s*["\']26\.0["\']\s*$',
-    "XcodeGen Xcode 26 baseline",
+    r'^\s*xcodeVersion:\s*["\']27\.0["\']\s*$',
+    "XcodeGen Xcode 27 baseline",
 )
 require(
     "BoBeService/.cargo/config.toml",

@@ -1,6 +1,5 @@
 import Foundation
 
-@MainActor
 final class AudioLifecycle {
     private var tail: Task<Void, Never>?
     private(set) var generation: UInt64 = 0
@@ -11,7 +10,7 @@ final class AudioLifecycle {
 
     func enqueue(_ operation: @escaping @MainActor @Sendable () async -> Void) {
         let previous = self.tail
-        self.tail = Task { @MainActor in
+        self.tail = Task {
             await previous?.value
             await operation()
         }

@@ -5,7 +5,6 @@ import Testing
 @Suite("Provider brand assets")
 struct ProviderBrandAssetTests {
     @Test
-    @MainActor
     func providerLogosLoadFromTheAppBundleInBothAppearances() throws {
         for mode in [NSAppearance.Name.aqua, .darkAqua] {
             let appearance = try #require(NSAppearance(named: mode))

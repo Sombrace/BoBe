@@ -115,7 +115,7 @@ struct OverlayAvatar: View {
         }
         .onChange(of: self.celebrationToken) { _, _ in
             self.isCelebrating = true
-            Task { @MainActor in
+            Task {
                 try? await Task.sleep(for: .seconds(AvatarMetrics.celebrationSeconds))
                 self.isCelebrating = false
             }

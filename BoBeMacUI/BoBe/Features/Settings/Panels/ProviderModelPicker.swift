@@ -301,7 +301,6 @@ struct ProviderModelPicker: View {
         ), model)
     }
 
-    @MainActor
     private func load() async {
         guard EndpointStore.shared.selection == self.selection else { return }
         let profile = self.profile

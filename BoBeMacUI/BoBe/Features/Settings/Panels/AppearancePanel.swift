@@ -145,41 +145,45 @@ struct AppearancePanel: View {
         .foregroundStyle(presentation.color)
     }
 
-    private func bodyStatusPresentation(
-        settings: DaemonSettings
-    ) -> (icon: String, text: String, color: Color) {
+    private struct BodyStatus {
+        let icon: String
+        let text: String
+        let color: Color
+    }
+
+    private func bodyStatusPresentation(settings: DaemonSettings) -> BodyStatus {
         switch self.settingsStore.bodyThemeSaveState {
         case .applying:
-            (
-                "arrow.triangle.2.circlepath",
-                L10n.tr("settings.appearance.body.status.applying"),
-                self.theme.colors.textMuted
+            BodyStatus(
+                icon: "arrow.triangle.2.circlepath",
+                text: L10n.tr("settings.appearance.body.status.applying"),
+                color: self.theme.colors.textMuted
             )
         case .applied:
-            (
-                "checkmark.circle.fill",
-                L10n.tr("settings.appearance.body.status.applied"),
-                self.theme.colors.success
+            BodyStatus(
+                icon: "checkmark.circle.fill",
+                text: L10n.tr("settings.appearance.body.status.applied"),
+                color: self.theme.colors.success
             )
         case .savedOffline:
-            (
-                "wifi.slash",
-                L10n.tr("settings.appearance.body.status.offline_saved"),
-                self.theme.colors.warning
+            BodyStatus(
+                icon: "wifi.slash",
+                text: L10n.tr("settings.appearance.body.status.offline_saved"),
+                color: self.theme.colors.warning
             )
         case let .failed(message):
-            ("exclamationmark.triangle.fill", message, self.theme.colors.error)
+            BodyStatus(icon: "exclamationmark.triangle.fill", text: message, color: self.theme.colors.error)
         case .idle where settings.bodyConnected:
-            (
-                "dot.radiowaves.left.and.right",
-                L10n.tr("settings.appearance.body.status.connected"),
-                self.theme.colors.success
+            BodyStatus(
+                icon: "dot.radiowaves.left.and.right",
+                text: L10n.tr("settings.appearance.body.status.connected"),
+                color: self.theme.colors.success
             )
         case .idle:
-            (
-                "wifi.slash",
-                L10n.tr("settings.appearance.body.status.offline"),
-                self.theme.colors.textMuted
+            BodyStatus(
+                icon: "wifi.slash",
+                text: L10n.tr("settings.appearance.body.status.offline"),
+                color: self.theme.colors.textMuted
             )
         }
     }

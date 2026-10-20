@@ -216,6 +216,6 @@ actor FluidAudioNemotronStt: VoiceSttEngine {
 }
 
 @available(macOS 15, iOS 18, *)
-enum FluidAudioNemotronSttError: Error {
+nonisolated enum FluidAudioNemotronSttError: Error {
     case notLoaded
 }

@@ -15,7 +15,6 @@ private final class OverlayHostingView<Content: View>: NSHostingView<Content> {
     }
 }
 
-@MainActor
 @Observable
 final class OverlayStage {
     var placement = OverlayPlacement()
@@ -27,7 +26,6 @@ final class OverlayStage {
     var pointerOverContent = false
 }
 
-@MainActor
 final class OverlayWindowManager: NSObject {
     static let shared = OverlayWindowManager()
 
@@ -321,7 +319,7 @@ final class OverlayWindowManager: NSObject {
     private func veilColumn() {
         guard let columnHost else { return }
         columnHost.alphaValue = 0
-        Task { @MainActor [weak columnHost] in
+        Task { [weak columnHost] in
             try? await Task.sleep(for: .milliseconds(70))
             guard let columnHost else { return }
             NSAnimationContext.beginGrouping()
@@ -391,7 +389,7 @@ final class OverlayWindowManager: NSObject {
             return
         }
         guard self.releaseTask == nil else { return }
-        self.releaseTask = Task { @MainActor [weak self] in
+        self.releaseTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(Self.releaseMilliseconds))
             guard let self, !Task.isCancelled else { return }
             self.releaseTask = nil

@@ -1,7 +1,7 @@
 @preconcurrency import AVFoundation
 import Foundation
 
-struct CapturedVoiceAudio: Sendable {
+nonisolated struct CapturedVoiceAudio: Sendable {
     let samples: [Float]
     let sampleRate: Double
 
@@ -34,7 +34,7 @@ struct CapturedVoiceAudio: Sendable {
     }
 }
 
-struct ProcessedVoiceAudio: Sendable {
+nonisolated struct ProcessedVoiceAudio: Sendable {
     let samples16k: [Float]
     let rmsFramesDbfs: [Float]
 }
@@ -147,6 +147,6 @@ actor VoiceInputProcessor {
     }
 }
 
-enum VoiceInputProcessorError: Error {
+nonisolated enum VoiceInputProcessorError: Error {
     case audioConversionFailed
 }

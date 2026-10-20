@@ -37,7 +37,7 @@ struct DaemonRequestTimeoutTests {
         #expect(session.timeoutIntervalForResource >= DaemonClient.mcpStartupTimeout)
     }
 
-    private static func reply(to request: URLRequest) throws -> (Data, URLResponse) {
+    nonisolated private static func reply(to request: URLRequest) throws -> (Data, URLResponse) {
         let url = try #require(request.url)
         let body = switch (request.httpMethod ?? "GET", url.path) {
         case ("PATCH", "/settings"):

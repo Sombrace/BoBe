@@ -52,7 +52,7 @@ extension OverlayView {
         self.reachoutKinds[message.id] = ReachoutKind(origin: origin, run: nil)
         guard origin == .proactive else { return }
         let selection = EndpointStore.shared.selection
-        Task { @MainActor in
+        Task {
             guard let runs = try? await DaemonClient(endpoint: selection.endpoint).agentRuns(),
                   EndpointStore.shared.selection == selection,
                   let carrier = ReachoutKind.carrier(ofMessage: message.id, in: runs)
@@ -104,7 +104,7 @@ extension OverlayView {
             self.peekWaitingReachout()
             return
         }
-        self.satelliteHideTask = Task { @MainActor in
+        self.satelliteHideTask = Task {
             try? await Task.sleep(for: .milliseconds(AvatarMetrics.satelliteLingerMilliseconds))
             guard !Task.isCancelled else { return }
             self.satellitesShown = false
@@ -218,7 +218,7 @@ extension OverlayView {
 
     func scheduleFloatingBubbleAutoDismiss(after delay: TimeInterval) {
         self.cancelFloatingBubbleAutoDismiss()
-        self.floatingBubbleAutoDismissTask = Task { @MainActor in
+        self.floatingBubbleAutoDismissTask = Task {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             self.floatingBubbleAutoDismissTask = nil
@@ -301,7 +301,7 @@ extension OverlayView {
 
     func scheduleWindowSettle() {
         self.resizeTask?.cancel()
-        self.resizeTask = Task { @MainActor in
+        self.resizeTask = Task {
             try? await Task.sleep(for: .milliseconds(WindowSizes.settleMilliseconds))
             guard !Task.isCancelled else { return }
             OverlayWindowManager.shared.settle(self.settledViewport())
@@ -349,7 +349,7 @@ extension OverlayView {
 
     func startInactivityTimer() {
         self.inactivityTimer?.cancel()
-        self.inactivityTimer = Task { @MainActor in
+        self.inactivityTimer = Task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(InactivityTiming.checkIntervalSeconds))
                 guard !Task.isCancelled else { return }

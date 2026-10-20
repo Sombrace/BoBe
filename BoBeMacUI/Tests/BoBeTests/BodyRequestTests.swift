@@ -54,7 +54,6 @@ struct BodyRequestTests {
     }
 
     @Test
-    @MainActor
     func screenNoticeAppearsOnceAndStaysDismissed() {
         let store = BobeStore.shared
         store.screenUnavailableNoticeShown = false

@@ -1,6 +1,5 @@
 import Foundation
 
-@MainActor
 @Observable
 final class SettingsDebouncer {
     static let debounceSeconds: Double = 0.6
@@ -30,7 +29,7 @@ final class SettingsDebouncer {
         self.generation &+= 1
         let generation = self.generation
         self.pendingWork = work
-        self.saveTask = Task { @MainActor [weak self] in
+        self.saveTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Self.debounceSeconds))
             guard !Task.isCancelled, let self else { return }
             await self.drainInFlight()
@@ -38,7 +37,7 @@ final class SettingsDebouncer {
             self.pendingWork = nil
             self.persistGeneration &+= 1
             let persistGeneration = self.persistGeneration
-            let persist = Task { @MainActor in await work() }
+            let persist = Task { await work() }
             self.inFlightTask = persist
             await persist.value
             if persistGeneration == self.persistGeneration { self.inFlightTask = nil }
@@ -48,7 +47,7 @@ final class SettingsDebouncer {
 
     func scheduleToastClear(_ clear: @escaping @MainActor () -> Void) {
         self.toastTask?.cancel()
-        self.toastTask = Task { @MainActor in
+        self.toastTask = Task {
             try? await Task.sleep(for: .seconds(Self.toastSeconds))
             guard !Task.isCancelled else { return }
             clear()
@@ -77,7 +76,7 @@ final class SettingsDebouncer {
         self.pendingWork = nil
         self.persistGeneration &+= 1
         let persistGeneration = self.persistGeneration
-        let persist = Task { @MainActor in await work() }
+        let persist = Task { await work() }
         self.inFlightTask = persist
         await persist.value
         if persistGeneration == self.persistGeneration { self.inFlightTask = nil }

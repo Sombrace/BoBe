@@ -2,9 +2,9 @@
 import Foundation
 import os
 
-struct VoiceLoadTimeout: Error {}
+nonisolated struct VoiceLoadTimeout: Error {}
 
-enum VoiceError: Error, CustomStringConvertible {
+nonisolated enum VoiceError: Error, CustomStringConvertible {
     case runtime(String)
     var description: String {
         switch self {
@@ -13,7 +13,7 @@ enum VoiceError: Error, CustomStringConvertible {
     }
 }
 
-func withVoiceLoadTimeout(
+nonisolated func withVoiceLoadTimeout(
     seconds: TimeInterval,
     _ operation: @escaping @Sendable () async throws -> Void
 ) async throws {
@@ -28,7 +28,7 @@ func withVoiceLoadTimeout(
     }
 }
 
-struct VoiceSampleBuffer {
+nonisolated struct VoiceSampleBuffer {
     private var storage: [Float] = []
     private var readIndex = 0
 
@@ -67,7 +67,7 @@ struct VoiceSampleBuffer {
     }
 }
 
-func voiceWsEndpoint(from baseURL: URL) -> URL? {
+nonisolated func voiceWsEndpoint(from baseURL: URL) -> URL? {
     guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
         return nil
     }
@@ -78,7 +78,7 @@ func voiceWsEndpoint(from baseURL: URL) -> URL? {
     return components.url
 }
 
-func describe(_ format: AVAudioFormat) -> String {
+nonisolated func describe(_ format: AVAudioFormat) -> String {
     let fmtName: String = switch format.commonFormat {
     case .pcmFormatFloat32: "f32"
     case .pcmFormatFloat64: "f64"
@@ -90,7 +90,7 @@ func describe(_ format: AVAudioFormat) -> String {
         + (format.isInterleaved ? "" : " (planar)")
 }
 
-func convertSingleBuffer(
+nonisolated func convertSingleBuffer(
     _ converter: AVAudioConverter,
     source: AVAudioBuffer,
     into output: AVAudioPCMBuffer
@@ -113,7 +113,7 @@ func convertSingleBuffer(
     return (status, err)
 }
 
-func computePlaybackRms(_ buffer: AVAudioPCMBuffer) -> Float {
+nonisolated func computePlaybackRms(_ buffer: AVAudioPCMBuffer) -> Float {
     let frames = Int(buffer.frameLength)
     guard frames > 0 else { return 0 }
     var sumSq: Double = 0

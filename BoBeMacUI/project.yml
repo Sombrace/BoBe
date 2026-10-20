@@ -3,7 +3,7 @@ options:
   bundleIdPrefix: com.bobe
   deploymentTarget:
     macOS: "26.0"
-  xcodeVersion: "26.0"
+  xcodeVersion: "27.0"
   generateEmptyDirectories: false
   groupSortPosition: none
 
@@ -17,6 +17,7 @@ packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
     exactVersion: 0.17.7
+    traits: []
 
 settings:
   base:
@@ -25,6 +26,7 @@ settings:
     ARCHS: arm64
     ENABLE_PREVIEWS: YES
     SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
     SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
     GCC_TREAT_WARNINGS_AS_ERRORS: YES
     CODE_SIGN_STYLE: Automatic
@@ -77,6 +79,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bobe.app
         PRODUCT_NAME: BoBe
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
         INFOPLIST_FILE: BoBe/Resources/Info.plist
         CODE_SIGN_ENTITLEMENTS: entitlements.plist
         PROVISIONING_PROFILE_SPECIFIER: "$(BOBE_PROVISIONING_PROFILE_SPECIFIER)"
@@ -104,6 +107,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bobe.app.tests
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/BoBe.app/Contents/MacOS/BoBe"
         BUNDLE_LOADER: "$(TEST_HOST)"
         GENERATE_INFOPLIST_FILE: YES

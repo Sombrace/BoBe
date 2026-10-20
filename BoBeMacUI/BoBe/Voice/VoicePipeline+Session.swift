@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline.Session")
+nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline.Session")
 
 struct VoicePhaseTracker {
     private(set) var unacknowledgedAborts = 0
@@ -49,7 +49,6 @@ extension VoicePipeline.State {
     }
 }
 
-@MainActor
 extension VoicePipeline {
     static func sttLanguage(from settings: DaemonSettings?) -> String {
         let language = settings?.voiceSttLanguage ?? ""
@@ -91,7 +90,7 @@ extension VoicePipeline {
         self.startKeepalive()
 
         self.sessionId = "voice-\(Int(Date.now.timeIntervalSince1970))"
-        self.handshakeTask = Task { @MainActor [weak self, weak newTask] in
+        self.handshakeTask = Task { [weak self, weak newTask] in
             guard let self, let newTask else { return }
             await self.negotiate(socket: newTask, generation: generation, settings: settings)
         }
@@ -170,7 +169,7 @@ extension VoicePipeline {
         self.negotiatedSettings = adopted
         guard adopted != desired else { return }
         self.renegotiationTask?.cancel()
-        self.renegotiationTask = Task { @MainActor [weak self] in
+        self.renegotiationTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(500))
             guard let self, !Task.isCancelled else { return }
             while self.state == .connecting, self.task != nil, !Task.isCancelled {

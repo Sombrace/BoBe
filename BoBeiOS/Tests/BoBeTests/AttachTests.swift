@@ -2,7 +2,6 @@
 import Foundation
 import Testing
 
-@MainActor
 @Suite("iPhone attach handshake")
 struct AttachTests {
     @Test

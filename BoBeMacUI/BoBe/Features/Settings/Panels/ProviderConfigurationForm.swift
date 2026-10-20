@@ -78,8 +78,9 @@ struct ProviderConfigurationForm: View {
             let selection = self.observedSelection
             self.isPreparing = true
             defer { self.isPreparing = false }
-            do { try await self.completeConnection(selection) }
-            catch {
+            do {
+                try await self.completeConnection(selection)
+            } catch {
                 guard !Task.isCancelled, EndpointStore.shared.selection == selection else { return }
                 self.error = error.localizedDescription
             }
@@ -334,7 +335,6 @@ struct ProviderConfigurationForm: View {
         self.error = nil
     }
 
-    @MainActor
     private func connect() async {
         guard !self.isPreparing, self.fields.canConnect(apiKey: self.apiKey),
               EndpointStore.shared.selection == self.observedSelection else { return }
@@ -388,7 +388,6 @@ struct ProviderConfigurationForm: View {
         }
     }
 
-    @MainActor
     private func completeConnection(_ selection: EndpointSelection) async throws {
         let client = DaemonClient(endpoint: selection.endpoint)
         let profile = self.fields.profileID
@@ -414,15 +413,15 @@ struct ProviderConfigurationForm: View {
         self.onConnected()
     }
 
-    @MainActor
     private func finishSignIn(_ context: ProviderSignInContext) {
         self.signIn = nil
         guard EndpointStore.shared.selection == context.selection else { return }
         self.isPreparing = true
         Task {
             defer { self.isPreparing = false }
-            do { try await self.completeConnection(context.selection) }
-            catch {
+            do {
+                try await self.completeConnection(context.selection)
+            } catch {
                 guard EndpointStore.shared.selection == context.selection else { return }
                 self.error = error.localizedDescription
             }

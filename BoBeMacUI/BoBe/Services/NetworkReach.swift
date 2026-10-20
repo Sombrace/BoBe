@@ -16,7 +16,6 @@ enum NetworkReach {
         return hosts
     }
 
-    @MainActor
     static func set(_ reachable: Bool, endpoint: EndpointSelection) async throws {
         let client = DaemonClient(endpoint: endpoint.endpoint)
         if reachable {

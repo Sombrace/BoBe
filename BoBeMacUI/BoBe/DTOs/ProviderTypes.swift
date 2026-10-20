@@ -1,6 +1,6 @@
 import Foundation
 
-enum ProviderKindWire: String, Codable, Sendable, CaseIterable {
+nonisolated enum ProviderKindWire: String, Codable, Sendable, CaseIterable {
     case copilot
     case openAI = "open_ai"
     case openAICompatible = "open_ai_compatible"
@@ -44,16 +44,16 @@ enum ProviderKindWire: String, Codable, Sendable, CaseIterable {
     }
 }
 
-enum ProviderAuthMethodWire: String, Codable, Sendable {
+nonisolated enum ProviderAuthMethodWire: String, Codable, Sendable {
     case apiKey = "api_key"
     case oauth
 }
 
-enum LocalRuntimeKindWire: String, Codable, Sendable {
+nonisolated enum LocalRuntimeKindWire: String, Codable, Sendable {
     case ollama
 }
 
-struct ProviderProfileWire: Codable, Identifiable, Sendable, Equatable {
+nonisolated struct ProviderProfileWire: Codable, Identifiable, Sendable, Equatable {
     var models: ProviderModelsWire = .init()
     let id: String
     let kind: ProviderKindWire
@@ -132,7 +132,7 @@ struct ProviderProfileWire: Codable, Identifiable, Sendable, Equatable {
     }
 }
 
-struct WorkloadRouteWire: Codable, Sendable, Equatable {
+nonisolated struct WorkloadRouteWire: Codable, Sendable, Equatable {
     let profile: String
     let model: String?
     let reasoningEffort: String?
@@ -143,7 +143,7 @@ struct WorkloadRouteWire: Codable, Sendable, Equatable {
     }
 }
 
-enum ProviderWorkload: String, CaseIterable, Identifiable, Sendable {
+nonisolated enum ProviderWorkload: String, CaseIterable, Identifiable, Sendable {
     case chat, goals, small, consolidate
 
     var id: String { self.rawValue }
@@ -165,11 +165,11 @@ enum ProviderWorkload: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-struct ProviderRoutesWire: Codable, Sendable, Equatable {
+nonisolated struct ProviderRoutesWire: Codable, Sendable, Equatable {
     let chat: WorkloadRouteWire
     let goals: WorkloadRouteWire
     let consolidate: WorkloadRouteWire
-    var small: WorkloadRouteWire? = nil
+    var small: WorkloadRouteWire?
 
     func route(for workload: ProviderWorkload) -> WorkloadRouteWire {
         switch workload {
@@ -181,7 +181,7 @@ struct ProviderRoutesWire: Codable, Sendable, Equatable {
     }
 }
 
-struct ProvidersResponse: Codable, Sendable {
+nonisolated struct ProvidersResponse: Codable, Sendable {
     let profiles: [ProviderProfileWire]
     let routes: ProviderRoutesWire
     let activeProfiles: [ProviderProfileWire]
@@ -209,7 +209,7 @@ struct ProvidersResponse: Codable, Sendable {
     }
 }
 
-struct ProviderProbeRequest: Encodable, Sendable {
+nonisolated struct ProviderProbeRequest: Encodable, Sendable {
     let model: String
     let reasoningEffort: String?
     enum CodingKeys: String, CodingKey {
@@ -218,7 +218,7 @@ struct ProviderProbeRequest: Encodable, Sendable {
     }
 }
 
-struct ProviderProbeResponse: Decodable, Sendable {
+nonisolated struct ProviderProbeResponse: Decodable, Sendable {
     let ok: Bool
     let profile: String
     let model: String?
@@ -233,7 +233,7 @@ struct ProviderProbeResponse: Decodable, Sendable {
     }
 }
 
-struct ProviderActivationRequest: Codable, Sendable, Equatable {
+nonisolated struct ProviderActivationRequest: Codable, Sendable, Equatable {
     let kind: ProviderKindWire
     let authMethod: ProviderAuthMethodWire
     let baseURL: String?
@@ -303,7 +303,7 @@ struct ProviderActivationRequest: Codable, Sendable, Equatable {
     }
 }
 
-struct ProviderUpsertRequest: Codable, Sendable {
+nonisolated struct ProviderUpsertRequest: Codable, Sendable {
     let kind: ProviderKindWire
     let authMethod: ProviderAuthMethodWire
     let baseURL: String?
@@ -328,7 +328,7 @@ struct ProviderUpsertRequest: Codable, Sendable {
     }
 }
 
-struct ProviderModelInfo: Decodable, Identifiable, Sendable {
+nonisolated struct ProviderModelInfo: Decodable, Identifiable, Sendable {
     let id: String
     let name: String
     let vision: Bool
@@ -355,11 +355,11 @@ struct ProviderModelInfo: Decodable, Identifiable, Sendable {
     }
 }
 
-struct ProviderModelsResponse: Decodable, Sendable {
+nonisolated struct ProviderModelsResponse: Decodable, Sendable {
     let models: [ProviderModelInfo]
 }
 
-struct ProviderMutationResponse: Codable, Sendable {
+nonisolated struct ProviderMutationResponse: Codable, Sendable {
     let restartRequired: Bool
 
     enum CodingKeys: String, CodingKey {

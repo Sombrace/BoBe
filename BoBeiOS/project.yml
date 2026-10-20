@@ -3,7 +3,7 @@ options:
   bundleIdPrefix: com.bobe
   deploymentTarget:
     iOS: "26.0"
-  xcodeVersion: "26.0"
+  xcodeVersion: "27.0"
   generateEmptyDirectories: false
   groupSortPosition: none
 
@@ -15,6 +15,7 @@ settings:
     ARCHS: arm64
     ENABLE_PREVIEWS: YES
     SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
     SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
     GCC_TREAT_WARNINGS_AS_ERRORS: YES
     CODE_SIGN_STYLE: Automatic
@@ -93,6 +94,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bobe.ios
         PRODUCT_NAME: BoBe
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
         INFOPLIST_FILE: BoBe/Resources/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
@@ -118,6 +120,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.bobe.ios.tests
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/BoBe.app/BoBe"
         BUNDLE_LOADER: "$(TEST_HOST)"
         GENERATE_INFOPLIST_FILE: YES

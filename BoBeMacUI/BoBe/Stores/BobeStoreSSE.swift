@@ -106,7 +106,7 @@ extension BobeStore {
         }
         if indicator == .idle,
            self.streamingMessageId != nil || !self.context.currentMessage.isEmpty {
-            Task { @MainActor [weak self] in
+            Task { [weak self] in
                 await self?.reloadCanonicalConversation(replacingActiveStream: true)
             }
         }
@@ -169,7 +169,7 @@ extension BobeStore {
         self.streamingMessage += payload.delta
 
         if self.textDeltaFlushTask == nil {
-            self.textDeltaFlushTask = Task { @MainActor [weak self] in
+            self.textDeltaFlushTask = Task { [weak self] in
                 try? await Task.sleep(for: .milliseconds(StoreTiming.textDeltaFlushMilliseconds))
                 guard let self, !Task.isCancelled else { return }
                 self.flushStreamingToUI(messageId: messageId)
@@ -380,7 +380,7 @@ extension BobeStore {
 
     func scheduleConversationEndSettlement() {
         self.cancelConversationClear()
-        self.conversationClearTask = Task { @MainActor [weak self] in
+        self.conversationClearTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(StoreTiming.conversationClearSeconds))
             guard let self, !Task.isCancelled else { return }
             self.updateState { $0.conversationEnding = false }

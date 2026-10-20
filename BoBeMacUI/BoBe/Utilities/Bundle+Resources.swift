@@ -1,6 +1,6 @@
 import Foundation
 
-extension Bundle {
+nonisolated extension Bundle {
     static var appResources: Bundle {
         #if SWIFT_PACKAGE
             return Bundle.module

@@ -511,7 +511,7 @@ struct BobeCharacter: View {
     }
 }
 
-struct BobeVoiceRing: Shape {
+nonisolated struct BobeVoiceRing: Shape {
     var phase: Double
     var level: Double
 
@@ -589,7 +589,7 @@ private struct BobeCheer: View {
     }
 }
 
-private struct BobeSpark: Shape {
+nonisolated private struct BobeSpark: Shape {
     func path(in rect: CGRect) -> Path {
         var path = Path()
         let center = CGPoint(x: rect.midX, y: rect.midY)

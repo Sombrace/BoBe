@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-private let bodyAdapterLogger = Logger(
+nonisolated private let bodyAdapterLogger = Logger(
     subsystem: "com.bobe.app",
     category: "BodySpeechAdapter"
 )
@@ -265,7 +265,7 @@ actor BodySpeechAdapter {
     }
 }
 
-func combineBodyTranscriptSegments(
+nonisolated func combineBodyTranscriptSegments(
     _ segments: [String],
     remainder: String
 ) -> String {
@@ -279,7 +279,7 @@ func combineBodyTranscriptSegments(
     return parts.joined(separator: " ")
 }
 
-private enum BodySpeechAdapterError: LocalizedError {
+nonisolated private enum BodySpeechAdapterError: LocalizedError {
     case invalidConfiguration
     case unsupportedFrame
     case malformedControl

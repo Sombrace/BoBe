@@ -1,6 +1,6 @@
 import Foundation
 
-enum EventType: String, Codable, Sendable {
+nonisolated enum EventType: String, Codable, Sendable {
     case indicator
     case textDelta = "text_delta"
     case toolCallStart = "tool_call_start"
@@ -18,7 +18,7 @@ enum EventType: String, Codable, Sendable {
     }
 }
 
-struct StreamBundle: Codable, Sendable {
+nonisolated struct StreamBundle: Codable, Sendable {
     let eventId: UInt64?
     let runtimeIncarnationId: UUID?
     let type: EventType
@@ -34,7 +34,7 @@ struct StreamBundle: Codable, Sendable {
     }
 }
 
-struct SnapshotRequiredPayload: Codable, Sendable {
+nonisolated struct SnapshotRequiredPayload: Codable, Sendable {
     let resumeAfter: UInt64?
     let reason: String
     let snapshotRequired: Bool
@@ -46,7 +46,7 @@ struct SnapshotRequiredPayload: Codable, Sendable {
     }
 }
 
-enum IndicatorType: String, Codable, Sendable, Equatable {
+nonisolated enum IndicatorType: String, Codable, Sendable, Equatable {
     case idle = "IDLE"
     case thinking = "THINKING"
     case streaming = "STREAMING"
@@ -58,16 +58,16 @@ enum IndicatorType: String, Codable, Sendable, Equatable {
     }
 }
 
-struct IndicatorPayload: Codable, Sendable {
+nonisolated struct IndicatorPayload: Codable, Sendable {
     let indicator: IndicatorType
 }
 
-struct TextDeltaPayload: Codable, Sendable {
+nonisolated struct TextDeltaPayload: Codable, Sendable {
     let delta: String
     let done: Bool
 }
 
-struct ToolCallStartPayload: Codable, Sendable {
+nonisolated struct ToolCallStartPayload: Codable, Sendable {
     let status: String
     let toolName: String
     let toolCallId: String
@@ -79,7 +79,7 @@ struct ToolCallStartPayload: Codable, Sendable {
     }
 }
 
-struct ToolCallCompletePayload: Codable, Sendable {
+nonisolated struct ToolCallCompletePayload: Codable, Sendable {
     let status: String
     let toolName: String
     let toolCallId: String
@@ -93,7 +93,7 @@ struct ToolCallCompletePayload: Codable, Sendable {
     }
 }
 
-struct ErrorPayload: Codable, Sendable {
+nonisolated struct ErrorPayload: Codable, Sendable {
     let code: String?
     let trigger: String?
     let message: String
@@ -108,7 +108,7 @@ struct ErrorPayload: Codable, Sendable {
     }
 }
 
-struct ConversationClosedPayload: Codable, Sendable {
+nonisolated struct ConversationClosedPayload: Codable, Sendable {
     let conversationId: String
     let reason: String
     let turnCount: Int
@@ -120,7 +120,7 @@ struct ConversationClosedPayload: Codable, Sendable {
     }
 }
 
-struct ConversationChangedPayload: Codable, Sendable {
+nonisolated struct ConversationChangedPayload: Codable, Sendable {
     let conversationId: String
 
     enum CodingKeys: String, CodingKey {
@@ -128,7 +128,7 @@ struct ConversationChangedPayload: Codable, Sendable {
     }
 }
 
-struct AnyCodablePayload: Codable, Sendable {
+nonisolated struct AnyCodablePayload: Codable, Sendable {
     let data: Data
 
     init(from decoder: Decoder) throws {
@@ -150,7 +150,7 @@ struct AnyCodablePayload: Codable, Sendable {
     }
 }
 
-enum AnyCodableValue: Codable, Sendable {
+nonisolated enum AnyCodableValue: Codable, Sendable {
     case string(String)
     case int(Int)
     case double(Double)

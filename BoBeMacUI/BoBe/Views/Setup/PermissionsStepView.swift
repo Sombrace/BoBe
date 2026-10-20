@@ -183,9 +183,7 @@ struct PermissionsStepView: View {
     private func requestMicrophone() {
         Task {
             let granted = await AVCaptureDevice.requestAccess(for: .audio)
-            await MainActor.run {
-                self.micState = granted ? .granted : .denied
-            }
+            self.micState = granted ? .granted : .denied
         }
     }
 

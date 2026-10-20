@@ -1,7 +1,6 @@
 import AppKit
 import Observation
 
-@MainActor
 @Observable
 final class PointerTracker {
     static let shared = PointerTracker()

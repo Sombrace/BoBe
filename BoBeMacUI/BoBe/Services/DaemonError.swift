@@ -1,6 +1,6 @@
 import Foundation
 
-enum DaemonError: Error, LocalizedError {
+nonisolated enum DaemonError: Error, LocalizedError {
     case invalidResponse
     case httpError(statusCode: Int, message: String, code: String? = nil)
 
@@ -12,7 +12,7 @@ enum DaemonError: Error, LocalizedError {
     }
 }
 
-struct AnyEncodable: Encodable {
+nonisolated struct AnyEncodable: Encodable {
     private let encode: (Encoder) throws -> Void
 
     init(_ wrapped: any Encodable) {

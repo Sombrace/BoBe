@@ -3,9 +3,8 @@ import FluidAudio
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline.Audio")
+nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline.Audio")
 
-@MainActor
 extension VoicePipeline {
 
     func tearDownAudio() {
@@ -82,7 +81,7 @@ extension VoicePipeline {
         )
         self.audioInputContinuation = continuation
         let processor = self.inputProcessor
-        self.audioInputTask = Task { @MainActor [weak self] in
+        self.audioInputTask = Task { [weak self] in
             for await captured in audioStream {
                 guard !Task.isCancelled else { return }
                 do {
@@ -281,7 +280,7 @@ extension VoicePipeline {
         self.duckTask?.cancel()
         let target: Float = ducked ? BargeInPolicy.duckedVolume : 1
         let start = self.playerNode.volume
-        self.duckTask = Task { @MainActor [weak self] in
+        self.duckTask = Task { [weak self] in
             for step in 1 ... 5 {
                 guard let self, !Task.isCancelled else { return }
                 self.playerNode.volume = start + (target - start) * Float(step) / 5

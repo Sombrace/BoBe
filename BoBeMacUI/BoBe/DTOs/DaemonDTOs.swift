@@ -1,6 +1,6 @@
 import Foundation
 
-struct AuthStatusResponse: Codable, Sendable {
+nonisolated struct AuthStatusResponse: Codable, Sendable {
     let isAuthenticated: Bool
     let login: String?
 
@@ -10,7 +10,7 @@ struct AuthStatusResponse: Codable, Sendable {
     }
 }
 
-struct LocalRuntimeInstallRequest: Codable, Sendable {
+nonisolated struct LocalRuntimeInstallRequest: Codable, Sendable {
     let profile: String
     let chatModel: String
     let batchModel: String
@@ -22,7 +22,7 @@ struct LocalRuntimeInstallRequest: Codable, Sendable {
     }
 }
 
-struct LocalRuntimeSnapshot: Codable, Sendable {
+nonisolated struct LocalRuntimeSnapshot: Codable, Sendable {
     let status: InstallStatusWire
     let error: String?
     let runtime: LocalRuntimeDownload
@@ -36,15 +36,15 @@ struct LocalRuntimeSnapshot: Codable, Sendable {
     }
 }
 
-struct LocalRuntimeDownload: Codable, Sendable {
+nonisolated struct LocalRuntimeDownload: Codable, Sendable {
     let percent: Int?
 }
 
-struct LocalRuntimePull: Codable, Sendable {
+nonisolated struct LocalRuntimePull: Codable, Sendable {
     let percent: Int?
 }
 
-struct VoiceInstallSnapshot: Codable, Sendable {
+nonisolated struct VoiceInstallSnapshot: Codable, Sendable {
     let status: InstallStatusWire
     let error: String?
     let models: [VoiceModelProgress]
@@ -63,7 +63,7 @@ struct VoiceInstallSnapshot: Codable, Sendable {
     }
 }
 
-struct VoiceModelProgress: Codable, Sendable, Identifiable {
+nonisolated struct VoiceModelProgress: Codable, Sendable, Identifiable {
     let kind: String
     let status: String
     let bytesDownloaded: UInt64
@@ -83,11 +83,11 @@ struct VoiceModelProgress: Codable, Sendable, Identifiable {
     }
 }
 
-struct VoiceInstallPresence: Codable, Sendable {
+nonisolated struct VoiceInstallPresence: Codable, Sendable {
     let tts: Bool
 }
 
-enum ProviderLoginPhase: Equatable, Sendable {
+nonisolated enum ProviderLoginPhase: Equatable, Sendable {
     case preparing
     case awaitingUser(url: String, code: String)
     case polling(url: String, code: String)
@@ -105,7 +105,7 @@ enum ProviderLoginPhase: Equatable, Sendable {
     }
 }
 
-extension ProviderLoginPhase: Decodable {
+nonisolated extension ProviderLoginPhase: Decodable {
     private enum CodingKeys: String, CodingKey {
         case phase
         case url

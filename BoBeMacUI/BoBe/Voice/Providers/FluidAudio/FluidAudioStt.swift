@@ -217,7 +217,7 @@ actor FluidAudioStt: VoiceSttEngine {
     }
 }
 
-enum FluidAudioSttError: Error {
+nonisolated enum FluidAudioSttError: Error {
     case notLoaded
     case audioBufferCreationFailed
 }

@@ -2,9 +2,8 @@
 import Foundation
 import OSLog
 
-private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline.AudioDevice")
+nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "VoicePipeline.AudioDevice")
 
-@MainActor
 extension VoicePipeline {
 
     func registerInputDeviceObserverIfNeeded() {
@@ -87,7 +86,7 @@ extension VoicePipeline {
 
     private func scheduleDeviceChangeRebuild() {
         self.deviceChangeReconfigureTask?.cancel()
-        self.deviceChangeReconfigureTask = Task { @MainActor [weak self] in
+        self.deviceChangeReconfigureTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(250))
             guard let self, !Task.isCancelled else { return }
             while self.audioRebuildMustWait, !Task.isCancelled {

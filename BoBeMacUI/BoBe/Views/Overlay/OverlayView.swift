@@ -33,7 +33,6 @@ enum OverlayPresentation: Equatable {
     }
 }
 
-@MainActor
 @Observable
 final class OverlayModel {
     var isChatVisible = false
@@ -332,7 +331,7 @@ struct OverlayView: View {
                     withAnimation(BobeMotion.standard) {
                         self.voiceCoachmarkVisible = true
                     }
-                    Task { @MainActor in
+                    Task {
                         try? await Task.sleep(for: .seconds(6))
                         withAnimation(BobeMotion.standard) {
                             self.voiceCoachmarkVisible = false

@@ -452,7 +452,7 @@ actor AppleSpeechStt: VoiceSttEngine {
     }
 }
 
-func appleSpeechAuthorizationStatus() async -> SFSpeechRecognizerAuthorizationStatus {
+nonisolated func appleSpeechAuthorizationStatus() async -> SFSpeechRecognizerAuthorizationStatus {
     let status = SFSpeechRecognizer.authorizationStatus()
     guard status == .notDetermined else { return status }
     return await withCheckedContinuation { continuation in
@@ -462,7 +462,7 @@ func appleSpeechAuthorizationStatus() async -> SFSpeechRecognizerAuthorizationSt
     }
 }
 
-func mergeSpeechTranscript(committed: String, candidate: String) -> String {
+nonisolated func mergeSpeechTranscript(committed: String, candidate: String) -> String {
     let committed = committed.trimmingCharacters(in: .whitespacesAndNewlines)
     let candidate = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !committed.isEmpty else { return candidate }
@@ -472,7 +472,7 @@ func mergeSpeechTranscript(committed: String, candidate: String) -> String {
     return "\(committed) \(candidate)"
 }
 
-enum AppleSpeechSttError: LocalizedError {
+nonisolated enum AppleSpeechSttError: LocalizedError {
     case permissionDenied
     case unavailable
     case unsupportedLocale(String)

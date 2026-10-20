@@ -40,7 +40,6 @@ struct ProviderSetupStepView: View {
         }
     }
 
-    @MainActor
     private func resumeSavedAccess() async {
         defer {
             withAnimation(BobeMotion.standard) { self.resumed = true }

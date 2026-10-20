@@ -2,7 +2,7 @@ import AppKit
 import OSLog
 import SwiftUI
 
-private let logger = Logger(subsystem: "com.bobe.app", category: "App")
+nonisolated private let logger = Logger(subsystem: "com.bobe.app", category: "App")
 
 @main
 struct BoBeApp: App {
@@ -41,7 +41,6 @@ struct BoBeApp: App {
     }
 }
 
-@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store: BobeStore
     private let statusItemController: BobeStatusItemController
@@ -98,14 +97,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
 
-        Task { @MainActor in
+        Task {
             await self.startApp()
         }
     }
 
     @objc
     private func handleWelcomeCompleted() {
-        Task { @MainActor in
+        Task {
             SetupWindowManager.shared.close()
             await self.completePostStartSetup()
             self.showOverlay()
@@ -139,20 +138,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.store.beginShutdown()
             await SettingsStore.shared.flushPendingSave()
 
-            await MainActor.run {
-                SystemPowerObserver.shared.stop()
-                DiagnosticsMetrics.shared.stop()
-            }
+            SystemPowerObserver.shared.stop()
+            DiagnosticsMetrics.shared.stop()
 
             await BodySpeechAdapter.shared.stop()
             self.store.disconnect()
             await BackendService.shared.stop()
 
-            await MainActor.run {
-                OverlayWindowManager.shared.close()
-                SettingsWindowManager.shared.close()
-                NSApp.reply(toApplicationShouldTerminate: true)
-            }
+            OverlayWindowManager.shared.close()
+            SettingsWindowManager.shared.close()
+            NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
     }
@@ -176,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !self.isQuitting, !self.isStartingUp else { return }
         if SetupWindowManager.shared.isOnboardingCompleted {
             if OverlayWindowManager.shared.panel == nil {
-                Task { @MainActor in self.showOverlay() }
+                Task { self.showOverlay() }
             }
         } else {
             OverlayWindowManager.shared.close()
@@ -184,7 +179,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @MainActor
     private func startApp() async {
         defer { self.isStartingUp = false }
         let isDev = ProcessInfo.processInfo.environment["BOBE_DEV"] != nil
@@ -258,7 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if SetupWindowManager.shared.isOnboardingCompleted {
             self.showOverlay()
             self.store.connect()
-            Task { @MainActor in
+            Task {
                 await self.repromptVoiceSetupIfModelsMissing()
             }
         } else {
@@ -283,7 +277,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @MainActor
     private func showOverlay() {
         let theme = ThemeStore.shared.currentTheme
         let model = OverlayModel()
@@ -306,7 +299,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             marksOnboardingComplete: false,
             onComplete: { [weak self] in
                 SetupWindowManager.shared.close()
-                Task { @MainActor [weak self] in
+                Task { [weak self] in
                     guard let self else { return }
                     await self.startApp()
                 }
@@ -314,7 +307,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    @MainActor
     private func showServiceErrorDialog(error: Error, retryRounds: Int) async -> Bool {
         let isPersistent = retryRounds >= 2
         let summary = isPersistent

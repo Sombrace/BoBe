@@ -62,7 +62,7 @@ drag BoBe to Applications and open it. You need an Apple Silicon Mac with
 macOS 26 and a model: an API key, a Rail Relay token, a supported sign-in or
 Ollama ([guide](docs/using-bobe.md)).
 
-To build from source (Xcode 26 and [rustup](https://rustup.rs); nothing is
+To build from source (Xcode 27 and [rustup](https://rustup.rs); nothing is
 installed globally):
 
 ```bash

@@ -14,7 +14,7 @@ struct AvatarStatusBubble: View {
             case reconnecting
             case starting
 
-            @MainActor var label: String {
+            var label: String {
                 switch self {
                 case .thinking: L10n.tr("overlay.status.thinking")
                 case let .toolRunning(name):
