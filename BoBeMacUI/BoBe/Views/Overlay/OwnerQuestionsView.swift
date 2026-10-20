@@ -132,8 +132,9 @@ private struct OwnerQuestionRow: View {
 
     private func presented() async {
         guard NSApp.isActive, EndpointStore.shared.selection == self.selection else { return }
-        do { try await DaemonClient(endpoint: self.selection.endpoint).markOwnerQuestionPresented(self.question.id) }
-        catch {
+        do {
+            try await DaemonClient(endpoint: self.selection.endpoint).markOwnerQuestionPresented(self.question.id)
+        } catch {
             guard EndpointStore.shared.selection == self.selection else { return }
             self.error = error.localizedDescription
         }

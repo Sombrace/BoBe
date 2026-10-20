@@ -151,8 +151,7 @@ final class BobeStore {
     init(
         currentSelection: @escaping @MainActor () -> EndpointSelection = { EndpointStore.shared.selection },
         settingsStore: SettingsStore = .shared,
-        sendRequest: @escaping @MainActor (EndpointSelection, String, UUID) async throws -> SendMessageResponse = {
-            selection, content, requestID in
+        sendRequest: @escaping @MainActor (EndpointSelection, String, UUID) async throws -> SendMessageResponse = { selection, content, requestID in
             try await DaemonClient(endpoint: selection.endpoint).sendMessage(content, requestId: requestID)
         },
         conversationSnapshot: @escaping @MainActor (EndpointSelection) async throws -> ConversationSnapshotResponse = {

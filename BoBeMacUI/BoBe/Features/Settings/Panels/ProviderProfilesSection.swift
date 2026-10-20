@@ -403,6 +403,8 @@ struct ProviderProfilesSection: View {
 enum ProviderConnectionError: LocalizedError {
     case failed(String)
     var errorDescription: String? {
-        switch self { case let .failed(message): message }
+        switch self {
+        case let .failed(message): message
+        }
     }
 }

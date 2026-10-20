@@ -248,8 +248,7 @@ actor WB12OnboardingService {
             pending.removeSubrange(...newline)
             if let line = String(data: lineData, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
-               line.hasPrefix(WB12OnboardingProtocol.prefix)
-            {
+               line.hasPrefix(WB12OnboardingProtocol.prefix) {
                 return line
             }
         }

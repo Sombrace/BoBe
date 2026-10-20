@@ -78,8 +78,9 @@ struct ProviderConfigurationForm: View {
             let selection = self.observedSelection
             self.isPreparing = true
             defer { self.isPreparing = false }
-            do { try await self.completeConnection(selection) }
-            catch {
+            do {
+                try await self.completeConnection(selection)
+            } catch {
                 guard !Task.isCancelled, EndpointStore.shared.selection == selection else { return }
                 self.error = error.localizedDescription
             }
@@ -418,8 +419,9 @@ struct ProviderConfigurationForm: View {
         self.isPreparing = true
         Task {
             defer { self.isPreparing = false }
-            do { try await self.completeConnection(context.selection) }
-            catch {
+            do {
+                try await self.completeConnection(context.selection)
+            } catch {
                 guard EndpointStore.shared.selection == context.selection else { return }
                 self.error = error.localizedDescription
             }

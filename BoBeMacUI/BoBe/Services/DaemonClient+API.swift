@@ -103,8 +103,8 @@ extension DaemonClient {
             let schedule: Schedule
             enum CodingKeys: String, CodingKey { case schedule, requestId = "request_id" }
         }
-        return try await self.fetch("/agent/schedules", method: "POST", body: Request(requestId: requestId,
-                                                                                      schedule: Schedule(title: title, task: task, at: at.ISO8601Format(), everySeconds: everySeconds)))
+        let schedule = Schedule(title: title, task: task, at: at.ISO8601Format(), everySeconds: everySeconds)
+        return try await self.fetch("/agent/schedules", method: "POST", body: Request(requestId: requestId, schedule: schedule))
     }
 
     func agentTools() async throws -> AgentToolSelection {

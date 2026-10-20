@@ -536,8 +536,11 @@ actor BackendService {
     }
 
     private func writePID(_ pid: Int32) {
-        do { try "\(pid)".write(to: self.pidFilePath, atomically: true, encoding: .utf8) }
-        catch { logger.error("Could not save managed daemon PID: \(error.localizedDescription, privacy: .public)") }
+        do {
+            try "\(pid)".write(to: self.pidFilePath, atomically: true, encoding: .utf8)
+        } catch {
+            logger.error("Could not save managed daemon PID: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func cleanStalePID() async {

@@ -108,8 +108,11 @@ struct AgentWorkSection: View {
         .task(id: self.endpoint) {
             while !Task.isCancelled {
                 if !self.working { await self.refresh() }
-                do { try await Task.sleep(for: .seconds(5)) }
-                catch { return }
+                do {
+                    try await Task.sleep(for: .seconds(5))
+                } catch {
+                    return
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .bobeEndpointIdentityChanged)) { _ in
@@ -163,8 +166,11 @@ struct AgentWorkSection: View {
         defer { self.working = false }
         do {
             let client = DaemonClient(endpoint: endpoint.endpoint)
-            if resume { _ = try await client.resumeBackgroundJob(job.id) }
-            else { _ = try await client.cancelBackgroundJob(job.id) }
+            if resume {
+                _ = try await client.resumeBackgroundJob(job.id)
+            } else {
+                _ = try await client.cancelBackgroundJob(job.id)
+            }
             guard EndpointStore.shared.selection == endpoint else { return }
             await self.refresh()
         } catch {

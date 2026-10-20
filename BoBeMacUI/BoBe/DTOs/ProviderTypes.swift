@@ -169,7 +169,7 @@ nonisolated struct ProviderRoutesWire: Codable, Sendable, Equatable {
     let chat: WorkloadRouteWire
     let goals: WorkloadRouteWire
     let consolidate: WorkloadRouteWire
-    var small: WorkloadRouteWire? = nil
+    var small: WorkloadRouteWire?
 
     func route(for workload: ProviderWorkload) -> WorkloadRouteWire {
         switch workload {
