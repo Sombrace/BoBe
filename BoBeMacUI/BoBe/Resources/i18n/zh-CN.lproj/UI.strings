@@ -213,7 +213,7 @@
 "settings.expert.toggle" = "显示专家控制项";
 "settings.expert.toggle.description" = "默认关闭。如果想查看 BoBe 提供的全部调节选项，请开启。再次关闭后，已有的设置仍会继续生效。";
 "settings.expert.section.what_changes" = "会有哪些变化";
-"settings.expert.section.what_changes.list" = "• 模型代号（Pocket TTS、Parakeet、Nemotron）会与易懂的名称一起显示\n• Souls、档案和记忆新增原始 Markdown 模式\n• 工具服务器（MCP）可直接以原始 JSON 编辑\n• 显示严格离线控制项\n• 可改用终端登录作为备用方式";
+"settings.expert.section.what_changes.list" = "• 模型代号（Pocket TTS、Apple Speech）会与易懂的名称一起显示\n• Souls、档案和记忆新增原始 Markdown 模式\n• 工具服务器（MCP）可直接以原始 JSON 编辑\n• 显示严格离线控制项\n• 可改用终端登录作为备用方式";
 
 "overlay.error.daemon_disconnected" = "BoBe 已离线";
 "overlay.error.daemon_restart" = "重启";

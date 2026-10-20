@@ -238,7 +238,7 @@
 "settings.expert.toggle" = "Show expert controls";
 "settings.expert.toggle.description" = "Off by default. Turn on if you want to see every knob BoBe exposes. Existing values keep working when you turn it off again.";
 "settings.expert.section.what_changes" = "What changes";
-"settings.expert.section.what_changes.list" = "• Model codenames (Pocket TTS, Parakeet, Nemotron) show alongside friendly names\n• Souls, profiles, and memory gain a Raw Markdown mode\n• Tool servers (MCP) become editable as raw JSON\n• Strict offline controls become visible\n• Sign-in via Terminal fallback becomes available";
+"settings.expert.section.what_changes.list" = "• Model codenames (Pocket TTS, Apple Speech) show alongside friendly names\n• Souls, profiles, and memory gain a Raw Markdown mode\n• Tool servers (MCP) become editable as raw JSON\n• Strict offline controls become visible\n• Sign-in via Terminal fallback becomes available";
 
 "overlay.error.daemon_disconnected" = "BoBe is offline";
 "overlay.error.daemon_restart" = "Restart";

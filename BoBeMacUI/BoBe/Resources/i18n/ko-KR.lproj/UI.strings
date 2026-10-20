@@ -213,7 +213,7 @@
 "settings.expert.toggle" = "전문가용 설정 표시";
 "settings.expert.toggle.description" = "기본적으로 꺼져 있습니다. BoBe의 모든 세부 설정을 보려면 켜세요. 다시 꺼도 이미 설정한 값은 계속 적용됩니다.";
 "settings.expert.section.what_changes" = "달라지는 점";
-"settings.expert.section.what_changes.list" = "• 친숙한 이름 옆에 모델 코드명(Pocket TTS, Parakeet, Nemotron)이 함께 표시됩니다\n• 소울, 프로필, 메모리에 Markdown 원문 모드가 추가됩니다\n• 도구 서버(MCP)를 JSON 원문으로 편집할 수 있습니다\n• 완전 오프라인 설정이 표시됩니다\n• 터미널을 통한 대체 로그인 방법을 사용할 수 있습니다";
+"settings.expert.section.what_changes.list" = "• 친숙한 이름 옆에 모델 코드명(Pocket TTS, Apple Speech)이 함께 표시됩니다\n• 소울, 프로필, 메모리에 Markdown 원문 모드가 추가됩니다\n• 도구 서버(MCP)를 JSON 원문으로 편집할 수 있습니다\n• 완전 오프라인 설정이 표시됩니다\n• 터미널을 통한 대체 로그인 방법을 사용할 수 있습니다";
 
 "overlay.error.daemon_disconnected" = "BoBe가 오프라인이에요";
 "overlay.error.daemon_restart" = "다시 시작";

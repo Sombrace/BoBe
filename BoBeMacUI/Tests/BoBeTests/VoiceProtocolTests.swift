@@ -142,7 +142,7 @@ struct ServerVoiceMessageTests {
 
     @Test
     func decodesSpeechPlan() throws {
-        let msg = try decode(#"{"type":"speech_plan","plan":{"plan_id":"p1","stt_site":"endpoint","stt_engine_id":"parakeet","tts_site":"daemon","tts_engine_id":"server_pocket","voice_id":"af_bella","uplink":"transcript","downlink":"audio","eou_owner":"endpoint","wake_owner":"endpoint","tts_text_delivery":"none","reason":"voice_v2_endpoint_stt_daemon_tts"}}"#)
+        let msg = try decode(#"{"type":"speech_plan","plan":{"plan_id":"p1","stt_site":"endpoint","stt_engine_id":"apple_speech_analyzer","tts_site":"daemon","tts_engine_id":"server_pocket","voice_id":"af_bella","uplink":"transcript","downlink":"audio","eou_owner":"endpoint","wake_owner":"endpoint","tts_text_delivery":"none","reason":"voice_v2_endpoint_stt_daemon_tts"}}"#)
         guard case let .speechPlan(plan) = msg else {
             Issue.record("expected .speechPlan, got \(msg)")
             return

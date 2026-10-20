@@ -203,7 +203,7 @@
 "settings.expert.toggle" = "Mostrar controles para expertos";
 "settings.expert.toggle.description" = "Desactivado de forma predeterminada. Actívalo si quieres ver todos los controles que ofrece BoBe. Los valores que ya tengas seguirán funcionando cuando vuelvas a desactivarlo.";
 "settings.expert.section.what_changes" = "Qué cambia";
-"settings.expert.section.what_changes.list" = "• Los nombres en clave de los modelos (Pocket TTS, Parakeet, Nemotron) aparecen junto a los nombres sencillos\n• Las almas, los perfiles y la memoria tienen un modo de Markdown en bruto\n• Los servidores de herramientas (MCP) se pueden editar como JSON en bruto\n• Se muestran los controles del modo sin conexión estricto\n• Está disponible el inicio de sesión alternativo desde la Terminal";
+"settings.expert.section.what_changes.list" = "• Los nombres en clave de los modelos (Pocket TTS, Apple Speech) aparecen junto a los nombres sencillos\n• Las almas, los perfiles y la memoria tienen un modo de Markdown en bruto\n• Los servidores de herramientas (MCP) se pueden editar como JSON en bruto\n• Se muestran los controles del modo sin conexión estricto\n• Está disponible el inicio de sesión alternativo desde la Terminal";
 
 "overlay.error.daemon_disconnected" = "BoBe está sin conexión";
 "overlay.error.daemon_restart" = "Reiniciar";

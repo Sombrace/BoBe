@@ -203,7 +203,7 @@
 "settings.expert.toggle" = "Mostrar controles de especialista";
 "settings.expert.toggle.description" = "Desativado por padrão. Ative se quiser ver todos os controles que a BoBe oferece. Os valores existentes continuam funcionando se você desativar de novo.";
 "settings.expert.section.what_changes" = "O que muda";
-"settings.expert.section.what_changes.list" = "• Os codinomes dos modelos (Pocket TTS, Parakeet, Nemotron) aparecem ao lado dos nomes amigáveis\n• Souls, perfis e memória ganham um modo de Markdown bruto\n• Os servidores de ferramentas (MCP) ficam editáveis como JSON bruto\n• Os controles do modo off-line estrito ficam visíveis\n• O login pelo Terminal fica disponível como alternativa";
+"settings.expert.section.what_changes.list" = "• Os codinomes dos modelos (Pocket TTS, Apple Speech) aparecem ao lado dos nomes amigáveis\n• Souls, perfis e memória ganham um modo de Markdown bruto\n• Os servidores de ferramentas (MCP) ficam editáveis como JSON bruto\n• Os controles do modo off-line estrito ficam visíveis\n• O login pelo Terminal fica disponível como alternativa";
 
 "overlay.error.daemon_disconnected" = "A BoBe está off-line";
 "overlay.error.daemon_restart" = "Reiniciar";

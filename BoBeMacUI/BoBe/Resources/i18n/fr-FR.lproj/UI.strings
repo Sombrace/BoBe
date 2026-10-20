@@ -203,7 +203,7 @@
 "settings.expert.toggle" = "Afficher les réglages experts";
 "settings.expert.toggle.description" = "Désactivé par défaut. Activez-le si vous voulez voir tous les réglages que propose BoBe. Les valeurs déjà définies continuent de fonctionner si vous le désactivez ensuite.";
 "settings.expert.section.what_changes" = "Ce qui change";
-"settings.expert.section.what_changes.list" = "• Les noms de code des modèles (Pocket TTS, Parakeet, Nemotron) s’affichent à côté de leurs noms simples\n• Les âmes, les profils et la mémoire gagnent un mode Markdown brut\n• Les serveurs d’outils (MCP) deviennent modifiables en JSON brut\n• Les réglages du mode hors ligne strict apparaissent\n• La connexion de secours via le Terminal devient disponible";
+"settings.expert.section.what_changes.list" = "• Les noms de code des modèles (Pocket TTS, Apple Speech) s’affichent à côté de leurs noms simples\n• Les âmes, les profils et la mémoire gagnent un mode Markdown brut\n• Les serveurs d’outils (MCP) deviennent modifiables en JSON brut\n• Les réglages du mode hors ligne strict apparaissent\n• La connexion de secours via le Terminal devient disponible";
 
 "overlay.error.daemon_disconnected" = "BoBe est hors ligne";
 "overlay.error.daemon_restart" = "Redémarrer";

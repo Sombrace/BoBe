@@ -213,7 +213,7 @@
 "settings.expert.toggle" = "Experteneinstellungen anzeigen";
 "settings.expert.toggle.description" = "Standardmäßig aus. Schalte es ein, wenn du jeden Regler sehen willst, den BoBe bietet. Bestehende Werte gelten weiter, wenn du es wieder ausschaltest.";
 "settings.expert.section.what_changes" = "Was sich ändert";
-"settings.expert.section.what_changes.list" = "• Codenamen der Modelle (Pocket TTS, Parakeet, Nemotron) erscheinen neben den verständlichen Namen\n• Souls, Profile und Gedächtnis erhalten einen Rohtextmodus für Markdown\n• Werkzeugserver (MCP) lassen sich als JSON-Rohtext bearbeiten\n• Einstellungen für den strikten Offlinemodus werden sichtbar\n• Die Anmeldung über das Terminal steht als Ausweichlösung bereit";
+"settings.expert.section.what_changes.list" = "• Codenamen der Modelle (Pocket TTS, Apple Speech) erscheinen neben den verständlichen Namen\n• Souls, Profile und Gedächtnis erhalten einen Rohtextmodus für Markdown\n• Werkzeugserver (MCP) lassen sich als JSON-Rohtext bearbeiten\n• Einstellungen für den strikten Offlinemodus werden sichtbar\n• Die Anmeldung über das Terminal steht als Ausweichlösung bereit";
 
 "overlay.error.daemon_disconnected" = "BoBe ist offline";
 "overlay.error.daemon_restart" = "Neu starten";

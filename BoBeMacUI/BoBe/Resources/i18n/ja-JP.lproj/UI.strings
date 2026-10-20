@@ -213,7 +213,7 @@
 "settings.expert.toggle" = "上級者向けの項目を表示";
 "settings.expert.toggle.description" = "既定ではオフです。BoBeのすべての調整項目を見たい場合はオンにしてください。オフに戻しても、設定済みの値はそのまま使われます。";
 "settings.expert.section.what_changes" = "変わること";
-"settings.expert.section.what_changes.list" = "• わかりやすい名前と一緒に、モデルのコードネーム（Pocket TTS、Parakeet、Nemotron）が表示されます\n• ソウル、プロファイル、メモリにMarkdownの直接編集モードが加わります\n• ツールサーバー（MCP）をJSONで直接編集できるようになります\n• 完全オフラインの設定が表示されます\n• 代替手段として、ターミナルからのサインインが使えるようになります";
+"settings.expert.section.what_changes.list" = "• わかりやすい名前と一緒に、モデルのコードネーム（Pocket TTS、Apple Speech）が表示されます\n• ソウル、プロファイル、メモリにMarkdownの直接編集モードが加わります\n• ツールサーバー（MCP）をJSONで直接編集できるようになります\n• 完全オフラインの設定が表示されます\n• 代替手段として、ターミナルからのサインインが使えるようになります";
 
 "overlay.error.daemon_disconnected" = "BoBeはオフラインです";
 "overlay.error.daemon_restart" = "再起動";
