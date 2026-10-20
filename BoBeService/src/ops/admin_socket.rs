@@ -63,9 +63,9 @@ async fn handle(state: Arc<AppState>, stream: UnixStream) -> Result<(), AppError
         Ok(result) => AdminResponse::Ok { result },
         Err(error) => refusal(error),
     };
-    writer
-        .write_all(format!("{}\n", serde_json::to_string(&response)?).as_bytes())
-        .await?;
+    let mut frame = serde_json::to_vec(&response)?;
+    frame.push(b'\n');
+    writer.write_all(&frame).await?;
     writer.shutdown().await?;
     Ok(())
 }
@@ -158,9 +158,9 @@ async fn exchange(
     request: serde_json::Value,
 ) -> Result<serde_json::Value, AppError> {
     let (reader, mut writer) = stream.into_split();
-    writer
-        .write_all(format!("{}\n", serde_json::to_string(&request)?).as_bytes())
-        .await?;
+    let mut frame = serde_json::to_vec(&request)?;
+    frame.push(b'\n');
+    writer.write_all(&frame).await?;
     writer.shutdown().await?;
     let mut line = String::new();
     BufReader::new(reader).read_line(&mut line).await?;

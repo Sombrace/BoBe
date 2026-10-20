@@ -2678,20 +2678,13 @@ fn config_value_source(
         .parse()
         .map_err(|error: toml_edit::TomlError| error::AppError::Config(error.to_string()))?;
     let parts: Vec<&str> = key.split('.').collect();
-    let persisted = if let Some((field, sections)) = parts.split_last() {
-        let mut table = doc.as_table();
-        let mut valid_path = true;
-        for section in sections {
-            let Some(next) = table.get(section).and_then(toml_edit::Item::as_table) else {
-                valid_path = false;
-                break;
-            };
-            table = next;
-        }
-        valid_path && table.contains_key(field)
-    } else {
-        false
-    };
+    let persisted = parts.split_last().is_some_and(|(field, sections)| {
+        sections
+            .iter()
+            .try_fold(doc.as_item(), |item, section| item.get(section))
+            .and_then(toml_edit::Item::as_table_like)
+            .is_some_and(|table| table.contains_key(field))
+    });
     Ok(if persisted { "config_file" } else { "default" })
 }
 

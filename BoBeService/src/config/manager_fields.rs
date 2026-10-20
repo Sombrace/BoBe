@@ -7,7 +7,7 @@ use crate::config::Config;
 pub(crate) fn apply(config: &mut Config, changes: &HashMap<String, serde_json::Value>) {
     macro_rules! set_parsed {
         ($field:expr, $value:expr, $key:expr) => {
-            match serde_json::from_value($value.clone()) {
+            match serde::Deserialize::deserialize($value) {
                 Ok(v) => $field = v,
                 Err(_) => warn!(field = $key, "config_manager.parse_failed"),
             }
@@ -19,7 +19,7 @@ pub(crate) fn apply(config: &mut Config, changes: &HashMap<String, serde_json::V
             match $value {
                 serde_json::Value::Null => $field = None,
                 serde_json::Value::String(s) if s.is_empty() => $field = None,
-                value => match serde_json::from_value::<String>(value.clone()) {
+                value => match <String as serde::Deserialize>::deserialize(value) {
                     Ok(value) => $field = Some(value),
                     Err(_) => warn!(field = $key, "config_manager.parse_failed"),
                 },

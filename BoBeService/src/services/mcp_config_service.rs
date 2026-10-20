@@ -515,7 +515,9 @@ fn blocked_and_dangerous(deps: &McpConfigDeps) -> (Vec<String>, Vec<String>) {
 }
 
 fn redacted_json(file: &McpConfigFile) -> Result<String, AppError> {
-    Ok(format!("{}\n", serde_json::to_string_pretty(file)?))
+    let mut text = serde_json::to_string_pretty(file)?;
+    text.push('\n');
+    Ok(text)
 }
 
 fn env_metadata(entry: &McpServerEntry) -> (Vec<String>, Vec<String>) {
