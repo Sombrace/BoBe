@@ -19,7 +19,7 @@ pub(crate) struct BackgroundWork {
     session: Arc<RuntimeSession>,
     personal_data: Arc<RwLock<()>>,
     initialization:
-        Arc<arc_swap::ArcSwap<crate::db::runtime_initialization_repo::InitializationState>>,
+        tokio::sync::watch::Sender<crate::db::runtime_initialization_repo::InitializationState>,
     runs: Arc<RunRegistry>,
     connections: Arc<crate::util::sse::connection_manager::SseConnectionManager>,
     goals: Arc<crate::services::goals::goals_service::GoalsService>,
@@ -51,8 +51,8 @@ impl BackgroundWork {
         runtime: Arc<PiRuntime>,
         session: Arc<RuntimeSession>,
         personal_data: Arc<RwLock<()>>,
-        initialization: Arc<
-            arc_swap::ArcSwap<crate::db::runtime_initialization_repo::InitializationState>,
+        initialization: tokio::sync::watch::Sender<
+            crate::db::runtime_initialization_repo::InitializationState,
         >,
         runs: Arc<RunRegistry>,
         connections: Arc<crate::util::sse::connection_manager::SseConnectionManager>,
@@ -88,7 +88,7 @@ impl BackgroundWork {
         let mut cancellations = std::collections::HashMap::<Uuid, CancellationToken>::new();
         while !shutdown.is_cancelled() {
             if self.enabled
-                && **self.initialization.load()
+                && *self.initialization.borrow()
                     == crate::db::runtime_initialization_repo::InitializationState::Ready
             {
                 if let Err(error) = self.queue_schedules().await {
@@ -292,7 +292,7 @@ impl BackgroundWork {
 
     async fn deliver_results(&self, shutdown: CancellationToken) {
         while !shutdown.is_cancelled() {
-            if **self.initialization.load()
+            if *self.initialization.borrow()
                 == crate::db::runtime_initialization_repo::InitializationState::Ready
                 && let Err(error) = self.deliver_one(&shutdown).await
             {

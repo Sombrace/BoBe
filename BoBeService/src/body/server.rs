@@ -299,7 +299,11 @@ async fn supervise_native_mdns(config: BodyConfig, cancel: CancellationToken) {
     let mut child: Option<Child> = None;
     let mut registered_address = None;
     loop {
-        match primary_ipv4() {
+        match tokio::task::spawn_blocking(primary_ipv4)
+            .await
+            .map_err(anyhow::Error::from)
+            .flatten()
+        {
             Ok(address) => {
                 let stopped = child
                     .as_mut()

@@ -34,7 +34,7 @@ pub(crate) struct Readiness {
 impl Readiness {
     pub(crate) async fn check(infra: &Infrastructure) -> Self {
         let database_available = sqlx::query("SELECT 1").fetch_one(&infra.db).await.is_ok();
-        Self::evaluate(database_available, **infra.initialization.load())
+        Self::evaluate(database_available, *infra.initialization.borrow())
     }
 
     pub(crate) fn evaluate(

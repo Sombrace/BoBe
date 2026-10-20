@@ -1069,7 +1069,7 @@ impl BodyGateway {
     }
 
     pub(crate) async fn preempt_pending_wake(&self) {
-        self.wake_arbitrator.preempt_pending().await;
+        self.wake_arbitrator.preempt_pending();
     }
 
     pub(crate) async fn request_capture(

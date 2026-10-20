@@ -27,7 +27,7 @@ pub(crate) struct Infrastructure {
     pub(crate) _runtime_locks: crate::util::runtime_lock::RuntimeLocks,
     pub(crate) identity: Arc<crate::db::runtime_authority_repo::RuntimeIdentity>,
     pub(crate) initialization:
-        Arc<ArcSwap<crate::db::runtime_initialization_repo::InitializationState>>,
+        tokio::sync::watch::Sender<crate::db::runtime_initialization_repo::InitializationState>,
     pub(crate) config: Arc<ArcSwap<Config>>,
     pub(crate) config_root: Arc<std::path::PathBuf>,
     pub(crate) config_manager: Arc<ConfigManager>,

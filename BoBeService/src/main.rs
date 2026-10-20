@@ -2970,10 +2970,10 @@ fn spawn_background_tasks(
 
     {
         let session = Arc::clone(&state.runtime.runtime_session);
-        let initialization = Arc::clone(&state.infra.initialization);
+        let initialization = state.infra.initialization.subscribe();
         let token = shutdown.clone();
         set.spawn(async move {
-            if !wait_for_initialization(&initialization, &token).await {
+            if !wait_for_initialization(initialization, &token).await {
                 return "runtime_session";
             }
             if token.run_until_cancelled(session.run()).await.is_none() {
@@ -2990,9 +2990,9 @@ fn spawn_background_tasks(
             Arc::clone(&state.runtime.personal_data_lifecycle),
         );
         let token = shutdown.clone();
-        let initialization = Arc::clone(&state.infra.initialization);
+        let initialization = state.infra.initialization.subscribe();
         set.spawn(async move {
-            if wait_for_initialization(&initialization, &token).await {
+            if wait_for_initialization(initialization, &token).await {
                 scheduler.run(token).await;
             }
             "consolidation"
@@ -3052,24 +3052,17 @@ fn spawn_background_tasks(
 }
 
 async fn wait_for_initialization(
-    initialization: &arc_swap::ArcSwap<db::runtime_initialization_repo::InitializationState>,
+    mut initialization: tokio::sync::watch::Receiver<
+        db::runtime_initialization_repo::InitializationState,
+    >,
     shutdown: &tokio_util::sync::CancellationToken,
 ) -> bool {
-    loop {
-        if shutdown.is_cancelled() {
-            return false;
-        }
-        if **initialization.load() == db::runtime_initialization_repo::InitializationState::Ready {
-            return true;
-        }
-        if shutdown
-            .run_until_cancelled(tokio::time::sleep(std::time::Duration::from_secs(1)))
-            .await
-            .is_none()
-        {
-            return false;
-        }
-    }
+    shutdown
+        .run_until_cancelled(initialization.wait_for(|state| {
+            *state == db::runtime_initialization_repo::InitializationState::Ready
+        }))
+        .await
+        .is_some_and(|ready| ready.is_ok())
 }
 
 async fn drain_background_tasks(tasks: &mut tokio::task::JoinSet<&'static str>) {
@@ -3162,29 +3155,29 @@ mod tests {
     #[tokio::test]
     async fn initialization_defers_companion_schedulers_without_blocking_shutdown() {
         use db::runtime_initialization_repo::InitializationState;
-        let initialization = arc_swap::ArcSwap::from_pointee(InitializationState::ProviderRequired);
+        let initialization = tokio::sync::watch::Sender::new(InitializationState::ProviderRequired);
         let shutdown = tokio_util::sync::CancellationToken::new();
         assert!(
             tokio::time::timeout(
                 std::time::Duration::from_millis(10),
-                wait_for_initialization(&initialization, &shutdown),
+                wait_for_initialization(initialization.subscribe(), &shutdown),
             )
             .await
             .is_err()
         );
-        initialization.store(Arc::new(InitializationState::PersonalizationRequired));
+        initialization.send_replace(InitializationState::PersonalizationRequired);
         assert!(
             tokio::time::timeout(
                 std::time::Duration::from_millis(10),
-                wait_for_initialization(&initialization, &shutdown),
+                wait_for_initialization(initialization.subscribe(), &shutdown),
             )
             .await
             .is_err()
         );
-        initialization.store(Arc::new(InitializationState::Ready));
-        assert!(wait_for_initialization(&initialization, &shutdown).await);
+        initialization.send_replace(InitializationState::Ready);
+        assert!(wait_for_initialization(initialization.subscribe(), &shutdown).await);
         shutdown.cancel();
-        assert!(!wait_for_initialization(&initialization, &shutdown).await);
+        assert!(!wait_for_initialization(initialization.subscribe(), &shutdown).await);
     }
 
     #[test]

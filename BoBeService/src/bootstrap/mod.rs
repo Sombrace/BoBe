@@ -292,13 +292,13 @@ async fn run_with_config(
     let provider_login =
         crate::agent::auth::LoginCoordinator::new(&agent, authority_lifecycle.maintenance_flag());
 
-    let initialization = Arc::new(ArcSwap::from_pointee(initialization));
+    let initialization = tokio::sync::watch::Sender::new(initialization);
     let background = crate::runtime::background_work::BackgroundWork::new(
         agent_jobs,
         Arc::clone(&workers),
         Arc::clone(&wired.runtime_session),
         Arc::clone(&personal_data_lifecycle),
-        Arc::clone(&initialization),
+        initialization.clone(),
         Arc::clone(&runs),
         Arc::clone(&infra.connection_manager),
         Arc::clone(&wired.goals_service),
