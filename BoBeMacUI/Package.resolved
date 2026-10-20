@@ -1,5 +1,5 @@
 {
-  "originHash" : "250678b06c3f735a085469872034a98846e6a654e38640a22371286c61f87243",
+  "originHash" : "daecc890b9b9c371c77abe8d61209e101acfce255bd5192c50445e77b9803583",
   "pins" : [
     {
       "identity" : "fluidaudio",
@@ -24,8 +24,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/pointfreeco/swift-concurrency-extras",
       "state" : {
-        "revision" : "5fa253428866f2360c3754e88537f700ed2656b5",
-        "version" : "1.4.1"
+        "revision" : "8a4260f7373493435bd21194585c95b72bfdd401",
+        "version" : "1.4.3"
       }
     },
     {

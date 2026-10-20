@@ -3,7 +3,7 @@ options:
   bundleIdPrefix: com.bobe
   deploymentTarget:
     macOS: "26.0"
-  xcodeVersion: "26.0"
+  xcodeVersion: "27.0"
   generateEmptyDirectories: false
   groupSortPosition: none
 
@@ -17,6 +17,7 @@ packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
     exactVersion: 0.17.7
+    traits: []
 
 settings:
   base:

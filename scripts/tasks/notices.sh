@@ -25,7 +25,6 @@ cp -RP third_party/speech-licenses "$output/speech"
 } >"$output/THIRD_PARTY_NOTICES.txt"
 
 if [[ -n "$swift_checkouts" ]]; then
-    cp -RP third_party/app-licenses "$output/app"
     for package in "$swift_checkouts"/*/; do
         name="$(basename "$package")"
         mkdir -p "$output/swift/$name"

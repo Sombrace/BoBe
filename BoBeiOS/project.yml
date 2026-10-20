@@ -3,7 +3,7 @@ options:
   bundleIdPrefix: com.bobe
   deploymentTarget:
     iOS: "26.0"
-  xcodeVersion: "26.0"
+  xcodeVersion: "27.0"
   generateEmptyDirectories: false
   groupSortPosition: none
 

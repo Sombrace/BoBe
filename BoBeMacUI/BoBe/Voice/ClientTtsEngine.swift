@@ -87,15 +87,17 @@ actor ClientTtsEngine {
     }
 
     private static func convertTo24kInt16(_ samples: [Float]) throws -> [Int16] {
+        let sourceRate = Double(Supertonic3Constants.sampleRate)
+        let targetRate = Double(VoiceWire.ttsOutputSampleRate)
         guard let sourceFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
-            sampleRate: 44_100,
+            sampleRate: sourceRate,
             channels: 1,
             interleaved: false
         ),
             let targetFormat = AVAudioFormat(
                 commonFormat: .pcmFormatInt16,
-                sampleRate: 24_000,
+                sampleRate: targetRate,
                 channels: 1,
                 interleaved: false
             ),
@@ -114,7 +116,7 @@ actor ClientTtsEngine {
             sourceData.update(from: base, count: values.count)
         }
 
-        let capacity = AVAudioFrameCount(Double(samples.count) * 24_000 / 44_100) + 16
+        let capacity = AVAudioFrameCount(Double(samples.count) * targetRate / sourceRate) + 16
         guard let output = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: capacity) else {
             throw ClientTtsEngineError.audioConversionFailed
         }
