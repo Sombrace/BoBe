@@ -4,7 +4,7 @@ files:
   include: ["CMakeLists.txt", "idf_component.yml", "*.c", "*.h", "include/**/*.h"]
 description: "Portable C/C++ BodyLink protocol, interaction, and signed OTA format library"
 dependencies:
-  idf: ">=6.0.2,<6.2"
+  idf: ">=6.1,<6.2"
   espressif/cjson:
     version: "==1.7.19~2"
     require: public

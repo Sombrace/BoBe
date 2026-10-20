@@ -92,7 +92,7 @@ def create_project(
         )
         (output / "README.md").write_text(
             f"# {name}\n\nGenerated from the BoBe ESP32 SDK's `{template}` template for `{target}`.\n\n"
-            "Use ESP-IDF 6.1 (or the tested 6.0.2 baseline).\n\n"
+            "Use ESP-IDF 6.1.\n\n"
             "```sh\nidf.py menuconfig\nidf.py build\n```\n\n"
             "Building does not flash hardware. Keep device credentials under the ignored `private/` directory.\n"
         )

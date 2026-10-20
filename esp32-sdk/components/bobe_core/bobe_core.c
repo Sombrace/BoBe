@@ -17,11 +17,11 @@
 #include "bobe_voice_frontend.h"
 #include "esp_app_desc.h"
 #include "esp_check.h"
+#include "esp_clk_tree.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_pm.h"
-#include "esp_private/esp_clk.h"
 #include "esp_random.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
@@ -806,6 +806,18 @@ static void send_update_state(const bobe_policy_effect_t *effect)
     }
 }
 
+static uint32_t cpu_frequency_mhz(void)
+{
+    uint32_t frequency_hz = 0;
+    return esp_clk_tree_src_get_freq_hz(
+               SOC_MOD_CLK_CPU,
+               ESP_CLK_TREE_SRC_FREQ_PRECISION_CACHED,
+               &frequency_hz
+           ) == ESP_OK
+               ? frequency_hz / 1000000U
+               : 0U;
+}
+
 static void report_health(void)
 {
     flush_user_settings();
@@ -844,7 +856,7 @@ static void report_health(void)
         .playback_sequence_gaps =
             bobe_transport_playback_sequence_gaps(),
         .temperature_millicelsius = core.temperature_millicelsius,
-        .cpu_frequency_mhz = (uint32_t)esp_clk_cpu_freq() / 1000000U,
+        .cpu_frequency_mhz = cpu_frequency_mhz(),
         .display_frame_rate = display_stats.frame_rate,
         .backlight_percent = core.power_plan.backlight_percent,
     };

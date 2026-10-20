@@ -125,6 +125,8 @@ build_firmware_profile() {
     fi
     if [[ "$esp_sr" == "yes" ]]; then
         require_config "$sdkconfig" 'CONFIG_BOBE_ENABLE_ESP_SR=y'
+        require_config "$sdkconfig" \
+            'CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y'
     else
         reject_config "$sdkconfig" CONFIG_BOBE_ENABLE_ESP_SR
     fi

@@ -5,8 +5,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="$ROOT/hil/fixture/pico2"
 BUILD="$ROOT/build-pico-fixture"
-SDK="$ROOT/.deps/pico-sdk"
-TOOLCHAIN="$ROOT/.deps/pico-riscv-toolchain"
+
+# shellcheck disable=SC1090
+source "$ROOT/hil/fixture/pico2/toolchain.lock"
+SDK="$ROOT/.deps/pico-sdk-$PICO_SDK_VERSION"
+TOOLCHAIN="$ROOT/.deps/pico-riscv-toolchain-$PICO_SDK_TOOLS_VERSION"
 
 "$ROOT/tools/bootstrap_pico_fixture.sh"
 

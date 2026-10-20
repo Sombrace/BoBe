@@ -107,6 +107,9 @@ int main(void)
     build_offer(offer, sizeof(offer), escaped, "not-base64");
     CHECK(verify(offer) == BOBE_UPDATE_OFFER_SIGNATURE_INVALID);
 
+    build_offer(offer, sizeof(offer), escaped, "c2ln\\uZZZZ");
+    CHECK(verify(offer) == BOBE_UPDATE_OFFER_MALFORMED);
+
     snprintf(
         offer,
         sizeof(offer),

@@ -14,13 +14,21 @@ def report(project: Path | None) -> dict:
         tools[command] = shutil.which(command)
         if tools[command] is None:
             findings.append(f"Install {command} before using the development helpers")
-    toolchains = {}
-    versions = json.loads((ROOT / "tools/toolchains.json").read_text())["tested_versions"]
-    for version in versions:
-        source = ROOT / ".deps" / f"esp-idf-v{version}"
-        python = ROOT / ".deps/espressif/python_env" / f"bobe-{version}/bin/python"
-        toolchains[version] = {"source": source.is_dir(), "python": python.is_file()}
-    if not any(value["source"] and value["python"] for value in toolchains.values()):
+    pin = dict(
+        line.split("=", 1)
+        for line in (ROOT / "tools/esp-idf.lock").read_text().splitlines()
+        if "=" in line
+    )
+    source = ROOT / ".deps" / f"esp-idf-{pin['ESP_IDF_DESCRIBE']}"
+    python = ROOT / ".deps/espressif/python_env" / f"bobe-{pin['ESP_IDF_VERSION']}/bin/python"
+    toolchains = {
+        pin["ESP_IDF_DESCRIBE"]: {
+            "commit": pin["ESP_IDF_COMMIT"],
+            "source": (source / "export.sh").is_file(),
+            "python": python.is_file(),
+        }
+    }
+    if not all(value["source"] and value["python"] for value in toolchains.values()):
         findings.append("Run tools/bootstrap.sh to prepare a project-local ESP-IDF environment")
     project_status = None
     if project is not None:

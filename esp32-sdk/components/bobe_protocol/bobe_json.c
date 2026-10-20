@@ -31,6 +31,49 @@ bool bobe_utf8_valid(const char *input, size_t length)
     return true;
 }
 
+static bool hex_digit(char byte)
+{
+    return (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f') ||
+           (byte >= 'A' && byte <= 'F');
+}
+
+static size_t escape_size(const char *input, size_t length, size_t index)
+{
+    if (index + 1U >= length) return 0;
+    switch (input[index + 1U]) {
+    case '"': case '\\': case '/': case 'b': case 'f': case 'n': case 'r': case 't':
+        return 2;
+    case 'u':
+        break;
+    default:
+        return 0;
+    }
+    if (index + 5U >= length) return 0;
+    for (size_t offset = 2; offset < 6U; ++offset) {
+        if (!hex_digit(input[index + offset])) return 0;
+    }
+    return memcmp(&input[index + 2U], "0000", 4) == 0 ? 0 : 6;
+}
+
+bool bobe_json_escapes_valid(const char *input, size_t length)
+{
+    if (input == NULL) return false;
+    bool quoted = false;
+    for (size_t index = 0; index < length; ++index) {
+        const char byte = input[index];
+        if (!quoted) {
+            quoted = byte == '"';
+        } else if (byte == '\\') {
+            const size_t size = escape_size(input, length, index);
+            if (size == 0) return false;
+            index += size - 1U;
+        } else if (byte == '"') {
+            quoted = false;
+        }
+    }
+    return true;
+}
+
 bool bobe_json_within_limits(const char *input, size_t length)
 {
     if (length == 0 || length > BOBE_CONTROL_MAX_BYTES || !bobe_utf8_valid(input, length)) {
@@ -38,13 +81,16 @@ bool bobe_json_within_limits(const char *input, size_t length)
     }
     unsigned depth = 0;
     bool quoted = false;
-    bool escaped = false;
     for (size_t index = 0; index < length; ++index) {
         const char byte = input[index];
         if (quoted) {
-            if (escaped) escaped = false;
-            else if (byte == '\\') escaped = true;
-            else if (byte == '"') quoted = false;
+            if (byte == '\\') {
+                const size_t size = escape_size(input, length, index);
+                if (size == 0) return false;
+                index += size - 1U;
+            } else if (byte == '"') {
+                quoted = false;
+            }
             continue;
         }
         if (byte == '"') quoted = true;

@@ -2,9 +2,9 @@
   "version": "0.2.0",
   "description": "esp-bobe bobe_provisioning",
   "dependencies": {
-    "idf": ">=6.0.2,<6.2",
+    "idf": ">=6.1,<6.2",
     "espressif/network_provisioning": {
-      "version": "==1.2.4",
+      "version": "==1.3.2",
       "require": "public"
     }
   }

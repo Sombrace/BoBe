@@ -18,8 +18,17 @@ ESP_PROV = (
     ROOT
     / "managed_components/espressif__network_provisioning/tool/esp_prov"
 )
-IDF_VERSION = os.environ.get("BOBE_IDF_VERSION", "6.0.2")
-IDF_PATH = Path(os.environ.get("IDF_PATH", str(ROOT.parents[1] / f".deps/esp-idf-v{IDF_VERSION}")))
+IDF_PIN = dict(
+    line.split("=", 1)
+    for line in (ROOT.parents[1] / "tools/esp-idf.lock").read_text().splitlines()
+    if "=" in line
+)
+IDF_PATH = Path(
+    os.environ.get(
+        "IDF_PATH",
+        str(ROOT.parents[1] / f".deps/esp-idf-{IDF_PIN['ESP_IDF_DESCRIBE']}"),
+    )
+)
 CLAIM_FIELDS = {
     "endpoint_uri",
     "trust_kid",

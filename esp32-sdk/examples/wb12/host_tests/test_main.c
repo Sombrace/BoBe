@@ -166,6 +166,25 @@ static void test_control_parser(void)
         "\"session_id\":\"x\\u0000y\",\"heartbeat_interval_ms\":1000,"
         "\"controller_epoch\":1}";
     CHECK(parse(nul_escape, &message) == BOBE_PROTOCOL_MALFORMED);
+    const char *const invalid_escapes[] = {"x\\uZZZZy", "x\\u12", "x\\qy"};
+    for (size_t index = 0;
+         index < sizeof(invalid_escapes) / sizeof(invalid_escapes[0]);
+         ++index) {
+        char invalid_escape[256];
+        snprintf(
+            invalid_escape,
+            sizeof(invalid_escape),
+            "{\"type\":\"welcome\",\"protocol_major\":1,\"protocol_minor\":1,"
+            "\"session_id\":\"%s\",\"heartbeat_interval_ms\":1000,"
+            "\"controller_epoch\":1}",
+            invalid_escapes[index]
+        );
+        CHECK(parse(invalid_escape, &message) == BOBE_PROTOCOL_MALFORMED);
+    }
+    const char valid_escapes[] =
+        "{\"type\":\"error\",\"protocol_major\":1,"
+        "\"code\":\"x\",\"message\":\"\\\"\\\\\\/\\b\\f\\n\\r\\t\\u00e9\"}";
+    CHECK(parse(valid_escapes, &message) == BOBE_PROTOCOL_OK);
     const char raw_nul[] =
         "{\"type\":\"error\",\"protocol_major\":1,"
         "\"code\":\"x\",\"message\":\"y\"}\0junk";

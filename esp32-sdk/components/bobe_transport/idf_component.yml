@@ -4,7 +4,7 @@ files:
   include: ["CMakeLists.txt", "idf_component.yml", "*.c", "*.h", "include/**/*.h"]
 description: "Authenticated BodyLink WebSocket transport with bounded queues"
 dependencies:
-  idf: ">=6.0.2,<6.2"
+  idf: ">=6.1,<6.2"
   bobe_platform:
     path: ../bobe_platform
     require: public
@@ -12,5 +12,5 @@ dependencies:
     path: ../bobe_protocol
     require: public
   espressif/esp_websocket_client:
-    version: "==1.7.0"
+    version: "==1.8.0"
     require: public

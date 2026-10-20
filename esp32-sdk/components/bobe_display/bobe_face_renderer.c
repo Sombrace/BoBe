@@ -38,7 +38,7 @@ static void configure_shape(lv_obj_t *object, lv_color_t color)
     lv_obj_set_style_bg_opa(object, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(object, color, 0);
     lv_obj_set_style_radius(object, LV_RADIUS_CIRCLE, 0);
-    lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_clickable(object, false);
 }
 
 static void configure_arc(lv_obj_t *object, lv_color_t color, int32_t width)
@@ -50,16 +50,15 @@ static void configure_arc(lv_obj_t *object, lv_color_t color, int32_t width)
     lv_obj_set_style_arc_opa(object, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_arc_opa(object, LV_OPA_TRANSP, LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(object, LV_OPA_TRANSP, LV_PART_KNOB);
-    lv_obj_remove_flag(object, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_clickable(object, false);
 }
 
 static void apply_box(lv_obj_t *object, const bobe_face_box_t *box)
 {
+    lv_obj_set_hidden(object, !box->visible);
     if (!box->visible) {
-        lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
         return;
     }
-    lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_size(object, box->width, box->height);
     lv_obj_set_pos(object, box->x, box->y);
 }
@@ -75,7 +74,7 @@ static void apply_decor(
     uint32_t accent
 )
 {
-    lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(object, false);
     lv_obj_set_size(object, decor->width, decor->height);
     lv_obj_set_pos(object, decor->x, decor->y);
     lv_obj_set_style_radius(object, face_radius(decor->radius), 0);
@@ -164,15 +163,9 @@ static void apply_local_status(
         face_colour(battery_rgb),
         0
     );
-    if (status->battery_valid) {
-        lv_obj_remove_flag(renderer->battery_body, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(renderer->battery_fill, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(renderer->battery_tip, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(renderer->battery_body, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(renderer->battery_fill, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(renderer->battery_tip, LV_OBJ_FLAG_HIDDEN);
-    }
+    lv_obj_set_hidden(renderer->battery_body, !status->battery_valid);
+    lv_obj_set_hidden(renderer->battery_fill, !status->battery_valid);
+    lv_obj_set_hidden(renderer->battery_tip, !status->battery_valid);
     renderer->applied_status = *status;
     renderer->status_initialized = true;
 }
@@ -213,17 +206,17 @@ static void apply_theme(bobe_face_renderer_t *renderer, uint32_t accent)
         if (index < theme->decor_count) {
             apply_decor(renderer->decor[index], &theme->decor[index], accent);
         } else {
-            lv_obj_add_flag(renderer->decor[index], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_hidden(renderer->decor[index], true);
         }
     }
     for (uint8_t index = 0; index < BOBE_FACE_MAX_DECOR_ARCS; ++index) {
         lv_obj_t *const object = renderer->decor_arcs[index];
         if (index >= theme->arc_count) {
-            lv_obj_add_flag(object, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_set_hidden(object, true);
             continue;
         }
         const bobe_face_decor_arc_t *const arc = &theme->arcs[index];
-        lv_obj_remove_flag(object, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(object, false);
         lv_obj_set_size(object, arc->width, arc->height);
         lv_obj_set_pos(object, arc->x, arc->y);
         lv_arc_set_bg_angles(object, arc->start_angle, arc->end_angle);
@@ -360,8 +353,8 @@ static void apply_mouth(
 )
 {
     if (layout->mouth_kind == BOBE_FACE_MOUTH_SMILE) {
-        lv_obj_add_flag(renderer->mouth, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(renderer->smile, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(renderer->mouth, true);
+        lv_obj_set_hidden(renderer->smile, false);
         lv_obj_set_size(
             renderer->smile,
             layout->mouth.width,
@@ -381,8 +374,8 @@ static void apply_mouth(
         return;
     }
     if (layout->mouth_kind == BOBE_FACE_MOUTH_RECT) {
-        lv_obj_add_flag(renderer->smile, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_remove_flag(renderer->mouth, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(renderer->smile, true);
+        lv_obj_set_hidden(renderer->mouth, false);
         lv_obj_set_size(
             renderer->mouth,
             layout->mouth.width,
@@ -406,8 +399,8 @@ static void apply_mouth(
         );
         return;
     }
-    lv_obj_add_flag(renderer->smile, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(renderer->mouth, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(renderer->smile, true);
+    lv_obj_set_hidden(renderer->mouth, true);
 }
 
 static void set_caption_scroll(
@@ -490,11 +483,7 @@ void bobe_face_renderer_render(
             notice_text
         );
         lv_label_set_text(renderer->status, status_text);
-        if (status_text[0] == '\0') {
-            lv_obj_add_flag(renderer->status, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_remove_flag(renderer->status, LV_OBJ_FLAG_HIDDEN);
-        }
+        lv_obj_set_hidden(renderer->status, status_text[0] == '\0');
         lv_obj_align(renderer->status, LV_ALIGN_TOP_MID, 0, 6);
     }
     if (!renderer->status_initialized ||
@@ -507,11 +496,10 @@ void bobe_face_renderer_render(
         apply_local_status(renderer, input, layout.accent_rgb);
     }
 
-    if (input->microphone_active) {
-        lv_obj_remove_flag(renderer->microphone_indicator, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(renderer->microphone_indicator, LV_OBJ_FLAG_HIDDEN);
-    }
+    lv_obj_set_hidden(
+        renderer->microphone_indicator,
+        !input->microphone_active
+    );
 
     lv_obj_set_style_bg_color(
         renderer->status,
@@ -567,12 +555,12 @@ void bobe_face_renderer_create(
             0
         );
         lv_obj_set_style_border_width(renderer->decor[index], 0, 0);
-        lv_obj_add_flag(renderer->decor[index], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(renderer->decor[index], true);
     }
     for (size_t index = 0; index < BOBE_FACE_MAX_DECOR_ARCS; ++index) {
         renderer->decor_arcs[index] = lv_arc_create(screen);
         configure_arc(renderer->decor_arcs[index], lv_color_black(), 1);
-        lv_obj_add_flag(renderer->decor_arcs[index], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_hidden(renderer->decor_arcs[index], true);
     }
 
     renderer->eye[0] = lv_obj_create(screen);
@@ -620,7 +608,7 @@ void bobe_face_renderer_create(
         theme->microphone.x,
         theme->microphone.y
     );
-    lv_obj_add_flag(renderer->microphone_indicator, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_hidden(renderer->microphone_indicator, true);
 
     for (uint8_t index = 0; index < 3U; ++index) {
         renderer->wifi_bar[index] = lv_obj_create(screen);
@@ -666,7 +654,7 @@ void bobe_face_renderer_create(
 
     renderer->caption = lv_label_create(screen);
     apply_caption_style(renderer);
-    lv_label_set_long_mode(renderer->caption, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_label_set_long_mode(renderer->caption, LV_LABEL_LONG_MODE_SCROLL_CIRCULAR);
 
     bobe_face_render_input_t initial = *input;
     initial.face_changed = true;

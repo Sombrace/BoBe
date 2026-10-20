@@ -1,8 +1,6 @@
 #include "esp_heap_caps.h"
 #include "lvgl.h"
 
-#include <string.h>
-
 #define BOBE_LVGL_MEMORY_CAPS (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
 
 void bobe_lvgl_memory_link(void)
@@ -15,18 +13,6 @@ void lv_mem_init(void)
 
 void lv_mem_deinit(void)
 {
-}
-
-lv_mem_pool_t lv_mem_add_pool(void *memory, size_t bytes)
-{
-    (void)memory;
-    (void)bytes;
-    return NULL;
-}
-
-void lv_mem_remove_pool(lv_mem_pool_t pool)
-{
-    (void)pool;
 }
 
 void *lv_malloc_core(size_t size)
@@ -50,10 +36,6 @@ void lv_free_core(void *pointer)
 
 void lv_mem_monitor_core(lv_mem_monitor_t *monitor)
 {
-    if (monitor == NULL) {
-        return;
-    }
-    memset(monitor, 0, sizeof(*monitor));
     monitor->total_size = heap_caps_get_total_size(BOBE_LVGL_MEMORY_CAPS);
     monitor->free_size = heap_caps_get_free_size(BOBE_LVGL_MEMORY_CAPS);
     monitor->free_biggest_size =

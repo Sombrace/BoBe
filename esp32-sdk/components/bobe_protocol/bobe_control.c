@@ -79,24 +79,6 @@ static bool has_duplicate_keys(const cJSON *root)
     return false;
 }
 
-static bool contains_nul_escape(const char *input, size_t input_size)
-{
-    for (size_t index = 0; index + 5U < input_size; ++index) {
-        if (input[index] != '\\') {
-            continue;
-        }
-        if (input[index + 1U] == 'u' &&
-            input[index + 2U] == '0' &&
-            input[index + 3U] == '0' &&
-            input[index + 4U] == '0' &&
-            input[index + 5U] == '0') {
-            return true;
-        }
-        ++index;
-    }
-    return false;
-}
-
 static bool read_u32_field(const cJSON *root, const char *name, uint32_t *value)
 {
     const cJSON *item = cJSON_GetObjectItemCaseSensitive(root, name);
@@ -831,7 +813,7 @@ bobe_protocol_result_t bobe_protocol_parse_control(
     }
     memset(message, 0, sizeof(*message));
     if (input_size == 0 || memchr(input, '\0', input_size) != NULL ||
-        contains_nul_escape(input, input_size)) {
+        !bobe_json_escapes_valid(input, input_size)) {
         return BOBE_PROTOCOL_MALFORMED;
     }
     if (input_size > BOBE_CONTROL_MAX_BYTES) {

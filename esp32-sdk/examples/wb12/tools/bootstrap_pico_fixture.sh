@@ -5,12 +5,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCK="$ROOT/hil/fixture/pico2/toolchain.lock"
 DEPS="$ROOT/.deps"
-SDK="$DEPS/pico-sdk"
-TOOLCHAIN="$DEPS/pico-riscv-toolchain"
 DOWNLOADS="$DEPS/downloads"
 
 # shellcheck disable=SC1090
 source "$LOCK"
+SDK="$DEPS/pico-sdk-$PICO_SDK_VERSION"
+TOOLCHAIN="$DEPS/pico-riscv-toolchain-$PICO_SDK_TOOLS_VERSION"
 
 mkdir -p "$DEPS" "$DOWNLOADS"
 
@@ -29,7 +29,7 @@ actual_commit="$(git -C "$SDK" rev-parse HEAD)"
     exit 1
 }
 
-archive="$DOWNLOADS/riscv-toolchain-15-mac.zip"
+archive="$DOWNLOADS/$(basename "$PICO_RISCV_TOOLCHAIN_URL")"
 if [[ ! -f "$archive" ]]; then
     curl --fail --location --output "$archive" "$PICO_RISCV_TOOLCHAIN_URL"
 fi
@@ -44,7 +44,7 @@ if [[ ! -d "$TOOLCHAIN" ]]; then
     trap 'rm -rf "$temporary"' EXIT
     unzip -q "$archive" -d "$temporary"
     extracted_gcc="$(
-        find "$temporary" -type f -name 'riscv32-unknown-elf-gcc' -print -quit
+        find "$temporary" -type f -name 'riscv32-*-elf-gcc' -print -quit
     )"
     [[ -n "$extracted_gcc" ]] || {
         printf 'Official Pico toolchain archive contains no RISC-V compiler.\n' >&2
@@ -54,5 +54,5 @@ if [[ ! -d "$TOOLCHAIN" ]]; then
     mv "$extracted_root" "$TOOLCHAIN"
 fi
 
-"$TOOLCHAIN/bin/riscv32-unknown-elf-gcc" --version | head -1
+"$(find "$TOOLCHAIN/bin" -name 'riscv32-*-elf-gcc' -print -quit)" --version | head -1
 printf 'Pico SDK %s (%s) ready.\n' "$PICO_SDK_VERSION" "$actual_commit"

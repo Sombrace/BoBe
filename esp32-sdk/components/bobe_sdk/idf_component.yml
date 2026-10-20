@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "description": "esp-bobe bobe_sdk",
   "dependencies": {
-    "idf": ">=6.0.2,<6.2",
+    "idf": ">=6.1,<6.2",
     "bobe_core": {
       "path": "../bobe_core",
       "require": "public"
