@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import Speech
 
 public enum VoiceReadiness: Equatable {
     case preparing
@@ -81,6 +82,22 @@ extension VoicePipeline {
         return recognizer
     }
 
+    func releaseUnusedRecognizers() {
+        let inUse: Set = [self.activeSttLanguage, self.effectiveLanguage]
+        let unused = self.recognizers.filter { !inUse.contains($0.key) }
+        guard !unused.isEmpty else { return }
+        for language in unused.keys {
+            self.recognizers[language] = nil
+            self.loadedSttLanguages.remove(language)
+        }
+        Task(name: "Release speech recognizers") {
+            for recognizer in unused.values {
+                await recognizer.cleanup()
+            }
+            await SpeechModels.endRetention()
+        }
+    }
+
     func daemonRecognizes(_ language: String) -> Bool {
         VoiceTtsBackend.languageKey(language) == "en"
     }
@@ -152,6 +169,7 @@ extension VoicePipeline {
     func reconcileVoiceSettings() {
         if self.sttStatusLanguage != self.activeSttLanguage {
             self.sttStatusLanguage = self.activeSttLanguage
+            self.releaseUnusedRecognizers()
             Task { await self.refreshSttState() }
         }
         guard let settings = SettingsStore.shared.settings else { return }

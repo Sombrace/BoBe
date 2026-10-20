@@ -152,12 +152,13 @@ struct SSEResponseIntegrityTests {
         #expect(event.type == .textDelta)
     }
 
+    @Test(arguments: ["", ": keep-alive", "event: message", "id: 7"])
+    func eventStreamDecoderSkipsNonDataLines(line: String) throws {
+        #expect(try DaemonClient.decodeEvent(ProviderLoginPhase.self, from: line) == nil)
+    }
+
     @Test
     func eventStreamDecoderReadsOnlyDataLines() throws {
-        for line in ["", ": keep-alive", "event: message", "id: 7"] {
-            #expect(try DaemonClient.decodeEvent(ProviderLoginPhase.self, from: line) == nil)
-        }
-
         let bundle = try #require(try DaemonClient.decodeEvent(
             StreamBundle.self,
             from: #"data: {"event_id":7,"type":"indicator","message_id":"","payload":{"indicator":"THINKING"}}"#

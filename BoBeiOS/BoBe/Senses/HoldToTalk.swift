@@ -184,7 +184,7 @@ final class HoldToTalk {
         { [weak owner] buffer, _ in
             feed.append(buffer)
             let level = SpeechFeed.level(of: buffer)
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 owner?.receive(level: level)
             }
         }

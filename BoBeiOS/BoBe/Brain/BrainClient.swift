@@ -4,6 +4,7 @@ nonisolated enum BrainError: Error, Equatable {
     case unauthorized
     case unreachable
     case http(Int, code: String?)
+    case invalidRequest
     case invalidResponse
 }
 
@@ -93,7 +94,7 @@ nonisolated final class BrainClient: BrainLink {
         method: String,
         body: Data?,
         query: [URLQueryItem]
-    ) async throws -> Data {
+    ) async throws(BrainError) -> Data {
         var request = URLRequest(url: self.url(path, query: query))
         request.httpMethod = method
         request.setValue("Bearer \(self.credential)", forHTTPHeaderField: "Authorization")

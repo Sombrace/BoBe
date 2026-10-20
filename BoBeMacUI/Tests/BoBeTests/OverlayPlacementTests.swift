@@ -28,22 +28,20 @@ struct OverlayPlacementTests {
         #expect(columnFrame.width == 364 + WindowSizes.shadowInset * 2)
     }
 
-    @Test
-    func columnWindowIsAViewportOnItsCanvas() {
-        for placement in [
-            OverlayPlacement(side: .leading, growth: .up),
-            OverlayPlacement(side: .trailing, growth: .down),
-        ] {
-            let canvas = OverlayCanvas.columnCanvasRect(placement)
-            #expect(canvas.size == OverlayCanvas.columnCanvas)
-            let viewport = OverlayCanvas.columnViewport(size: CGSize(width: 304, height: 120), placement: placement)
-            #expect(canvas.contains(viewport))
-            let origin = OverlayCanvas.columnHostOrigin(viewport: viewport, placement: placement)
-            #expect(origin.x <= 0)
-            #expect(origin.y <= 0)
-            #expect(origin.x + canvas.width >= viewport.width)
-            #expect(origin.y + canvas.height >= viewport.height)
-        }
+    @Test(arguments: [
+        OverlayPlacement(side: .leading, growth: .up),
+        OverlayPlacement(side: .trailing, growth: .down),
+    ])
+    func columnWindowIsAViewportOnItsCanvas(placement: OverlayPlacement) {
+        let canvas = OverlayCanvas.columnCanvasRect(placement)
+        #expect(canvas.size == OverlayCanvas.columnCanvas)
+        let viewport = OverlayCanvas.columnViewport(size: CGSize(width: 304, height: 120), placement: placement)
+        #expect(canvas.contains(viewport))
+        let origin = OverlayCanvas.columnHostOrigin(viewport: viewport, placement: placement)
+        #expect(origin.x <= 0)
+        #expect(origin.y <= 0)
+        #expect(origin.x + canvas.width >= viewport.width)
+        #expect(origin.y + canvas.height >= viewport.height)
     }
 
     @Test

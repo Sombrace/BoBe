@@ -149,7 +149,7 @@ struct OverlayPresentationTests {
             )
             let wrong = try #require(systemCodeBackground[macAppearance])
 
-            #expect(pixels.filter { Self.isNear($0, well) }.count > 40)
+            #expect(pixels.count(where: { Self.isNear($0, well) }) > 40)
             #expect(!pixels.contains { Self.isNear($0, wrong) })
         }
     }

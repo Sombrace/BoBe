@@ -209,7 +209,12 @@ nonisolated final class FakeLink: BrainLink {
         _ = self.state.withLock { $0.live?.yield(item) }
     }
 
-    func exchange(_ path: [String], method: String, body: Data?, query: [URLQueryItem]) async throws -> Data {
+    func exchange(
+        _ path: [String],
+        method: String,
+        body: Data?,
+        query: [URLQueryItem]
+    ) async throws(BrainError) -> Data {
         let route = "/" + path.joined(separator: "/")
         let result: Result<Data, BrainError> = self.state.withLock { state in
             state.requests.append(Request(method: method, path: route, body: body))

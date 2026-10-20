@@ -194,7 +194,7 @@ public final class VoicePipeline {
             object: self.audioEngine,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor [weak self] in
+            MainActor.assumeIsolated {
                 self?.handleAudioEngineConfigurationChange()
             }
         }
