@@ -1007,22 +1007,23 @@ mod tests {
                 .run_background(&crash_job, tokio_util::sync::CancellationToken::new())
                 .await
         });
-        tokio::time::timeout(Duration::from_secs(10), async {
-            while !root.join("workspace/crash.pid").exists() {
+        let crash_pid: u32 = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Ok(text) = tokio::fs::read_to_string(root.join("workspace/crash.pid")).await
+                    && let Ok(pid) = text.trim().parse()
+                {
+                    return pid;
+                }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
         .unwrap();
-        let crash_pid = tokio::fs::read_to_string(root.join("workspace/crash.pid"))
-            .await
-            .unwrap();
         connection.crash_worker();
         let crash_result = tokio::time::timeout(Duration::from_secs(12), crash_run)
             .await
             .unwrap()
             .unwrap();
-        let crash_pid: u32 = crash_pid.trim().parse().unwrap();
         let survived = crate::util::process_group::group_exists(crash_pid);
         if survived {
             crate::util::process_group::signal_group(crash_pid, libc::SIGKILL);
