@@ -26,7 +26,8 @@ provider key, a Rail Relay token, a subscription or Ollama.
 credential in memory, so attached and remote pairings end when it quits. A
 source build is a different app to macOS than a release, so permissions do not
 carry over; both use `~/.bobe/` unless `BOBE_DATA_DIR` is set. The daemon,
-worker and CLI also build on Linux with `scripts/tasks/build-backend.sh`.
+worker and CLI also build on Linux with `scripts/tasks/build-backend.sh`; it
+needs `dpkg-deb` to bundle `libatomic.so.1` with the pinned Node.
 
 ## Commands
 

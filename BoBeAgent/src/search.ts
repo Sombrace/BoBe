@@ -166,7 +166,7 @@ export function ownedGrep(cwd: string, owner: ProcessClient, requestId: () => nu
       if (!matches.length) return { content: [{ type: "text", text: "No matches found" }], details: undefined };
       let linesTruncated = false;
       const lines: string[] = [];
-      const files = new Map<string, string[]>();
+      const files = new Map<string, Promise<string[]>>();
       for (const match of matches) {
         assertActive(signal);
         const path = directory ? relative(searchPath, match.file) : "";
@@ -176,11 +176,8 @@ export function ownedGrep(cwd: string, owner: ProcessClient, requestId: () => nu
           linesTruncated ||= line.wasTruncated;
           lines.push(`${label}:${match.number}: ${line.text}`);
         } else {
-          let content = files.get(match.file);
-          if (!content) {
-            content = (await readFile(match.file, "utf8")).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-            files.set(match.file, content);
-          }
+          const content = await files.getOrInsertComputed(match.file, async file =>
+            (await readFile(file, "utf8")).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n"));
           for (let number = Math.max(1, match.number - contextLines); number <= Math.min(content.length, match.number + contextLines); number++) {
             const line = truncateLine(content[number - 1] ?? "");
             linesTruncated ||= line.wasTruncated;

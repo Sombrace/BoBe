@@ -41,6 +41,10 @@ REQUIRED_RUNTIME_FILES = {
     "bin/agent/node_modules/quickjs-wasi/quickjs.wasm",
     "bin/agent/node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm",
 }
+LINUX_RUNTIME_FILES = {
+    "bin/agent/lib/libatomic.so.1",
+    "bin/agent/licenses/libatomic-LICENSE",
+}
 
 
 def fail(message: str) -> None:
@@ -130,6 +134,10 @@ def inspect_archive(archive: pathlib.Path) -> dict[str, object]:
         fail("unsupported standalone compatibility schema")
     if compatibility["platform"] not in PLATFORM_EXECUTABLES:
         fail(f"unsupported standalone platform: {compatibility['platform']}")
+    if compatibility["platform"].startswith("linux-"):
+        missing_runtime = LINUX_RUNTIME_FILES - runtime_files
+        if missing_runtime:
+            fail(f"standalone archive is missing runtime files: {', '.join(sorted(missing_runtime))}")
     if not isinstance(compatibility["version"], str) or not compatibility["version"]:
         fail("standalone version must be a non-empty string")
     for field in (

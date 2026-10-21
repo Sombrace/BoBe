@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 
-BOBE_NODE_VERSION="24.22.0"
+BOBE_NODE_VERSION="26.12.1"
 BOBE_PI_VERSION="1.3.0"
 BOBE_RG_VERSION="15.2.0"
 BOBE_FD_VERSION="10.5.0"
+BOBE_LIBATOMIC_SOURCE="gcc-14"
+BOBE_LIBATOMIC_VERSION="14.2.0-4ubuntu2~24.04.1"
+BOBE_PATCHELF_VERSION="0.19.2"
 
 bobe_node_platform() {
     local system architecture
@@ -24,10 +27,10 @@ bobe_node_platform() {
 
 bobe_node_archive_sha256() {
     case "$1" in
-        darwin-arm64) echo "6a9724d9b50a5f22b4816cded441b5a8d9ddae546191a5e5b7efa5a5e2ee26d5" ;;
-        darwin-x64) echo "495e3f273c645f3c4677d438304cdfc701729ea5dec5728f5c8e76a2dece4b91" ;;
-        linux-arm64) echo "b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d" ;;
-        linux-x64) echo "28ea0a438de9a13bd7891fd758eee6c7819ee8af5442dfd8d45bd65e56d4228c" ;;
+        darwin-arm64) echo "1901d539912c02afa10d1cc126943a8855a7eedebe830119463470db5e6c59e8" ;;
+        darwin-x64) echo "b85c2ea4420ad0bc4abf2dc6cf1f55130ed681f1cabf60cf3f526e4c9e2712ff" ;;
+        linux-arm64) echo "a6c01af459dd8972ab3fb08ee5da81244d26ba8c4944a62d5bbba8c597ae154f" ;;
+        linux-x64) echo "0fd1eb7770598f52a21995edf6ed35fc690400fa437c2386af329519e9143132" ;;
         *) echo "No pinned Node checksum for $1" >&2; return 1 ;;
     esac
 }
@@ -40,50 +43,109 @@ bobe_sha256() {
     fi
 }
 
+bobe_fetch() {
+    local url="$1" file="$2" expected="$3" download
+    if [[ -f "$file" && "$(bobe_sha256 "$file")" != "$expected" ]]; then
+        echo "Discarding cached download with a checksum mismatch: $file" >&2
+        rm -f "$file"
+    fi
+    [[ -f "$file" ]] && return
+    mkdir -p "$(dirname "$file")"
+    download="$file.download-$$"
+    if ! curl --fail --location --silent --show-error --connect-timeout 30 --speed-limit 1024 --speed-time 60 \
+        --proto '=https' --proto-redir '=https' "$url" -o "$download"; then
+        rm -f "$download"
+        return 1
+    fi
+    if [[ "$(bobe_sha256 "$download")" != "$expected" ]]; then
+        echo "Checksum mismatch for $url" >&2
+        rm -f "$download"
+        return 1
+    fi
+    mv "$download" "$file"
+}
+
 bobe_prepare_node() {
-    local root="$1" platform archive_name archive expected actual node_home
+    local root="$1" platform archive_name archive expected node_home binary_hash
     platform="$(bobe_node_platform)" || return
     archive_name="node-v$BOBE_NODE_VERSION-$platform"
     archive="$root/.tools/cache/node/$archive_name.tar.gz"
     expected="$(bobe_node_archive_sha256 "$platform")" || return
     node_home="$root/.tools/node/$archive_name"
-    mkdir -p "$root/.tools/cache/node" "$root/.tools/node"
-    if [[ -f "$archive" && "$(bobe_sha256 "$archive")" != "$expected" ]]; then
-        rm -f "$archive"
-    fi
-    if [[ ! -f "$archive" ]]; then
-        local download="$archive.download-$$"
-        if ! curl --fail --location --silent --show-error --proto '=https' \
-            "https://nodejs.org/dist/v$BOBE_NODE_VERSION/$archive_name.tar.gz" -o "$download"; then
-            rm -f "$download"
-            return 1
-        fi
-        actual="$(bobe_sha256 "$download")"
-        if [[ "$actual" != "$expected" ]]; then
-            echo "Node $BOBE_NODE_VERSION archive checksum mismatch for $platform" >&2
-            rm -f "$download"
-            return 1
-        fi
-        mv "$download" "$archive"
-    fi
-    local binary_hash
+    bobe_fetch "https://nodejs.org/dist/v$BOBE_NODE_VERSION/$archive_name.tar.gz" "$archive" "$expected" || return
     binary_hash="$(tar -xOzf "$archive" "$archive_name/bin/node" | bobe_sha256)"
     if [[ ! -x "$node_home/bin/node" || ! -f "$node_home/lib/node_modules/npm/bin/npm-cli.js" ]] \
         || [[ "$(bobe_sha256 "$node_home/bin/node")" != "$binary_hash" ]]; then
         rm -rf "$node_home"
+        mkdir -p "$root/.tools/node"
         tar -xzf "$archive" -C "$root/.tools/node"
     fi
-    [[ "$("$node_home/bin/node" --version)" == "v$BOBE_NODE_VERSION" ]] || {
-        echo "Pinned Node runtime failed its version check" >&2
-        return 1
-    }
     printf '%s\n' "$node_home"
 }
 
-bobe_stage_search_tools() {
-    local root="$1" destination="$2" platform target tool version repo asset expected archive download extracted
+bobe_stage_node() {
+    local root="$1" node_home="$2" destination="$3" platform
     platform="$(bobe_node_platform)" || return
-    mkdir -p "$root/.tools/cache/pi-tools" "$destination/bin" "$destination/licenses"
+    mkdir -p "$destination/agent/licenses"
+    install -m 0755 "$node_home/bin/node" "$destination/node"
+    install -m 0644 "$node_home/LICENSE" "$destination/agent/licenses/node-LICENSE"
+    if [[ "$platform" == linux-* ]]; then
+        bobe_stage_libatomic "$root" "$platform" "$destination" || return
+    fi
+    [[ "$("$destination/node" --version)" == "v$BOBE_NODE_VERSION" ]] || {
+        echo "Pinned Node runtime failed its version check" >&2
+        return 1
+    }
+}
+
+bobe_stage_libatomic() {
+    local root="$1" platform="$2" destination="$3" architecture triplet machine package package_sha patchelf patchelf_sha
+    case "$platform" in
+        linux-arm64)
+            architecture=arm64 triplet=aarch64-linux-gnu machine=aarch64
+            package_sha=fdeab74e7ad8572cf69c7024e8040c7ac851f6e667d35f0d429e7a0352840f73
+            patchelf_sha=ba6850c1a6f4cbdb050e1cc22fa5239159ad31c43606846e49c408d335f594ff ;;
+        linux-x64)
+            architecture=amd64 triplet=x86_64-linux-gnu machine=x86_64
+            package_sha=fe49cbbc7be753528380c724a8eef5f1e31dffa9221f692c5069048d81c7449d
+            patchelf_sha=2abdc34fbe949c995a1baa4ec310896a085588a45a99cd0d726851bdfac2a4bb ;;
+        *) echo "No pinned libatomic for $platform" >&2; return 1 ;;
+    esac
+    command -v dpkg-deb >/dev/null || {
+        echo "Bundling libatomic with the Linux Node runtime needs dpkg-deb (package dpkg)" >&2
+        return 1
+    }
+    package="$root/.tools/cache/libatomic/libatomic1_${BOBE_LIBATOMIC_VERSION}_$architecture.deb"
+    patchelf="$root/.tools/cache/patchelf/patchelf-$BOBE_PATCHELF_VERSION-$machine.tar.gz"
+    bobe_fetch "https://launchpad.net/ubuntu/+archive/primary/+files/${package##*/}" "$package" "$package_sha" || return
+    bobe_fetch "https://github.com/NixOS/patchelf/releases/download/$BOBE_PATCHELF_VERSION/${patchelf##*/}" \
+        "$patchelf" "$patchelf_sha" || return
+    mkdir -p "$destination/agent/lib" "$destination/.patchelf"
+    dpkg-deb --fsys-tarfile "$package" | tar -xO "./usr/lib/$triplet/libatomic.so.1.2.0" \
+        >"$destination/agent/lib/libatomic.so.1" || return
+    [[ -s "$destination/agent/lib/libatomic.so.1" ]] || { echo "libatomic1 package has no library" >&2; return 1; }
+    chmod 0644 "$destination/agent/lib/libatomic.so.1"
+    tar -xzf "$patchelf" -C "$destination/.patchelf" ./bin/patchelf || return
+    "$destination/.patchelf/bin/patchelf" --set-rpath '$ORIGIN/agent/lib' "$destination/node" || return
+    rm -rf "$destination/.patchelf"
+    {
+        printf 'lib/libatomic.so.1 is the GNU Atomic Library from GCC, unmodified from the Ubuntu\n'
+        printf 'package libatomic1 %s (source package %s).\n' "$BOBE_LIBATOMIC_VERSION" "$BOBE_LIBATOMIC_SOURCE"
+        printf 'It is licensed under the GNU General Public License version 3 or later with the\n'
+        printf 'GCC Runtime Library Exception version 3.1, both reproduced below.\n'
+        printf 'Corresponding source: https://launchpad.net/ubuntu/+source/%s/%s\n\n' \
+            "$BOBE_LIBATOMIC_SOURCE" "$BOBE_LIBATOMIC_VERSION"
+        cat "$root/third_party/libatomic/COPYING.RUNTIME"
+        printf '\n'
+        cat "$root/third_party/libatomic/COPYING3"
+    } >"$destination/agent/licenses/libatomic-LICENSE" || return
+    chmod 0644 "$destination/agent/licenses/libatomic-LICENSE"
+}
+
+bobe_stage_search_tools() {
+    local root="$1" destination="$2" platform target tool version repo asset expected archive extracted
+    platform="$(bobe_node_platform)" || return
+    mkdir -p "$destination/bin" "$destination/licenses"
     for tool in rg fd; do
         case "$platform" in
             darwin-arm64) target=aarch64-apple-darwin ;;
@@ -114,24 +176,7 @@ bobe_stage_search_tools() {
             asset="fd-$version-$target"
         fi
         archive="$root/.tools/cache/pi-tools/$asset.tar.gz"
-        if [[ -f "$archive" && "$(bobe_sha256 "$archive")" != "$expected" ]]; then
-            echo "Discarding cached native pi tool with a checksum mismatch: $archive" >&2
-            rm -f "$archive"
-        fi
-        if [[ ! -f "$archive" ]]; then
-            download="$archive.download-$$"
-            if ! curl --fail --location --silent --show-error --max-time 120 --proto '=https' \
-                "https://github.com/$repo/releases/download/$version/$asset.tar.gz" -o "$download"; then
-                rm -f "$download"
-                return 1
-            fi
-            if [[ "$(bobe_sha256 "$download")" != "$expected" ]]; then
-                rm -f "$download"
-                echo "Native pi tool checksum mismatch: $asset" >&2
-                return 1
-            fi
-            mv "$download" "$archive"
-        fi
+        bobe_fetch "https://github.com/$repo/releases/download/$version/$asset.tar.gz" "$archive" "$expected" || return
         extracted="$destination/.extract-$tool"
         mkdir "$extracted"
         tar -xzf "$archive" -C "$extracted" --strip-components=1

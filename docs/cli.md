@@ -9,7 +9,7 @@
 |---|---|
 | Mac with the app | **Settings → Runtime → Install Command Line Tool…** links `~/.local/bin/bobe` to the app's copy |
 | Linux x86_64 | Download `bobe-daemon-<version>-linux-x86_64.tar.gz` and its `.sha256` from [Releases](https://github.com/Sombrace/BoBe/releases); needs glibc 2.39 and `ca-certificates` |
-| Anything else | Build an archive there with `scripts/tasks/standalone.sh` (rustup and Python 3.11) |
+| Anything else | Build an archive there with `scripts/tasks/standalone.sh` (rustup, Python 3.11 and, on Linux, `dpkg-deb`) |
 
 ```bash
 sha256sum -c bobe-daemon-<version>-<platform>.tar.gz.sha256

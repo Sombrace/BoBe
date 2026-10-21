@@ -74,9 +74,13 @@ def create_archive(
     compatibility = {key: value for key, value in compatibility.items() if value is not None}
     contents = {"bin/bobe": ELF_X86_64, "bin/node": ELF_X86_64}
     contents.update(executables or {})
+    module = load_module()
+    runtime_files = module.REQUIRED_RUNTIME_FILES
+    if str(compatibility.get("platform", "")).startswith("linux-"):
+        runtime_files = runtime_files | module.LINUX_RUNTIME_FILES
     with tarfile.open(path, "w:gz") as bundle:
         add_bytes(bundle, f"{root}/compatibility.json", json.dumps(compatibility).encode())
-        for name in load_module().REQUIRED_RUNTIME_FILES:
+        for name in runtime_files:
             if name != omitted:
                 add_bytes(bundle, f"{root}/{name}", contents.get(name, b"runtime-fixture"))
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -223,6 +227,8 @@ def main() -> None:
             "bin/agent/bin/fd",
             "bin/agent/node_modules/quickjs-wasi/quickjs.wasm",
             "bin/agent/node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm",
+            "bin/agent/lib/libatomic.so.1",
+            "bin/agent/licenses/libatomic-LICENSE",
         ):
             incomplete = directory / "incomplete.tar.gz"
             create_archive(incomplete, omitted=required)

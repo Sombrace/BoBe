@@ -22,7 +22,7 @@ for asset in dist/main.js assets/chat.md fixtures/host-contract-v1.json licenses
 done
 while IFS= read -r -d '' path; do
     case "${path##*/}" in
-        dist|assets|fixtures|licenses|bin|node_modules|package.json|package-lock.json) ;;
+        dist|assets|fixtures|licenses|bin|lib|node_modules|package.json|package-lock.json) ;;
         *)
             echo "Unexpected state or file in agent distribution: $path" >&2
             exit 1
@@ -37,6 +37,17 @@ fi
     echo "Agent distribution does not contain pinned Node $BOBE_NODE_VERSION" >&2
     exit 1
 }
+if [[ "$(uname -s)" == Linux ]]; then
+    [[ -s "$agent/licenses/libatomic-LICENSE" ]] || {
+        echo "Missing agent runtime asset: $agent/licenses/libatomic-LICENSE" >&2
+        exit 1
+    }
+    [[ "$(env -u LD_LIBRARY_PATH -u LD_PRELOAD ldd "$runtime/node" | awk '$1 == "libatomic.so.1" {print $3}')" \
+        -ef "$agent/lib/libatomic.so.1" ]] || {
+        echo "Bundled Node does not load the bundled libatomic from $agent/lib" >&2
+        exit 1
+    }
+fi
 "$runtime/node" --check "$agent/dist/main.js"
 [[ "$("$agent/bin/rg" --version | head -n 1 | awk '{print $2}')" == "$BOBE_RG_VERSION" ]] || {
     echo "Bundled ripgrep is not the pinned version" >&2

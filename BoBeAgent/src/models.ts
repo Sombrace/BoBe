@@ -311,7 +311,7 @@ function compatibleProvider(
       const discovered = new Map<string, DiscoveredModel>();
       for (const raw of catalogs.flat()) {
         const entry = discoveredModel(raw, id, baseUrl, relay);
-        if (!discovered.has(entry.model.id)) discovered.set(entry.model.id, entry);
+        discovered.getOrInsert(entry.model.id, entry);
       }
       if (discovered.size === 0) throw new Error("Provider returned an empty model catalog");
       metadata.clear();
