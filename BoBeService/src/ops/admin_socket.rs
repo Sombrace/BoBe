@@ -1,14 +1,16 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
 use crate::api::scope::ScopeProfile;
 use crate::app_state::AppState;
 use crate::error::AppError;
 
-#[derive(Deserialize)]
+const REQUEST_LIMIT: u64 = 16 * 1024;
+
+#[derive(Debug, Deserialize)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 enum AdminRequest {
     Pair { kind: String, label: String },
@@ -53,12 +55,7 @@ pub(crate) async fn serve(
 
 async fn handle(state: Arc<AppState>, stream: UnixStream) -> Result<(), AppError> {
     let (reader, mut writer) = stream.into_split();
-    let mut line = String::new();
-    BufReader::new(reader).read_line(&mut line).await?;
-    if line.len() > 16 * 1024 {
-        return Err(AppError::Validation("admin request is too large".into()));
-    }
-    let request: AdminRequest = serde_json::from_str(&line)?;
+    let request = read_request(reader).await?;
     let response = match execute(&state, request).await {
         Ok(result) => AdminResponse::Ok { result },
         Err(error) => refusal(error),
@@ -68,6 +65,17 @@ async fn handle(state: Arc<AppState>, stream: UnixStream) -> Result<(), AppError
     writer.write_all(&frame).await?;
     writer.shutdown().await?;
     Ok(())
+}
+
+async fn read_request(reader: impl AsyncRead + Unpin) -> Result<AdminRequest, AppError> {
+    let mut line = Vec::new();
+    BufReader::new(reader.take(REQUEST_LIMIT + 1))
+        .read_until(b'\n', &mut line)
+        .await?;
+    if line.len() as u64 > REQUEST_LIMIT {
+        return Err(AppError::Validation("admin request is too large".into()));
+    }
+    Ok(serde_json::from_slice(&line)?)
 }
 
 fn refusal(error: AppError) -> AdminResponse {
@@ -201,6 +209,32 @@ mod tests {
         assert!(
             serde_json::from_str::<AdminRequest>(r#"{"command":"backup","unexpected":true}"#,)
                 .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_oversized_request_is_refused_without_reading_past_the_limit() {
+        let limit = usize::try_from(REQUEST_LIMIT).unwrap();
+        let oversized = vec![b' '; 4 * 1024 * 1024];
+        let mut unread = oversized.as_slice();
+        assert_matches!(
+            read_request(&mut unread).await,
+            Err(AppError::Validation(message)) if message == "admin request is too large");
+        assert_eq!(unread.len(), oversized.len() - limit - 1);
+
+        let request = br#"{"command":"list"}"#;
+        let mut at_limit = vec![b' '; limit - request.len() - 1];
+        at_limit.extend_from_slice(request);
+        at_limit.push(b'\n');
+        assert_matches!(
+            read_request(at_limit.as_slice()).await,
+            Ok(AdminRequest::List {})
+        );
+
+        at_limit.insert(0, b' ');
+        assert_matches!(
+            read_request(at_limit.as_slice()).await,
+            Err(AppError::Validation(_))
         );
     }
 

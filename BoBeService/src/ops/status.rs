@@ -36,10 +36,10 @@ impl OpsTarget {
         url: Option<&str>,
         token: Option<&str>,
     ) -> Result<Self, String> {
-        let default_host = if config.server.host == "0.0.0.0" || config.server.host == "::" {
-            "127.0.0.1"
-        } else {
-            config.server.host.as_str()
+        let default_host = match config.server.host.parse::<std::net::IpAddr>() {
+            Ok(address) if address.is_unspecified() => "127.0.0.1".to_owned(),
+            Ok(std::net::IpAddr::V6(address)) => format!("[{address}]"),
+            _ => config.server.host.clone(),
         };
         let automatic_paths = if config.data_dir.trim().is_empty() {
             None
@@ -78,13 +78,10 @@ impl OpsTarget {
                 .map_err(|()| "daemon URL must support path segments".to_owned())?
                 .push("");
         }
-        let host = base_url
-            .host_str()
-            .ok_or_else(|| "daemon URL must include a host".to_string())?;
-        let is_loopback = host == "localhost"
-            || host
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|address| address.is_loopback());
+        if base_url.host().is_none() {
+            return Err("daemon URL must include a host".into());
+        }
+        let is_loopback = crate::util::network::is_loopback_url(&base_url);
         let explicit_url_uses_configured_target = url.is_some_and(|value| {
             value.trim_end_matches('/') == configured_url.trim_end_matches('/')
                 || (is_loopback && base_url.port_or_known_default() == Some(config.server.port))
@@ -648,6 +645,25 @@ mod tests {
         assert!(OpsTarget::resolve(&config, Some("http://example.com:8766"), Some("x")).is_err());
         assert!(OpsTarget::resolve(&config, Some("https://example.com"), None).is_err());
         assert!(OpsTarget::resolve(&config, Some("https://example.com"), Some("x")).is_ok());
+    }
+
+    #[test]
+    fn loopback_targets_in_every_address_family_use_plain_http_and_the_owner_token() {
+        let mut config = Config::default();
+        config.server.api_token = SecretString::from("owner-token");
+        for url in [
+            "http://[::1]:8766",
+            "http://127.0.0.1:8766",
+            "http://localhost:8766",
+        ] {
+            let target = OpsTarget::resolve(&config, Some(url), None).unwrap();
+            assert_eq!(target.display(), url);
+            assert_eq!(target.token.expose_secret(), "owner-token", "{url}");
+        }
+        config.server.host = "::1".into();
+        let target = OpsTarget::resolve(&config, None, None).unwrap();
+        assert_eq!(target.display(), "http://[::1]:8766");
+        assert_eq!(target.token.expose_secret(), "owner-token");
     }
 
     #[test]

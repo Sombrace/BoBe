@@ -50,6 +50,15 @@ fn address_kind(
     }
 }
 
+pub(crate) fn is_loopback_url(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(address)) => address.is_loopback(),
+        Some(url::Host::Ipv6(address)) => address.is_loopback(),
+        None => false,
+    }
+}
+
 pub(crate) fn reachable_hosts() -> Vec<String> {
     let mut local = Vec::new();
     let mut tunnels = Vec::new();
@@ -221,6 +230,36 @@ mod tests {
             address_kind("lo", false, "127.0.0.1".parse().unwrap()),
             None
         );
+    }
+
+    #[test]
+    fn loopback_urls_are_recognized_in_every_address_family() {
+        for loopback in [
+            "http://[::1]:8766/",
+            "http://127.0.0.1:8766/",
+            "http://127.0.0.2/",
+            "http://localhost:8766/",
+            "https://LOCALHOST/v1",
+        ] {
+            assert!(
+                is_loopback_url(&url::Url::parse(loopback).unwrap()),
+                "{loopback}"
+            );
+        }
+        for remote in [
+            "http://[::2]:8766/",
+            "http://[::]:8766/",
+            "http://0.0.0.0:8766/",
+            "http://192.168.1.20:8766/",
+            "http://localhost.example.com/",
+            "http://example.com/",
+            "unix:/tmp/bobe.sock",
+        ] {
+            assert!(
+                !is_loopback_url(&url::Url::parse(remote).unwrap()),
+                "{remote}"
+            );
+        }
     }
 
     #[test]
