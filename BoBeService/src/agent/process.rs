@@ -9,13 +9,17 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::error::AppError;
-use crate::util::process_group::signal_group;
+use crate::util::process_group::{group_exists, signal_group};
 
 const IO_DEADLINE: Duration = Duration::from_secs(5);
+const TERMINATION_GRACE: Duration = Duration::from_secs(1);
+const GROUP_EXIT_DEADLINE: Duration = Duration::from_secs(1);
+const GROUP_EXIT_POLL: Duration = Duration::from_millis(10);
 
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -66,6 +70,20 @@ impl ProcessGroup {
     fn kill(&mut self) {
         if let Some(pid) = self.0.take() {
             signal_group(pid, libc::SIGKILL);
+        }
+    }
+
+    async fn settle(&mut self) -> std::io::Result<()> {
+        let Some(pid) = self.0.take() else {
+            return Ok(());
+        };
+        signal_group(pid, libc::SIGKILL);
+        if group_exited(pid, Instant::now() + GROUP_EXIT_DEADLINE).await {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(
+                "owned process group did not exit after SIGKILL",
+            ))
         }
     }
 }
@@ -218,7 +236,11 @@ impl OwnedProcesses {
                         () = cancellation.cancelled() => terminate(&mut child, pid).await,
                         () = run_cancel.cancelled() => terminate(&mut child, pid).await,
                     };
-                    group.kill();
+                    let settled = group.settle().await;
+                    if let Err(error) = &settled {
+                        tracing::error!(%error, %process_id, "owned_process.group_survived");
+                    }
+                    let status = status.and_then(|status| settled.map(|()| status));
                     writer.abort();
                     let _writer_finished = writer.await;
                     let drain = async {
@@ -322,12 +344,27 @@ async fn terminate(
     pid: u32,
 ) -> std::io::Result<std::process::ExitStatus> {
     signal_group(pid, libc::SIGTERM);
-    if let Ok(status) = tokio::time::timeout(Duration::from_secs(1), child.wait()).await {
+    let grace = Instant::now() + TERMINATION_GRACE;
+    let status = if let Ok(status) = tokio::time::timeout_at(grace, child.wait()).await {
         status
     } else {
         signal_group(pid, libc::SIGKILL);
         child.start_kill()?;
         child.wait().await
+    };
+    group_exited(pid, grace).await;
+    status
+}
+
+async fn group_exited(pid: u32, deadline: Instant) -> bool {
+    loop {
+        if !group_exists(pid) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(GROUP_EXIT_POLL).await;
     }
 }
 
@@ -374,4 +411,126 @@ async fn pump(
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     crate::util::sync::lock(mutex, "owned process registry")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    use serde_json::Value;
+    use tokio::sync::mpsc;
+    use tokio_util::sync::CancellationToken;
+    use uuid::Uuid;
+
+    use super::{OwnedProcesses, ProcessPurpose, ProcessRequest};
+    use crate::util::process_group::{group_exists, signal_group};
+
+    const TERM_IGNORING_MEMBER: &str =
+        "sh -c 'trap \"\" TERM; echo $$ > member.pid; exec sleep 30' & echo $$ > leader.pid";
+
+    fn start(root: &Path, process_id: Uuid, script: String) -> ProcessRequest {
+        ProcessRequest::Start {
+            process_id,
+            purpose: ProcessPurpose::Shell,
+            request_id: None,
+            program: "/bin/sh".into(),
+            args: vec!["-c".into(), script],
+            cwd: root.to_path_buf(),
+            env: BTreeMap::from([("PATH".into(), std::env::var("PATH").unwrap())]),
+        }
+    }
+
+    async fn workspace(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("bobe-owned-{name}-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        root
+    }
+
+    async fn read_pid(root: &Path, name: &str) -> u32 {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(text) = tokio::fs::read_to_string(root.join(name)).await
+                    && let Ok(pid) = text.trim().parse()
+                {
+                    return pid;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn exit_event(events: &mut mpsc::Receiver<Value>) -> Value {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let event = events.recv().await.unwrap();
+                if event["params"]["event"] == "exit" {
+                    return event;
+                }
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    fn kill_survivors(leader: u32) -> bool {
+        let survived = group_exists(leader);
+        if survived {
+            signal_group(leader, libc::SIGKILL);
+        }
+        survived
+    }
+
+    #[tokio::test]
+    async fn stopping_a_shell_settles_group_members_that_ignore_term() {
+        let root = workspace("stop").await;
+        let (outgoing, mut events) = mpsc::channel(64);
+        let processes = OwnedProcesses::new(outgoing, CancellationToken::new(), 4);
+        let process_id = Uuid::new_v4();
+        let script = format!("{TERM_IGNORING_MEMBER}; wait");
+        processes
+            .invoke(start(&root, process_id, script), None)
+            .await
+            .unwrap();
+        let leader = read_pid(&root, "leader.pid").await;
+        read_pid(&root, "member.pid").await;
+        processes
+            .invoke(ProcessRequest::Stop { process_id }, None)
+            .await
+            .unwrap();
+        let survived = kill_survivors(leader);
+        let exit = exit_event(&mut events).await;
+        tokio::fs::remove_dir_all(&root).await.unwrap();
+        assert!(
+            !survived,
+            "a stopped shell must not report settlement while its process group exists"
+        );
+        assert_eq!(exit["params"]["error"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn exited_shell_settles_group_members_it_left_behind() {
+        let root = workspace("exit").await;
+        let (outgoing, mut events) = mpsc::channel(64);
+        let processes = OwnedProcesses::new(outgoing, CancellationToken::new(), 4);
+        let script =
+            format!("{TERM_IGNORING_MEMBER}; while [ ! -s member.pid ]; do sleep 0.01; done");
+        processes
+            .invoke(start(&root, Uuid::new_v4(), script), None)
+            .await
+            .unwrap();
+        let exit = exit_event(&mut events).await;
+        let leader = read_pid(&root, "leader.pid").await;
+        let survived = kill_survivors(leader);
+        tokio::fs::remove_dir_all(&root).await.unwrap();
+        assert!(
+            !survived,
+            "a shell's exit must not be reported while members of its process group remain"
+        );
+        assert_eq!(exit["params"]["exit_code"], 0);
+        assert_eq!(exit["params"]["error"], Value::Null);
+    }
 }
