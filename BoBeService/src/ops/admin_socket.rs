@@ -55,10 +55,15 @@ pub(crate) async fn serve(
 
 async fn handle(state: Arc<AppState>, stream: UnixStream) -> Result<(), AppError> {
     let (reader, mut writer) = stream.into_split();
-    let request = read_request(reader).await?;
-    let response = match execute(&state, request).await {
-        Ok(result) => AdminResponse::Ok { result },
-        Err(error) => refusal(error),
+    let response = match read_request(reader).await {
+        Ok(request) => match execute(&state, request).await {
+            Ok(result) => AdminResponse::Ok { result },
+            Err(error) => refusal(error),
+        },
+        Err(error) => {
+            tracing::warn!(%error, "admin.request_failed");
+            refusal(error)
+        }
     };
     let mut frame = serde_json::to_vec(&response)?;
     frame.push(b'\n');
