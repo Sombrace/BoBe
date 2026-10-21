@@ -7,6 +7,10 @@ source_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
     printf '%s\n' "Archive is missing the bundled Node or pi agent distribution: bin/node" >&2
     exit 1
 }
+linux_assets=
+if [ "$(uname -s)" = Linux ]; then
+    linux_assets="lib/libatomic.so.1 licenses/libatomic-LICENSE"
+fi
 for asset in \
     dist/main.js \
     assets/chat.md \
@@ -21,7 +25,8 @@ for asset in \
     node_modules/@earendil-works/pi-agent-core/package.json \
     node_modules/@earendil-works/pi-ai/package.json \
     node_modules/quickjs-wasi/quickjs.wasm \
-    node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm; do
+    node_modules/@silvia-odwyer/photon-node/photon_rs_bg.wasm \
+    $linux_assets; do
     [ -s "$source_dir/bin/agent/$asset" ] || {
         printf '%s\n' "Archive is missing the bundled Node or pi agent distribution: $asset" >&2
         exit 1

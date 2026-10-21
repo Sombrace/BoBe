@@ -38,8 +38,8 @@ export class ProcessFixture {
         });
       });
       this.processes.set(id, { child, closed });
-      child.stdout.on("data", (data: Buffer) => this.notify({ process_id: id, event: "stdout", data: data.toString("base64") }));
-      child.stderr.on("data", (data: Buffer) => this.notify({ process_id: id, event: "stderr", data: data.toString("base64") }));
+      child.stdout.on("data", (data: Buffer) => this.notify({ process_id: id, event: "stdout", data: data.toBase64() }));
+      child.stderr.on("data", (data: Buffer) => this.notify({ process_id: id, event: "stderr", data: data.toBase64() }));
       child.stdin.on("error", () => {});
       try { await once(child, "spawn"); }
       catch (error) { this.processes.delete(id); throw error; }

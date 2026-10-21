@@ -32,9 +32,7 @@ export function object(value: unknown): JsonObject {
 const validators = new WeakMap<TSchema, Validator>();
 
 function compiled<T extends TSchema>(schema: T): Validator<{}, T> {
-  let validator = validators.get(schema);
-  if (!validator) validators.set(schema, validator = Compile(schema));
-  return validator as Validator<{}, T>;
+  return validators.getOrInsertComputed(schema, key => Compile(key)) as Validator<{}, T>;
 }
 
 export function validate<T extends TSchema>(schema: T, value: unknown, label: string): Static<T> {

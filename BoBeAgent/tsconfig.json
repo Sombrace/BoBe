@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "esnext",
-    "lib": ["es2025", "esnext.array", "esnext.disposable", "esnext.error"],
+    "lib": ["es2025", "esnext.array", "esnext.collection", "esnext.disposable", "esnext.error", "esnext.typedarrays"],
     "module": "nodenext",
     "types": ["node"],
     "rootDir": "src",

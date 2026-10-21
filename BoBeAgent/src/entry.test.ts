@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { spawn } from "node:child_process";
-import { createServer } from "node:http";
-import { connect, type AddressInfo } from "node:net";
+import { createServer, request as forward } from "node:http";
+import type { AddressInfo } from "node:net";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { readFile } from "node:fs/promises";
@@ -80,17 +80,18 @@ test("provider requests travel through the proxy the daemon passes to the worker
     response.end('{"data":[{"id":"proxied-model","context_window":16384}]}');
   }).listen(0, "127.0.0.1");
   await once(provider, "listening");
-  const tunnels: string[] = [];
-  await using proxy = createServer().on("connect", (request, socket, head) => {
-    tunnels.push(request.url ?? "");
-    const upstream = connect((provider.address() as AddressInfo).port, "127.0.0.1", () => {
-      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      upstream.write(head);
-      upstream.pipe(socket);
-      socket.pipe(upstream);
+  const proxied: string[] = [];
+  await using proxy = createServer((request, response) => {
+    proxied.push(request.url ?? "");
+    const upstream = forward({
+      host: "127.0.0.1", port: (provider.address() as AddressInfo).port,
+      method: request.method, path: new URL(request.url ?? "/").pathname, headers: request.headers,
+    }, reply => {
+      response.writeHead(reply.statusCode ?? 502, reply.headers);
+      reply.pipe(response);
     });
-    upstream.on("error", () => socket.destroy());
-    socket.on("error", () => upstream.destroy());
+    upstream.on("error", () => response.destroy());
+    request.pipe(upstream);
   }).listen(0, "127.0.0.1");
   await once(proxy, "listening");
   const unused = createServer().listen(0, "127.0.0.1");
@@ -131,7 +132,7 @@ test("provider requests travel through the proxy the daemon passes to the worker
       id: "proxied-model", name: "proxied-model", vision: false, context_window: 16384,
       default_reasoning_effort: "off", supported_reasoning_efforts: ["off"],
     }], JSON.stringify(models));
-    assert.deepEqual(tunnels, [`localhost:${unreachable}`]);
+    assert.deepEqual(proxied, [`http://localhost:${unreachable}/v1/models`]);
   } finally {
     if (child.exitCode === null && child.signalCode === null) {
       child.kill("SIGKILL");

@@ -67,7 +67,7 @@ const report = (error: unknown): void => {
 
 try {
   const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
-  if (major < 24 || (major === 24 && minor < 22)) throw new Error("BoBe pi requires Node.js 24.22.0 or later");
+  if (major < 26 || (major === 26 && minor < 12)) throw new Error("BoBe pi requires Node.js 26.12.0 or later");
   const stop = (): void => { void rpc.finish().catch(report); };
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);

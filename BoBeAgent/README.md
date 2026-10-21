@@ -11,7 +11,7 @@ admission, identity, memory, goals, skills, secrets, voice and bodies.
 scripts/tasks/build-agent.sh        # pinned Node, npm ci, build, tests, staging
 ```
 
-Or, with Node 24.22 or later, `npm ci --ignore-scripts`, `npm run check`,
+Or, with Node 26.12 or later, `npm ci --ignore-scripts`, `npm run check`,
 `npm test` and `npm run build` in this folder. Tests run the TypeScript
 sources directly through Node's type stripping, so the sources use only
 erasable syntax and `.ts` import specifiers; `npm run build` emits the shipped

@@ -76,7 +76,7 @@ export class ProcessClient {
     for (let offset = 0; offset < bytes.length || (end && offset === 0); offset += 1024 * 1024) {
       const chunk = bytes.subarray(offset, offset + 1024 * 1024);
       await this.call("process", {
-        action: "write", process_id: id, data: chunk.toString("base64"),
+        action: "write", process_id: id, data: chunk.toBase64(),
         end: end && offset + chunk.length >= bytes.length,
       });
       if (bytes.length === 0) break;
