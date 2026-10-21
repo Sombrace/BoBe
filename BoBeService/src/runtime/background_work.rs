@@ -12,6 +12,54 @@ use crate::runtime::run_registry::{RunKind, RunRegistry};
 use crate::runtime::session::RuntimeSession;
 
 const MAX_ACTIVE: usize = 2;
+const STOPPED_UNEXPECTEDLY: &str = "Background work stopped unexpectedly; external effects may be incomplete. Inspect before resuming.";
+
+#[derive(Default)]
+struct ActiveJobs {
+    tasks: tokio::task::JoinSet<()>,
+    jobs: std::collections::HashMap<tokio::task::Id, (Uuid, CancellationToken)>,
+}
+
+impl ActiveJobs {
+    fn spawn(
+        &mut self,
+        id: Uuid,
+        cancellation: CancellationToken,
+        work: impl Future<Output = ()> + Send + 'static,
+    ) {
+        let task = self.tasks.spawn(work);
+        self.jobs.insert(task.id(), (id, cancellation));
+    }
+
+    async fn settle(
+        &mut self,
+        repo: &AgentJobRepo,
+        completed: Result<(tokio::task::Id, ()), tokio::task::JoinError>,
+    ) {
+        let task = match &completed {
+            Ok((task, ())) => *task,
+            Err(error) => error.id(),
+        };
+        let Some((id, _)) = self.jobs.remove(&task) else {
+            return;
+        };
+        if let Err(error) = completed {
+            tracing::error!(%error, job_id=%id, "background.task_panicked");
+            if let Err(error) = repo
+                .finish(
+                    id,
+                    JobStatus::Failed,
+                    None,
+                    None,
+                    Some(STOPPED_UNEXPECTEDLY),
+                )
+                .await
+            {
+                tracing::error!(%error,job_id=%id,"background.result_persistence_failed");
+            }
+        }
+    }
+}
 
 pub(crate) struct BackgroundWork {
     pub(crate) jobs: Arc<AgentJobRepo>,
@@ -84,8 +132,7 @@ impl BackgroundWork {
     }
 
     async fn run_jobs(&self, shutdown: CancellationToken) {
-        let mut active = tokio::task::JoinSet::new();
-        let mut cancellations = std::collections::HashMap::<Uuid, CancellationToken>::new();
+        let mut active = ActiveJobs::default();
         while !shutdown.is_cancelled() {
             if self.enabled
                 && *self.initialization.borrow()
@@ -94,13 +141,10 @@ impl BackgroundWork {
                 if let Err(error) = self.queue_schedules().await {
                     tracing::error!(%error,"background.scheduled_admission_failed");
                 }
-                while active.len() < MAX_ACTIVE {
+                while active.tasks.len() < MAX_ACTIVE {
                     match self.start_next(&mut active).await {
-                        Ok(Some((id, cancellation))) => {
-                            cancellations.insert(id, cancellation);
-                        }
-
-                        Ok(None) => break,
+                        Ok(true) => {}
+                        Ok(false) => break,
                         Err(error) => {
                             tracing::error!(%error, "background.admission_failed");
                             break;
@@ -108,7 +152,7 @@ impl BackgroundWork {
                     }
                 }
             }
-            for (id, cancellation) in &cancellations {
+            for (id, cancellation) in active.jobs.values() {
                 match self.jobs.get(*id).await {
                     Ok(job) if job.status == JobStatus::CancelRequested => cancellation.cancel(),
                     Ok(job) => {
@@ -147,22 +191,18 @@ impl BackgroundWork {
                 () = shutdown.cancelled() => break,
                 () = self.jobs.wake.notified() => {}
                 () = tokio::time::sleep(Duration::from_secs(1)) => {}
-                completed = active.join_next(), if !active.is_empty() => {
-                    match completed {
-                        Some(Ok(id)) => { cancellations.remove(&id); }
-                        Some(Err(error)) => tracing::error!(%error, "background.task_panicked"),
-                        None => {}
+                completed = active.tasks.join_next_with_id(), if !active.tasks.is_empty() => {
+                    if let Some(completed) = completed {
+                        active.settle(&self.jobs, completed).await;
                     }
                 }
             }
         }
-        for cancel in cancellations.values() {
+        for (_, cancel) in active.jobs.values() {
             cancel.cancel();
         }
-        while let Some(result) = active.join_next().await {
-            if let Err(error) = result {
-                tracing::error!(%error,"background.shutdown_failed");
-            }
+        while let Some(completed) = active.tasks.join_next_with_id().await {
+            active.settle(&self.jobs, completed).await;
         }
     }
 
@@ -213,15 +253,12 @@ impl BackgroundWork {
         Ok(())
     }
 
-    async fn start_next(
-        &self,
-        active: &mut tokio::task::JoinSet<Uuid>,
-    ) -> Result<Option<(Uuid, CancellationToken)>, AppError> {
+    async fn start_next(&self, active: &mut ActiveJobs) -> Result<bool, AppError> {
         let Some(id) = self.jobs.next_queued().await? else {
-            return Ok(None);
+            return Ok(false);
         };
         let Ok(personal) = Arc::clone(&self.personal_data).try_read_owned() else {
-            return Ok(None);
+            return Ok(false);
         };
         let candidate = self.jobs.get(id).await?;
         if let Some(goal_id) = candidate.goal_id
@@ -233,7 +270,7 @@ impl BackgroundWork {
                     .is_none_or(|goal| goal.status != crate::models::types::GoalStatus::Active))
         {
             self.jobs.cancel(id).await?;
-            return Ok(None);
+            return Ok(false);
         }
         let cancel = CancellationToken::new();
         let registration = self.runs.register_cancellation(
@@ -243,13 +280,13 @@ impl BackgroundWork {
             candidate.channel_id,
         )?;
         if !self.jobs.claim(id).await? {
-            return Ok(None);
+            return Ok(false);
         }
         let job = self.jobs.get(id).await?;
         let runtime = Arc::clone(&self.runtime);
         let jobs = Arc::clone(&self.jobs);
         let work_cancel = cancel.clone();
-        active.spawn(async move {
+        active.spawn(id, cancel, async move {
             let _registration = registration;
             let _personal = personal;
             let result = runtime.run_background(&job, work_cancel.clone()).await;
@@ -285,9 +322,8 @@ impl BackgroundWork {
             if let Err(error) = jobs.prune().await {
                 tracing::warn!(%error,"background.retention_failed");
             }
-            id
         });
-        Ok(Some((id, cancel)))
+        Ok(true)
     }
 
     async fn deliver_results(&self, shutdown: CancellationToken) {
@@ -438,5 +474,54 @@ impl BackgroundWork {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_panicking_job_is_released_and_settles_as_failed() {
+        let pool = crate::db::test_helpers::in_memory_pool().await;
+        let repo = AgentJobRepo::new(pool.clone());
+        let route = crate::provider::WorkloadRoute {
+            profile: crate::provider::ProfileId::from_static("test"),
+            model: Some("model".into()),
+            reasoning_effort: None,
+        };
+        let input = || crate::db::agent_job_repo::JobInput {
+            title: "Bounded work".into(),
+            task: "Inspect the workspace".into(),
+            ..crate::db::agent_job_repo::JobInput::default()
+        };
+        let panicking = repo.submit("panics", input(), &route).await.unwrap();
+        let finishing = repo.submit("finishes", input(), &route).await.unwrap();
+        assert!(repo.claim(panicking.id).await.unwrap());
+        assert!(repo.claim(finishing.id).await.unwrap());
+
+        let mut active = ActiveJobs::default();
+        active.spawn(panicking.id, CancellationToken::new(), async {
+            panic!("background work panicked");
+        });
+        let finished = Arc::clone(&repo);
+        active.spawn(finishing.id, CancellationToken::new(), async move {
+            finished
+                .finish(finishing.id, JobStatus::Completed, Some("done"), None, None)
+                .await
+                .unwrap();
+        });
+        while let Some(completed) = active.tasks.join_next_with_id().await {
+            active.settle(&repo, completed).await;
+        }
+
+        assert!(active.jobs.is_empty());
+        let panicked = repo.get(panicking.id).await.unwrap();
+        assert_eq!(panicked.status, JobStatus::Failed);
+        assert_eq!(panicked.error.as_deref(), Some(STOPPED_UNEXPECTEDLY));
+        let finished = repo.get(finishing.id).await.unwrap();
+        assert_eq!(finished.status, JobStatus::Completed);
+        assert_eq!(finished.error, None);
+        pool.close().await;
     }
 }

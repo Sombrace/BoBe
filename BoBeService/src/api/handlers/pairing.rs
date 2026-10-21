@@ -266,15 +266,9 @@ fn canonical_pairing_origin(raw: &str) -> Result<CanonicalPairingOrigin, AppErro
     {
         return Err(pairing_unavailable());
     }
-    let loopback = match url.host() {
-        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
-        Some(url::Host::Ipv4(address)) => address.is_loopback(),
-        Some(url::Host::Ipv6(address)) => address.is_loopback(),
-        None => false,
-    };
     let transport = match url.scheme() {
         "https" => TRANSPORT_HTTPS,
-        "http" if loopback => TRANSPORT_LOOPBACK_HTTP,
+        "http" if crate::util::network::is_loopback_url(&url) => TRANSPORT_LOOPBACK_HTTP,
         _ => return Err(pairing_unavailable()),
     };
     url.set_path("");

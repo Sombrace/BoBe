@@ -385,12 +385,7 @@ fn validate_base_url(id: &ProfileId, value: &str) -> Result<(), AppError> {
         ))
     })?;
     let secure = url.scheme() == "https";
-    let loopback = url.host_str().is_some_and(|host| {
-        host.eq_ignore_ascii_case("localhost")
-            || host
-                .parse::<std::net::IpAddr>()
-                .is_ok_and(|address| address.is_loopback())
-    });
+    let loopback = crate::util::network::is_loopback_url(&url);
     if !matches!(url.scheme(), "http" | "https") || (!secure && !loopback) {
         return Err(AppError::Config(format!(
             "provider '{}' base URL must use HTTPS or loopback HTTP",
@@ -527,18 +522,24 @@ mod tests {
         };
         assert!(openai.validate(&profile_id("openai")).is_ok());
 
-        let local = ProviderProfileConfig {
-            models: ProviderModels::default(),
-            kind: ProviderKind::OpenAiCompatible,
-            auth_method: ProviderAuthMethod::ApiKey,
-            base_url: Some("http://127.0.0.1:11434/v1".into()),
-            credential: None,
-            organization: None,
-            offline: true,
+        for base_url in [
+            "http://[::1]:11434/v1",
+            "http://127.0.0.1:11434/v1",
+            "http://localhost:11434/v1",
+        ] {
+            let local = ProviderProfileConfig {
+                models: ProviderModels::default(),
+                kind: ProviderKind::OpenAiCompatible,
+                auth_method: ProviderAuthMethod::ApiKey,
+                base_url: Some(base_url.into()),
+                credential: None,
+                organization: None,
+                offline: true,
 
-            local_runtime: None,
-        };
-        assert!(local.validate(&profile_id("local")).is_ok());
+                local_runtime: None,
+            };
+            assert!(local.validate(&profile_id("local")).is_ok(), "{base_url}");
+        }
     }
 
     #[test]
