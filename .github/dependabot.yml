@@ -5,6 +5,8 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    ignore:
+      - dependency-name: "sherpa-onnx"
     open-pull-requests-limit: 5
 
   - package-ecosystem: npm
