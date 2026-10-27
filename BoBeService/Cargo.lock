@@ -2671,20 +2671,18 @@ dependencies = [
 
 [[package]]
 name = "ptts"
-version = "0.4.0-rc.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "293fe1e0df42e71912ad19c62cc4548c6f91e07edb5b4a7cad877450363301a6"
+checksum = "e217df814515df17d532ddd765a498b0f980a46d422e85fe732de0c4ecafc7cb"
 dependencies = [
  "ebur128",
  "rand 0.9.5",
  "rand_distr",
- "safetensors",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokenizers",
  "tracing",
- "tracing-subscriber",
  "xn",
 ]
 
