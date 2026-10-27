@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-const VERSION: &str = "1.13.8";
+const VERSION: &str = "2.0.1";
 const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 const LIBRARIES: &[&str] = &[
     "sherpa-onnx-c-api",
@@ -20,6 +20,7 @@ const LIBRARIES: &[&str] = &[
     "kissfft-float",
     "onnxruntime",
     "ssentencepiece_core",
+    "utf8proc",
 ];
 
 fn main() {
@@ -42,15 +43,15 @@ fn build() -> Result<(), Box<dyn Error>> {
     let (platform, expected) = match (os.as_str(), arch.as_str()) {
         ("macos", "aarch64") => (
             "osx-arm64",
-            "3d7f9b8a496694af13d9802c33b8133231e397bdef302f543d19468765e83136",
+            "69413605e7d0d1286d40fbf66e898f7abb53f350d6057cbd154ea2e3f1437d2a",
         ),
         ("macos", "x86_64") => (
             "osx-x64",
-            "8ffc3ede9f997fec547b5c99b8e2073b8e04fd48a5f65e1a6d5d314ad0106ad9",
+            "43146c71f17918d51c32b59fb0e41bdf8312d7944e428e9e1f5ea02d9f386312",
         ),
         ("linux", "x86_64") => (
             "linux-x64",
-            "36f2ebd0b9aa09248ff6461a30dcb7edfe7eecf2deb67dfb0ceb3aaf4906051f",
+            "4b4c36e5560696e2864da3d9a7cdbb1fc1f0ce7af3509e19a659341debda009a",
         ),
         _ => return Err(format!("no verified recognition-only runtime for {os}/{arch}").into()),
     };

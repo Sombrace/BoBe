@@ -16,12 +16,14 @@ Signalsmith Linear C++ libraries (Signalsmith Audio)
   MIT: signalsmith-rust-MIT.txt, signalsmith-stretch-MIT.txt,
   signalsmith-linear-MIT.txt
 
-sherpa-onnx 1.13.8 recognition-only static libraries, https://github.com/k2-fsa/sherpa-onnx
+sherpa-onnx 2.0.1 recognition-only static libraries, https://github.com/k2-fsa/sherpa-onnx
   Apache-2.0: sherpa-onnx-APACHE.txt. The same archive links these components:
   - kaldi-decoder, kaldifst, kaldi-native-fbank (k2-fsa): Apache-2.0
   - OpenFst (Google): Apache-2.0
   - simple-sentencepiece: Apache-2.0
   - KISS FFT (Mark Borgerding): BSD-3-Clause, kissfft-BSD-3-Clause.txt
+  - utf8proc 2.12.0 (Julia developers, Public Software Group): MIT, with its
+    Unicode data license, utf8proc-MIT.txt
   - ONNX Runtime 1.28.2 (Microsoft): MIT, onnxruntime-MIT.txt, with the notices of
     the libraries it contains in onnxruntime-ThirdPartyNotices.txt
 

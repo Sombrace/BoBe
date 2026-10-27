@@ -1,6 +1,6 @@
 [package]
 name = "sherpa-onnx-sys"
-version = "1.13.8"
+version = "2.0.1"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/k2-fsa/sherpa-onnx"
@@ -15,4 +15,4 @@ shared = []
 bzip2 = "0.6.1"
 sha2 = "0.11.0"
 tar = "0.4.46"
-ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
+ureq = { version = "3.5.0", default-features = false, features = ["rustls"] }
