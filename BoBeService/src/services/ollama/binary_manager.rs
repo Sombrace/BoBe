@@ -53,6 +53,27 @@ impl BinaryManager {
         self.find_installation(&artifact)
     }
 
+    pub(crate) fn previous_installation(
+        &self,
+        current: &download::OllamaArtifact,
+    ) -> Option<PathBuf> {
+        let current_dir = self.install_dir(current);
+        std::fs::read_dir(self.runtime_root())
+            .ok()?
+            .flatten()
+            .filter_map(|entry| {
+                let path = entry.path();
+                if path == current_dir {
+                    return None;
+                }
+                let release = release_number(entry.file_name().to_str()?.strip_prefix('v')?)?;
+                extract::verify_runtime(&path, current).ok()?;
+                Some((release, path.join(current.binary)))
+            })
+            .max_by(|(left, _), (right, _)| left.cmp(right))
+            .map(|(_, binary)| binary)
+    }
+
     pub(crate) async fn ensure_managed_ollama(
         &self,
         progress_tx: &watch::Sender<DownloadProgress>,
@@ -60,11 +81,12 @@ impl BinaryManager {
     ) -> Result<PathBuf, AppError> {
         let artifact =
             download::current_artifact().map_err(|message| AppError::Config(message.into()))?;
-        self.ensure_installation(&artifact, progress_tx, cancel)
-            .await
+        let binary = self.install_runtime(&artifact, progress_tx, cancel).await?;
+        self.prune_superseded_runtimes(&artifact);
+        Ok(binary)
     }
 
-    async fn ensure_installation(
+    pub(crate) async fn install_runtime(
         &self,
         artifact: &download::OllamaArtifact,
         progress_tx: &watch::Sender<DownloadProgress>,
@@ -145,7 +167,6 @@ impl BinaryManager {
             crate::util::durable_fs::durable_remove_entry(&install_dir).await?;
             return Err(error);
         }
-        self.prune_stale_runtimes(&install_dir);
 
         progress_tx
             .send(DownloadProgress {
@@ -186,6 +207,18 @@ impl BinaryManager {
         run_version_check(path, VERSION_TIMEOUT, cancel).await
     }
 
+    pub(crate) fn prune_superseded_runtimes(&self, current: &download::OllamaArtifact) {
+        self.prune_stale_runtimes(&self.install_dir(current));
+    }
+
+    pub(crate) async fn remove_runtime(
+        &self,
+        artifact: &download::OllamaArtifact,
+    ) -> Result<(), AppError> {
+        crate::util::durable_fs::durable_remove_entry(&self.install_dir(artifact)).await?;
+        Ok(())
+    }
+
     fn prune_stale_runtimes(&self, keep: &Path) {
         let Ok(entries) = std::fs::read_dir(self.runtime_root()) else {
             return;
@@ -223,6 +256,10 @@ impl BinaryManager {
 }
 
 struct GroupKill(Option<u32>);
+
+fn release_number(version: &str) -> Option<Vec<u64>> {
+    version.split('.').map(|part| part.parse().ok()).collect()
+}
 
 impl GroupKill {
     fn disarm(&mut self) {
@@ -416,6 +453,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn previous_installation_is_the_newest_complete_older_runtime() {
+        let dir = temp_dir("previous");
+        let current = super::download::OllamaArtifact {
+            version: "9.9.9",
+            ..current_artifact().expect("developer platform should be supported")
+        };
+        let root = dir.join("ollama");
+        for (name, complete) in [
+            ("v0.40.9", true),
+            ("v0.40.10", true),
+            ("v0.41.0", false),
+            ("vnext", true),
+            ("v9.9.9", true),
+        ] {
+            let install = root.join(name);
+            write_executable(&install.join(current.binary), "fake");
+            if complete {
+                write_executable(&install.join(current.llama_server), "server");
+            }
+        }
+
+        let manager = BinaryManager::new(&dir, test_client());
+        assert_eq!(
+            manager.previous_installation(&current),
+            Some(root.join("v0.40.10").join(current.binary))
+        );
+        let _ignored = std::fs::remove_dir_all(dir);
+    }
+
     fn hanging_binary(dir: &std::path::Path) -> (PathBuf, PathBuf) {
         let pid_file = dir.join("pid");
         let binary = dir.join("ollama");
@@ -573,7 +640,7 @@ mod tests {
                 tokio::sync::watch::channel(super::DownloadProgress::default());
 
             let installed = manager
-                .ensure_installation(&artifact, &progress_tx, CancellationToken::new())
+                .install_runtime(&artifact, &progress_tx, CancellationToken::new())
                 .await
                 .unwrap_or_else(|error| panic!("{name}: {error}"));
 
@@ -586,7 +653,7 @@ mod tests {
             assert!(install.join("llama-server").is_file());
             assert!(!dir.join("ollama").join("ollama-test.tgz").exists());
             let again = manager
-                .ensure_installation(&artifact, &progress_tx, CancellationToken::new())
+                .install_runtime(&artifact, &progress_tx, CancellationToken::new())
                 .await
                 .expect("a valid install is reused");
             assert_eq!(again, installed);

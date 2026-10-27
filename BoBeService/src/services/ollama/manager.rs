@@ -110,6 +110,18 @@ impl OllamaManager {
         self.spawn_daemon(binary).await
     }
 
+    pub(crate) async fn restart_with(&self, binary: &Path) -> Result<(), AppError> {
+        let _start = self.start.lock().await;
+        if let Some(child) = self.child.lock().await.take() {
+            stop_process_group(child, STOP_GRACE).await;
+        }
+        if self.health_check().await {
+            info!("ollama_manager.already_running");
+            return Ok(());
+        }
+        self.spawn_daemon(binary).await
+    }
+
     async fn spawn_daemon(&self, binary: &Path) -> Result<(), AppError> {
         info!(binary = %binary.display(), "ollama_manager.spawning");
 

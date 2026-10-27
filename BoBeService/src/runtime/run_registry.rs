@@ -107,6 +107,10 @@ impl RunRegistry {
         }
     }
 
+    pub(crate) fn is_idle(&self) -> bool {
+        lock_or_recover(&self.active).is_empty()
+    }
+
     pub(crate) fn begin_input(
         &self,
         run_id: Uuid,
