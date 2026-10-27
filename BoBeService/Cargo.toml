@@ -94,7 +94,7 @@ sqlx = { version = "0.9.0", default-features = false, features = [
     "derive",
 ] }
 thiserror = "2.0"
-tokio = { version = "1.54.0", features = [
+tokio = { version = "1.54.1", features = [
     "fs",
     "io-util",
     "io-std",
@@ -139,8 +139,8 @@ flate2 = "1.1.10"
 tar = "0.4.46"
 zstd = { version = "0.14.3", default-features = false }
 bzip2 = "0.6.1"
-sherpa-onnx = "=1.13.8"
-ptts = { version = "=0.4.0-rc.2", default-features = false, features = ["hf"] }
+sherpa-onnx = "=2.0.1"
+ptts = { version = "=0.5.0", default-features = false, features = ["hf"] }
 signalsmith-stretch = "=0.1.3"
 opusic-c = "1.6.1"
 regex = "1.13"

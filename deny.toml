@@ -1,5 +1,8 @@
 [advisories]
 version = 2
+ignore = [
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5 arrives only through elliptic-curve 0.13 in opaque-ke 4.0.1 and voprf 0.5, the newest stable OPAQUE stack; BoBe's pairing suite uses Ristretto255, whose scalar arithmetic runs in curve25519-dalek, so no secret value reaches crypto-bigint" },
+]
 
 [licenses]
 version = 2

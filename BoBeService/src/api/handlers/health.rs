@@ -192,9 +192,21 @@ pub(crate) async fn start_local_runtime<'a>(
     ) {
         return;
     }
-    if let Err(error) = state.services.ollama_install.ensure_running().await {
+    if let Err(error) = state
+        .services
+        .ollama_install
+        .ensure_running(idle_runs(&state.runtime.runs))
+        .await
+    {
         tracing::warn!(%error, "local_runtime.start_failed");
     }
+}
+
+fn idle_runs(
+    runs: &Arc<crate::runtime::run_registry::RunRegistry>,
+) -> crate::services::ollama::install_service::IdleCheck {
+    let runs = Arc::clone(runs);
+    Arc::new(move || runs.is_idle())
 }
 
 #[derive(Debug, Serialize)]

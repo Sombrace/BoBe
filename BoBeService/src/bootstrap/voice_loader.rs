@@ -57,22 +57,15 @@ async fn assemble_snapshot(
 }
 
 fn load_stt(models_root: &Path) -> Option<Arc<dyn crate::speech::SttEngine>> {
-    let provider = if cfg!(target_os = "macos") {
-        "coreml"
-    } else {
-        "cpu"
-    };
     let dir = models_root.join(crate::constants::voice_wire::STREAMING_STT_MODEL_DIR);
     if !dir.is_dir() {
         info!(path = %dir.display(), "voice.stt_model_not_installed");
         return None;
     }
-    match crate::speech::providers::sherpa::streaming_stt::SherpaStreamingStt::load(
-        &dir, provider, 4,
-    ) {
+    match crate::speech::providers::sherpa::streaming_stt::SherpaStreamingStt::load(&dir, 4) {
         Ok(engine) => {
             let rtf = crate::speech::SttEngine::health(&engine).real_time_factor;
-            info!(path = %dir.display(), provider, rtf, "voice.stt_loaded");
+            info!(path = %dir.display(), rtf, "voice.stt_loaded");
             Some(Arc::new(engine))
         }
         Err(error) => {

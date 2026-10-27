@@ -66,7 +66,9 @@ bobe service restart
 `bobe local-runtime install` uses a running Ollama or installs BoBe's pinned
 one under the data root; models go to Ollama's own `~/.ollama/`. BoBe starts
 its Ollama with the daemon whenever a route uses it, and stops it with the
-daemon. If you run Ollama yourself, start it with `OLLAMA_CONTEXT_LENGTH=40960`
+daemon. When an update pins a newer Ollama, the daemon keeps the installed one
+running, downloads the new one in the background and switches once no work is
+running. If you run Ollama yourself, start it with `OLLAMA_CONTEXT_LENGTH=40960`
 (BoBe's prompts need that context).
 
 | Workload | Used for |

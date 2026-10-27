@@ -1,7 +1,7 @@
 [project]
 name = "esp-bobe-toy-tools"
 version = "0.1.0"
-requires-python = ">=3.12,<3.15"
+requires-python = ">=3.12,<3.16"
 dependencies = [
     "cryptography>=50.0.2,<51",
     "esptool==5.6.0",

@@ -29,6 +29,28 @@ test("grep and find retain pi search results but launch through the daemon proce
   assert.ok(results.includes("src/notes.txt"),results);
 });
 
+test("grep keeps regex semantics when the daemon environment names a ripgrep config",async t=>{
+  const paths=await fixture(t);
+  await writeFile(join(paths.workspace,"notes.txt"),"alpha 42\n");
+  const config=join(paths.root,"ripgreprc");
+  await writeFile(config,"--fixed-strings\n");
+  const previous=process.env.RIPGREP_CONFIG_PATH;
+  process.env.RIPGREP_CONFIG_PATH=config;
+  t.after(()=>{
+    if (previous===undefined) delete process.env.RIPGREP_CONFIG_PATH;
+    else process.env.RIPGREP_CONFIG_PATH=previous;
+  });
+  let calls=0;
+  let results="";
+  const {worker}=await host(t,configuration(paths),context=>{
+    if (calls++===0) return {tools:[{id:"grep",name:"grep",arguments:{pattern:"alpha \\d+"}}]};
+    results=JSON.stringify(context.messages.filter(message=>message.role==="toolResult"));
+    return {text:"Searched."};
+  });
+  await worker.request({id:2,method:"chat",params:{text:"Search",channel:"text",context:""}});
+  assert.ok(results.includes("notes.txt:1: alpha 42"),results);
+});
+
 test("persistent MCP processes and native search share the same process capacity",async t=>{
   const paths=await fixture(t);
   const config=configuration(paths);

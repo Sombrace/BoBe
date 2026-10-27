@@ -147,7 +147,7 @@ export function ownedGrep(cwd: string, owner: ProcessClient, requestId: () => nu
       const directory = (await stat(searchPath)).isDirectory();
       const limit = Math.max(1, params.limit ?? 100);
       const contextLines = Math.max(0, params.context ?? 0);
-      const flags = ["--json", "--line-number", "--color=never", "--hidden"];
+      const flags = ["--no-config", "--json", "--line-number", "--color=never", "--hidden"];
       if (params.ignoreCase) flags.push("--ignore-case");
       if (params.literal) flags.push("--fixed-strings");
       if (params.glob) flags.push("--glob", params.glob);
