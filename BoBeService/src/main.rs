@@ -2210,7 +2210,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     "schema": 1,
                     "version": env!("CARGO_PKG_VERSION"),
                     "agent_harness": "pi",
-                    "agent_version": "1.3.0",
+                    "agent_version": "1.4.0",
                     "database_schema": bootstrap::database::CURRENT_SCHEMA_VERSION,
                     "database_schema_min": bootstrap::database::OLDEST_UPGRADABLE_SCHEMA_VERSION,
                     "attach_protocol_min": constants::attach::PROTOCOL_MIN,

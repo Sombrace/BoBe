@@ -1,7 +1,7 @@
 {
   "protocol_version": 1,
   "harness": "pi",
-  "harness_version": "1.3.0",
+  "harness_version": "1.4.0",
   "max_line_bytes": 16777216,
   "layout": {
     "session_pointer": "agent/session.json",
