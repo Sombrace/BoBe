@@ -25,7 +25,7 @@ pub(crate) struct SherpaStreamingStt {
 }
 
 impl SherpaStreamingStt {
-    pub(crate) fn load(model_dir: &Path, provider: &str, num_threads: i32) -> Result<Self, String> {
+    pub(crate) fn load(model_dir: &Path, num_threads: i32) -> Result<Self, String> {
         let encoder = model_dir.join("encoder-epoch-99-avg-1.int8.onnx");
         let decoder = model_dir.join("decoder-epoch-99-avg-1.onnx");
         let joiner = model_dir.join("joiner-epoch-99-avg-1.int8.onnx");
@@ -41,7 +41,7 @@ impl SherpaStreamingStt {
         config.model_config.transducer.decoder = Some(path_string(&decoder)?);
         config.model_config.transducer.joiner = Some(path_string(&joiner)?);
         config.model_config.tokens = Some(path_string(&tokens)?);
-        config.model_config.provider = Some(provider.to_owned());
+        config.model_config.provider = Some("cpu".to_owned());
         config.model_config.num_threads = num_threads.max(1);
         config.decoding_method = Some("greedy_search".into());
         config.enable_endpoint = true;
@@ -265,7 +265,7 @@ mod tests {
     fn real_streaming_model_transcribes_corpus() {
         let model_dir = std::env::var("BOBE_TEST_STT_MODEL_DIR").expect("STT model directory");
         let wav_path = std::env::var("BOBE_TEST_STT_WAV").expect("STT corpus WAV");
-        let engine = SherpaStreamingStt::load(Path::new(&model_dir), "cpu", 4).unwrap();
+        let engine = SherpaStreamingStt::load(Path::new(&model_dir), 4).unwrap();
         let wav = std::fs::read(wav_path).unwrap();
         let samples = parse_pcm16_wave(&wav).unwrap();
         let mut stream = engine.create_stream(false).unwrap();
