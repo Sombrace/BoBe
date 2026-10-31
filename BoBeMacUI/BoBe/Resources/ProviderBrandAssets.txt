@@ -43,7 +43,7 @@ The vector geometry is unchanged. Its monochrome mask renders black or white.
 Octicons MIT notice below.
 
 Rail Relay
-Owner-provided RailRelay2 repository:
+Owner-provided RailRelay repository:
 web/packages/ui/src/components/logo-mark.tsx
 web/packages/ui/src/design.css
 The logo geometry is unchanged. JSX attributes are serialized as SVG attributes.
