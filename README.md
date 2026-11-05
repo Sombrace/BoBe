@@ -25,23 +25,23 @@
 </p>
 
 <p align="center">
-  <a href="https://www.bobebot.com"><img src="docs/media/bobe-film.gif" alt="BoBe's film: she wakes up, notices a speech you are writing late at night, remembers the wedding is on Saturday, turns it into a goal, works while you sleep, then jumps into a small yellow body" width="560"></a>
+  <a href="https://www.bobebot.com"><img src="docs/media/bobe-film.gif" alt="BoBe's film: BoBe wakes up, notices a speech you are writing late at night, remembers the wedding is on Saturday, turns it into a goal, works while you sleep, then jumps into a small yellow body" width="560"></a>
 </p>
 
-BoBe is a companion who lives on your Mac. She sits on your desktop as a small
+BoBe is a companion who lives on your Mac. BoBe sits on your desktop as a small
 face, notices what you are working on, remembers what matters to you, works on
-your goals, and speaks up when she can help. You can type or talk to her, and
-she can do real work with files, a shell, Git and your own tools.
+your goals, and speaks up to help. You can type or talk to BoBe, which can do
+real work with files, a shell, Git and your own tools.
 
-She is yours: one BoBe, one memory, one set of goals, kept on your machine.
-Her thinking runs where you choose: OpenAI, Anthropic, DeepSeek, OpenRouter,
+One BoBe, one memory, one set of goals, kept on your machine. The thinking
+runs where you choose: OpenAI, Anthropic, DeepSeek, OpenRouter,
 Rail Relay, GitHub Copilot, or a local model through Ollama.
 
 <p align="center">
-  <img src="docs/media/app-conversation.png" alt="BoBe's conversation panel beside her avatar, drafting a wedding toast" width="720">
+  <img src="docs/media/app-conversation.png" alt="BoBe's conversation panel beside BoBe's face, drafting a wedding toast" width="720">
 </p>
 
-## What she does
+## What BoBe does
 
 - **Notices your work** by reading the text on your screen (optional); the
   picture never leaves your Mac.
@@ -51,7 +51,7 @@ Rail Relay, GitHub Copilot, or a local model through Ollama.
 - **Talks and listens** with speech on your own hardware; raw audio is never stored.
 - **Uses tools**: files, search, shell, Git, MCP servers, skills and helper agents.
 
-She also runs headless on a Mac or Linux machine, and the same BoBe can meet
+BoBe also runs headless on a Mac or Linux machine, and the same BoBe can meet
 you on an [iPhone](docs/using-bobe.md#iphone) or in a small
 [ESP32 body](esp32-sdk/README.md) (a prototype).
 
@@ -82,12 +82,12 @@ bobe chat
 
 ## Your data
 
-Everything BoBe knows lives in `~/.bobe/` on the machine that runs her daemon,
-with memory and goals in plain Markdown. A cloud model receives only the
-context a request needs, and **Settings → Privacy** can delete her data. The
-daemon listens only on `127.0.0.1` unless you turn on remote access, and her
-tools run as your user account, which is not a sandbox. Report vulnerabilities
-through [SECURITY.md](SECURITY.md).
+Everything BoBe knows lives in `~/.bobe/` on the machine that runs the daemon,
+with memory and goals in plain Markdown. A cloud model receives only the context
+a request needs, and **Settings → Privacy** can delete BoBe's data. The daemon
+listens only on `127.0.0.1` unless you turn on remote access, and BoBe's tools
+run as your user account, which is not a sandbox. Report vulnerabilities through
+[SECURITY.md](SECURITY.md).
 
 ## Documentation
 
