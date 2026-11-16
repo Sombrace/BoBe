@@ -63,7 +63,7 @@ dependencies:
       type: service
     version: 0.8.0
   espressif/esp-dl:
-    component_hash: 3608ac32875cb7fa93805fba2372619bde3d8a02cee47c622cf5e91a1308fe92
+    component_hash: 3148b2692a2943d7e35401dc10a181b6ba83515ec70ef51499ac5d2593eef3e2
     dependencies:
     - name: espressif/dl_fft
       registry_url: https://components.espressif.com
@@ -89,9 +89,9 @@ dependencies:
     - esp32s2
     - esp32s3
     - esp32s31
-    version: 3.3.14
+    version: 3.3.13
   espressif/esp-sr:
-    component_hash: f828073fa761cfa88c6d97e2c664d233b29c6d8b77e1a35b2fbe306fc5dc1108
+    component_hash: 31c301aa50346158c85271b149a6c7473dfdf3edaa0958968f9cdfe06d4dcd45
     dependencies:
     - name: espressif/cjson
       registry_url: https://components.espressif.com
@@ -104,7 +104,7 @@ dependencies:
     - name: espressif/esp-dl
       registry_url: https://components.espressif.com
       require: private
-      version: ~3.3.12
+      version: 3.3.13
     - name: espressif/esp-dsp
       registry_url: https://components.espressif.com
       require: private
@@ -117,7 +117,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 2.6.0
+    version: 2.6.2
   espressif/esp_lvgl_port:
     component_hash: d3c020b45c3dfc0d1706a83b63a1c34a6eb444a6e935f9afff79f92b7b94dcef
     dependencies:
@@ -169,7 +169,7 @@ dependencies:
       type: service
     version: 2.1.0
   espressif/mdns:
-    component_hash: ef0766474b37459f6ad22461e453a8713e780e831a7c993b16919d817988dff6
+    component_hash: 2fa43caa78cc170842255bc7bf71f306bc815cae12e9496bfb12372423019ac7
     dependencies:
     - name: idf
       require: private
@@ -177,7 +177,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.14.1
+    version: 1.15.1
   espressif/network_provisioning:
     component_hash: ac8dc8e10dd26b0307697049f6358caa1d17696db2e23903512098b7ad86f848
     dependencies:
@@ -195,7 +195,7 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 6.1.0
+    version: 6.1.1
   lvgl/lvgl:
     component_hash: 7d82410747bbfb319531449749e940f440f8414f041f9eaba13f0d1dd7f58cdd
     dependencies:
@@ -242,6 +242,6 @@ direct_dependencies:
 - espressif/network_provisioning
 - idf
 - lvgl/lvgl
-manifest_hash: ebd67fc0b9b62e6acdfc07f03a37180e6c9bc797b11e15a9c50d02711d8c509b
+manifest_hash: 62d96f51cd9b33f50f707b93f4b8b7b30681f65f0589e2a9580b35f05f52fad5
 target: esp32s3
 version: 3.0.0
