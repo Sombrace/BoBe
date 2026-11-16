@@ -10,14 +10,20 @@ interface ReplyMessage {
 }
 
 export function addUsage(total: Usage | undefined, next: Usage): Usage {
-  const sum = (key: "input" | "output" | "cacheRead" | "cacheWrite"): number => (total?.[key] ?? 0) + next[key];
-  const cost = (key: keyof Usage["cost"]): number => (total?.cost[key] ?? 0) + next.cost[key];
+  if (!total) return { ...next, cost: { ...next.cost } };
   return {
-    input: sum("input"), output: sum("output"), cacheRead: sum("cacheRead"), cacheWrite: sum("cacheWrite"),
-    totalTokens: (total?.totalTokens ?? 0) + next.totalTokens,
+    input: total.input + next.input, output: total.output + next.output,
+    cacheRead: total.cacheRead + next.cacheRead, cacheWrite: total.cacheWrite + next.cacheWrite,
+    ...(total.cacheWrite1h === undefined && next.cacheWrite1h === undefined
+      ? {} : { cacheWrite1h: (total.cacheWrite1h ?? 0) + (next.cacheWrite1h ?? 0) }),
+    ...(total.reasoning === undefined && next.reasoning === undefined
+      ? {} : { reasoning: (total.reasoning ?? 0) + (next.reasoning ?? 0) }),
+    totalTokens: total.totalTokens + next.totalTokens,
     cost: {
-      input: cost("input"), output: cost("output"), cacheRead: cost("cacheRead"),
-      cacheWrite: cost("cacheWrite"), total: cost("total"),
+      input: total.cost.input + next.cost.input, output: total.cost.output + next.cost.output,
+      cacheRead: total.cost.cacheRead + next.cost.cacheRead, cacheWrite: total.cost.cacheWrite + next.cost.cacheWrite,
+      total: total.cost.total + next.cost.total,
+      totalFromProvider: total.cost.totalFromProvider === true && next.cost.totalFromProvider === true,
     },
   };
 }
