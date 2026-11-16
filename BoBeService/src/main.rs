@@ -685,11 +685,13 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                         .acceptor(util::listener::LocalPlainAcceptor::new(
                             axum_server::tls_rustls::RustlsAcceptor::new(tls),
                         ))
+                        .first_request_timeout(util::listener::FIRST_REQUEST_TIMEOUT)
                         .handle(handle)
                         .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
                         .await?;
                 } else {
                     axum_server::bind(address)
+                        .first_request_timeout(util::listener::FIRST_REQUEST_TIMEOUT)
                         .handle(handle)
                         .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
                         .await?;
