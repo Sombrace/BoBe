@@ -74,13 +74,13 @@ overflow-checks = true
 [dependencies]
 anyhow = "1.0.104"
 async-stream = "0.3.6"
-arc-swap = "1.9.3"
+arc-swap = "1.9.5"
 axum = { version = "0.8.9", features = ["ws"] }
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 clap = { version = "4.6", features = ["derive"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
-toml_edit = { version = "0.25.17", features = ["serde"] }
+toml_edit = { version = "0.25.19", features = ["serde"] }
 futures = "0.3"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -123,7 +123,7 @@ which = "8.0.6"
 libc = "0.2.191"
 base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 rand = "0.10.3"
-mdns-sd = { version = "0.21.6", default-features = false }
+mdns-sd = { version = "0.21.7", default-features = false }
 tower = { version = "0.5.3", features = ["limit"] }
 reqwest = { version = "0.13.5", default-features = false, features = [
     "rustls-no-provider",
@@ -135,9 +135,9 @@ rustls = { version = "0.23.46", default-features = false, features = [
     "std",
     "tls12",
 ] }
-flate2 = "1.1.10"
+flate2 = "1.1.11"
 tar = "0.4.46"
-zstd = { version = "0.14.3", default-features = false }
+zstd = { version = "0.14.4", default-features = false }
 bzip2 = "0.6.1"
 sherpa-onnx = "=2.0.1"
 ptts = { version = "=0.6.0", default-features = false, features = ["hf"] }
