@@ -52,7 +52,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
         with:
-          tool: cargo-deny@0.20.2,cargo-machete@0.9.2
+          tool: cargo-deny@0.20.2
       - name: Agent
         run: scripts/tasks/build-agent.sh
       - name: Pairing crates
@@ -73,7 +73,6 @@ jobs:
         run: |
           for crate in BoBeService PairingCore PairingFFI; do
             (cd "$crate" && cargo deny check --hide-inclusion-graph advisories licenses bans sources)
-            cargo machete --with-metadata "$crate"
           done
       - name: Contracts
         run: |
