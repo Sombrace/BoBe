@@ -76,7 +76,7 @@ anyhow = "1.0.104"
 async-stream = "0.3.6"
 arc-swap = "1.9.3"
 axum = { version = "0.8.9", features = ["ws"] }
-axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
+axum-server = { version = "0.9", features = ["tls-rustls-no-provider"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 clap = { version = "4.6", features = ["derive"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
