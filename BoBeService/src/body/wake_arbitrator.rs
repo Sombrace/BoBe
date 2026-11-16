@@ -80,8 +80,7 @@ impl WakeArbitrator {
                 .candidates
                 .values()
                 .max_by(|left, right| compare_candidates(left, right))
-                .map(candidate_key)
-                .unwrap_or_default()
+                .map_or_default(candidate_key)
         });
         if winner == &key {
             WakeDecision::Winner

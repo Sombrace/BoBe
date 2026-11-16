@@ -1,3 +1,4 @@
+use std::mem::DropGuard;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -78,40 +79,17 @@ fn proactive_prompt(source: TurnSource, reason: &str) -> String {
     )
 }
 
-struct ProactiveStreamGuard {
+fn interrupted_stream_guard(
     conversation: Arc<ConversationService>,
     turn_id: ConversationTurnId,
-    armed: bool,
-}
-
-impl ProactiveStreamGuard {
-    fn new(conversation: Arc<ConversationService>, turn_id: ConversationTurnId) -> Self {
-        Self {
-            conversation,
-            turn_id,
-            armed: true,
-        }
-    }
-
-    fn disarm(&mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for ProactiveStreamGuard {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-
-        let conversation = Arc::clone(&self.conversation);
-        let turn_id = self.turn_id;
+) -> DropGuard<ConversationTurnId, impl FnOnce(ConversationTurnId)> {
+    DropGuard::new(turn_id, move |turn_id| {
         tokio::spawn(async move {
             if let Err(error) = conversation.settle_interrupted_turn(turn_id).await {
                 warn!(%error, "proactive_generator.cancel_cleanup_failed");
             }
         });
-    }
+    })
 }
 
 fn inactivity_timeout_elapsed(
@@ -442,8 +420,8 @@ impl ProactiveGenerator {
         source: TurnSource,
         reason: &str,
     ) -> Decision {
-        let mut stream_guard =
-            ProactiveStreamGuard::new(Arc::clone(&self.conversation), assistant_turn_id);
+        let stream_guard =
+            interrupted_stream_guard(Arc::clone(&self.conversation), assistant_turn_id);
         let _indicator_guard = IndicatorGuard::new(
             Arc::clone(&self.event_queue),
             target_conversation.channel_id,
@@ -476,7 +454,7 @@ impl ProactiveGenerator {
                         "proactive_generator.discard_failed"
                     );
                 } else {
-                    stream_guard.disarm();
+                    DropGuard::dismiss(stream_guard);
                 }
                 return Decision::Idle;
             }
@@ -493,7 +471,7 @@ impl ProactiveGenerator {
             if let Err(error) = cleanup {
                 warn!(%error, "proactive_generator.discard_failed");
             } else {
-                stream_guard.disarm();
+                DropGuard::dismiss(stream_guard);
             }
             Decision::Idle
         } else {
@@ -501,7 +479,7 @@ impl ProactiveGenerator {
                 .persist_proactive_response(&result, target_conversation)
                 .await;
             if persisted {
-                stream_guard.disarm();
+                DropGuard::dismiss(stream_guard);
             }
             if result.success && persisted {
                 result.emit_terminal(
@@ -607,7 +585,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration as StdDuration;
 
-    use super::{ProactiveStreamGuard, inactivity_timeout_elapsed};
+    use super::{inactivity_timeout_elapsed, interrupted_stream_guard};
     use crate::db::{SqliteConversationRepo, test_helpers::in_memory_pool};
     use crate::runtime::conversation_service::ConversationService;
     use chrono::{TimeDelta, Utc};
@@ -818,10 +796,7 @@ mod tests {
             panic!("proactive stream should start");
         };
 
-        drop(ProactiveStreamGuard::new(
-            Arc::clone(&conversation),
-            turn_id,
-        ));
+        drop(interrupted_stream_guard(Arc::clone(&conversation), turn_id));
 
         let deleted = tokio::time::timeout(StdDuration::from_secs(1), async {
             loop {
@@ -842,7 +817,7 @@ mod tests {
         let repo = Arc::new(SqliteConversationRepo::new(in_memory_pool().await));
         let conversation = Arc::new(ConversationService::new(Arc::clone(&repo)));
         let (pending, turn) = conversation.begin_proactive_stream(None).await.unwrap();
-        let old = ProactiveStreamGuard::new(Arc::clone(&conversation), turn);
+        let old = interrupted_stream_guard(Arc::clone(&conversation), turn);
         conversation.push_assistant_stream_delta(pending.id, "old proactive partial");
         conversation.settle_interrupted_turn(turn).await.unwrap();
         let active = conversation

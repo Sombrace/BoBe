@@ -345,7 +345,6 @@ async fn stop_process_group(mut child: tokio::process::Child, grace: Duration) {
 #[cfg(test)]
 mod tests {
 
-    use std::convert::Infallible;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -392,7 +391,7 @@ mod tests {
                 let release_stream = Arc::clone(&release_stream);
                 async move || {
                     let stream = async_stream::stream! {
-                        yield Ok::<_, Infallible>(Bytes::from_static(
+                        yield Ok::<_, !>(Bytes::from_static(
                             b"{\"status\":\"pulling\",\"completed\":1,\"total\":2}\n"
                         ));
                         first_chunk_sent.notify_one();

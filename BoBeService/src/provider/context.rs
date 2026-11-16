@@ -36,7 +36,7 @@ fn escape_markers(text: &str, bracket: &str) -> String {
     while let Some(index) = rest.find('[') {
         escaped.push_str(&rest[..index]);
         rest = &rest[index + 1..];
-        let name = rest.strip_prefix('/').unwrap_or(rest).as_bytes();
+        let name = rest.trim_prefix('/').as_bytes();
         if name.len() >= 5 && name[..5].eq_ignore_ascii_case(b"bobe.") {
             escaped.push_str(bracket);
         } else {

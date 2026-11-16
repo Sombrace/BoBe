@@ -1,6 +1,7 @@
 use super::binary_download as download;
 use super::binary_extract as extract;
 
+use std::mem::DropGuard;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -255,24 +256,8 @@ impl BinaryManager {
     }
 }
 
-struct GroupKill(Option<u32>);
-
 fn release_number(version: &str) -> Option<Vec<u64>> {
     version.split('.').map(|part| part.parse().ok()).collect()
-}
-
-impl GroupKill {
-    fn disarm(&mut self) {
-        self.0 = None;
-    }
-}
-
-impl Drop for GroupKill {
-    fn drop(&mut self) {
-        if let Some(pid) = self.0 {
-            crate::util::process_group::signal_group(pid, libc::SIGKILL);
-        }
-    }
 }
 
 async fn run_version_check(
@@ -292,7 +277,11 @@ async fn run_version_check(
     let mut child = command
         .spawn()
         .map_err(|e| AppError::Config(format!("Failed to invoke managed Ollama: {e}")))?;
-    let mut group = GroupKill(child.id());
+    let group = DropGuard::new(child.id(), |pid| {
+        if let Some(pid) = pid {
+            crate::util::process_group::signal_group(pid, libc::SIGKILL);
+        }
+    });
     let mut stderr = child.stderr.take();
     let finished = tokio::select! {
         result = async {
@@ -319,12 +308,11 @@ async fn run_version_check(
             return Err(error);
         }
     };
-    if let Some(pid) = group.0
+    if let Some(pid) = DropGuard::dismiss(group)
         && crate::util::process_group::group_exists(pid)
     {
         crate::util::process_group::signal_group(pid, libc::SIGKILL);
     }
-    group.disarm();
     if !status.success() {
         let stderr = String::from_utf8_lossy(&captured);
         return Err(AppError::Config(format!(

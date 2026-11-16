@@ -116,8 +116,7 @@ impl AgentJobRepo {
             (
                 previous
                     .as_ref()
-                    .map(|job| job.created_at.clone())
-                    .unwrap_or_default(),
+                    .map_or_default(|job| job.created_at.clone()),
                 task.priority,
             )
         });

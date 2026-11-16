@@ -184,8 +184,7 @@ impl MessageRequests {
         let queued = self.session.queue_user_message(channel)?;
         let cancellation = delivery
             .as_ref()
-            .map(|value| value.cancellation.clone())
-            .unwrap_or_default();
+            .map_or_default(|value| value.cancellation.clone());
         let registration = self.runs.register_cancellation(
             request_id,
             cancellation.clone(),

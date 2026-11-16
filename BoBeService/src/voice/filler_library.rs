@@ -209,9 +209,7 @@ mod tests {
             ],
             next: AtomicUsize::new(0),
         };
-        let played = (0..7)
-            .map(|_| set.take().unwrap().len())
-            .collect::<Vec<_>>();
+        let played = Vec::from_fn(7, |_| set.take().unwrap().len());
         assert!(
             played
                 .array_windows()

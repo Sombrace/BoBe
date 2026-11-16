@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn streaming_boundaries_do_not_add_silence_or_drop_samples() {
-        let pcm: Vec<f32> = (0..4_193).map(|n| (n as f32 * 0.02).sin() * 0.5).collect();
+        let pcm = Vec::from_fn(4_193, |n| (n as f32 * 0.02).sin() * 0.5);
         let mut batch_encoder = make_opus_encoder(24_000).expect("encoder");
         let expected = encode_pcm_with(&mut batch_encoder, &pcm, 24_000);
         for size in [1, 197, 480, 1_920] {

@@ -289,10 +289,7 @@ async fn create_directories_no_symlinks(root: &Path, target: &Path) -> Result<()
 }
 
 fn display_relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .into_owned()
+    path.trim_prefix(root).to_string_lossy().into_owned()
 }
 
 async fn count_workspace_files(root: &Path) -> Result<usize, AppError> {

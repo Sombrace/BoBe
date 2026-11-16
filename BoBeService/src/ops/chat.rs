@@ -350,7 +350,6 @@ fn parse_frame(frame: &[u8]) -> Result<Option<StreamBundle>, AppError> {
 
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -386,7 +385,7 @@ data: {"type":"text_delta","message_id":"msg_1","timestamp":"now","description":
 
     async fn fixture_events(
         State(state): State<FixtureState>,
-    ) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
+    ) -> Sse<impl futures::Stream<Item = Result<Event, !>>> {
         state.subscribed.store(true, Ordering::Release);
         let mut receiver = state.events.subscribe();
         let stream = async_stream::stream! {

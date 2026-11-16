@@ -110,8 +110,7 @@ fn describe(output: serde_json::Value) -> String {
     match output {
         serde_json::Value::String(text) => text,
         value => serde_json::from_value::<ActivityDescription>(value)
-            .map(|activity| activity.description)
-            .unwrap_or_default(),
+            .map_or_default(|activity| activity.description),
     }
 }
 
@@ -123,9 +122,7 @@ fn single_line(text: &str) -> String {
 }
 
 fn format_entry(description: &str, active_window: Option<&str>) -> String {
-    let prefix = active_window
-        .map(|window| format!("[{}] ", single_line(window)))
-        .unwrap_or_default();
+    let prefix = active_window.map_or_default(|window| format!("[{}] ", single_line(window)));
     format!(
         "{prefix}{}",
         truncate_str(&single_line(description), DESCRIPTION_MAX_LEN)

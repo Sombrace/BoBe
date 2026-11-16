@@ -15,7 +15,7 @@ impl FenceFilter {
             if c == '`' {
                 self.backticks += 1;
                 if self.backticks == 3 {
-                    self.in_fence = !self.in_fence;
+                    self.in_fence.toggle();
                     self.backticks = 0;
                 }
                 continue;

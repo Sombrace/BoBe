@@ -197,7 +197,6 @@ async fn download_from_url(
 #[cfg(test)]
 mod tests {
 
-    use std::convert::Infallible;
     use std::sync::Arc;
 
     use axum::Router;
@@ -255,7 +254,7 @@ mod tests {
                 let release_stream = Arc::clone(&release_stream);
                 async move || {
                     let stream = async_stream::stream! {
-                        yield Ok::<_, Infallible>(Bytes::from_static(b"partial"));
+                        yield Ok::<_, !>(Bytes::from_static(b"partial"));
                         first_chunk_sent.notify_one();
                         release_stream.notified().await;
                     };

@@ -146,8 +146,7 @@ pub(crate) async fn upsert(
             .filter(|profile| {
                 profile.kind == request.kind && profile.auth_method == request.auth_method
             })
-            .map(|profile| profile.models.clone())
-            .unwrap_or_default(),
+            .map_or_default(|profile| profile.models.clone()),
         kind: request.kind,
         auth_method: request.auth_method,
         base_url: request.base_url,
@@ -233,8 +232,7 @@ pub(crate) async fn activate(
             .filter(|profile| {
                 profile.kind == request.kind && profile.auth_method == request.auth_method
             })
-            .map(|profile| profile.models.clone())
-            .unwrap_or_default(),
+            .map_or_default(|profile| profile.models.clone()),
         kind: request.kind,
         auth_method: request.auth_method,
         base_url: request.base_url,
