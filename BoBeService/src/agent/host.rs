@@ -17,6 +17,7 @@ use crate::provider::{ChatDelta, DomainTools, McpRuntimeConfig, SkillCreateParam
 use crate::util::process_group::signal_group;
 
 const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const HARNESS_VERSION: &str = "1.5.2";
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 type Reply = Result<Value, String>;
 type PendingReplies = HashMap<i64, oneshot::Sender<Reply>>;
@@ -1271,6 +1272,16 @@ fn lock<T>(mutex: &SyncMutex<T>) -> std::sync::MutexGuard<'_, T> {
 mod tests {
     use super::*;
     use std::assert_matches;
+
+    #[test]
+    fn worker_fixture_matches_the_rust_harness_constants() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../../BoBeAgent/fixtures/host-contract-v1.json"
+        ))
+        .unwrap();
+        assert_eq!(fixture["harness_version"], HARNESS_VERSION);
+        assert_eq!(fixture["max_line_bytes"], MAX_LINE_BYTES);
+    }
 
     #[test]
     fn worker_fixture_matches_authoritative_rust_execution_limits() {
