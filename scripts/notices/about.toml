@@ -8,11 +8,7 @@ accepted = [
     "Zlib",
     "BSL-1.0",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
-    "CC0-1.0",
     "CDLA-Permissive-2.0",
-    "MPL-2.0",
-    "OpenSSL",
     "bzip2-1.0.6",
 ]
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]
