@@ -21,7 +21,7 @@ hil = [
     "numpy==2.5.4",
     "pillow==13.0.0",
     "sounddevice==0.5.6",
-    "websockets==17.3",
+    "websockets==17.4",
 ]
 
 [tool.pyright]

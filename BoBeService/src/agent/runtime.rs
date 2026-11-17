@@ -329,8 +329,7 @@ impl PiChat {
                 let interruption = prompt
                     .interrupted_reply
                     .as_ref()
-                    .map(|reply| format!("\n{}", crate::provider::interruption_context(reply)))
-                    .unwrap_or_default();
+                    .map_or_default(|reply| format!("\n{}", crate::provider::interruption_context(reply)));
                 let request = connection.begin("chat", json!({
                     "text": prompt.text,
                     "session_key": prompt.session_key,
@@ -823,7 +822,7 @@ mod tests {
                     Event::default().data(chunk(delta, Value::Null)),
                     Event::default().data(chunk(json!({}), json!(finish))),
                     Event::default().data("[DONE]"),
-                ].map(Ok::<_, std::convert::Infallible>);
+                ].map(Ok::<_, !>);
                 Sse::new(futures::stream::iter(events))
             }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

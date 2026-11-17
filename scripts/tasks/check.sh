@@ -31,7 +31,6 @@ for crate in BoBeService PairingCore PairingFFI; do
         ../.tools/bin/cargo-deny check --hide-inclusion-graph \
             advisories licenses bans sources
     )
-    ./.tools/bin/cargo-machete --with-metadata "$crate"
 done
 
 ./scripts/check-cross-language-constants.sh

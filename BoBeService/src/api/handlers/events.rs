@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,7 +17,7 @@ pub(crate) async fn stream_events(
     State(state): State<Arc<AppState>>,
     Extension(principal): Extension<Principal>,
     headers: HeaderMap,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> Sse<impl Stream<Item = Result<Event, !>>> {
     let after_event_id = headers
         .get("last-event-id")
         .and_then(|value| value.to_str().ok())
@@ -139,7 +138,7 @@ mod tests {
     async fn sse_event_carries_the_broker_cursor() {
         let mut bundle = text_delta_event("message", "hello", false);
         bundle.event_id = Some(42);
-        let stream = futures::stream::iter([Ok::<_, Infallible>(to_sse_event(&bundle))]);
+        let stream = futures::stream::iter([Ok::<_, !>(to_sse_event(&bundle))]);
         let response = axum::response::IntoResponse::into_response(Sse::new(stream));
         let body = axum::body::to_bytes(response.into_body(), 4096)
             .await

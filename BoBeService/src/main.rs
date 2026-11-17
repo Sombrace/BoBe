@@ -685,11 +685,13 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                         .acceptor(util::listener::LocalPlainAcceptor::new(
                             axum_server::tls_rustls::RustlsAcceptor::new(tls),
                         ))
+                        .first_request_timeout(util::listener::FIRST_REQUEST_TIMEOUT)
                         .handle(handle)
                         .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
                         .await?;
                 } else {
                     axum_server::bind(address)
+                        .first_request_timeout(util::listener::FIRST_REQUEST_TIMEOUT)
                         .handle(handle)
                         .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
                         .await?;
@@ -2192,8 +2194,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                                 activated
                                     .backup
                                     .as_ref()
-                                    .map(|path| path.display().to_string())
-                                    .unwrap_or_default()
+                                    .map_or_default(|path| path.display().to_string())
                             ))
                             .into(),
                         },
@@ -2210,7 +2211,7 @@ async fn run() -> anyhow::Result<ops::exit::ExitCode> {
                     "schema": 1,
                     "version": env!("CARGO_PKG_VERSION"),
                     "agent_harness": "pi",
-                    "agent_version": "1.4.0",
+                    "agent_version": agent::HARNESS_VERSION,
                     "database_schema": bootstrap::database::CURRENT_SCHEMA_VERSION,
                     "database_schema_min": bootstrap::database::OLDEST_UPGRADABLE_SCHEMA_VERSION,
                     "attach_protocol_min": constants::attach::PROTOCOL_MIN,

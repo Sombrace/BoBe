@@ -63,9 +63,9 @@ mod tests {
     #[test]
     fn tempo_preserves_pitch_and_duration_across_chunk_boundaries() {
         let sample_rate = 24_000;
-        let signal: Vec<f32> = (0..sample_rate)
-            .map(|n| (n as f32 * 440.0 * std::f32::consts::TAU / sample_rate as f32).sin() * 0.5)
-            .collect();
+        let signal = Vec::from_fn(sample_rate as usize, |n| {
+            (n as f32 * 440.0 * std::f32::consts::TAU / sample_rate as f32).sin() * 0.5
+        });
         for speed in [0.5, 0.8, 1.5, 2.0] {
             let mut tempo = Tempo::new(sample_rate, speed);
             let mut output = Vec::new();

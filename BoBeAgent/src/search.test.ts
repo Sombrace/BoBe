@@ -29,6 +29,28 @@ test("grep and find retain pi search results but launch through the daemon proce
   assert.ok(results.includes("src/notes.txt"),results);
 });
 
+test("grep roots globs at its path and reports the limit only when more matches exist",async t=>{
+  const paths=await fixture(t);
+  await mkdir(join(paths.workspace,"src/sub"),{recursive:true});
+  await writeFile(join(paths.workspace,"src/sub/notes.txt"),"needle\n");
+  await mkdir(join(paths.workspace,"one"));
+  await writeFile(join(paths.workspace,"one/only.txt"),"needle once\n");
+  let calls=0;
+  let results="";
+  const {worker}=await host(t,configuration(paths),context=>{
+    if (calls++===0) return {tools:[
+      {id:"glob",name:"grep",arguments:{pattern:"needle",path:"src",glob:"./sub/*.txt"}},
+      {id:"exact",name:"grep",arguments:{pattern:"needle",path:"one",limit:1}},
+    ]};
+    results=JSON.stringify(context.messages.filter(message=>message.role==="toolResult"));
+    return {text:"Searched."};
+  });
+  await worker.request({id:2,method:"chat",params:{text:"Search",channel:"text",context:""}});
+  assert.ok(results.includes("sub/notes.txt:1: needle"),results);
+  assert.ok(results.includes("only.txt:1: needle once"),results);
+  assert.ok(!results.includes("limit reached"),results);
+});
+
 test("grep keeps regex semantics when the daemon environment names a ripgrep config",async t=>{
   const paths=await fixture(t);
   await writeFile(join(paths.workspace,"notes.txt"),"alpha 42\n");

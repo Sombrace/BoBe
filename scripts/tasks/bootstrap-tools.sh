@@ -9,7 +9,6 @@ MODE="${1:-install}"
 
 CARGO_ABOUT_VERSION="0.9.3"
 CARGO_DENY_VERSION="0.20.2"
-CARGO_MACHETE_VERSION="0.9.2"
 SWIFTLINT_VERSION="0.65.1"
 XCODEGEN_VERSION="2.46.0"
 
@@ -28,7 +27,6 @@ check_tools() {
     local failed=0
     tool_matches "$BIN_DIR/cargo-about" "cargo-about $CARGO_ABOUT_VERSION" --version || failed=1
     tool_matches "$BIN_DIR/cargo-deny" "cargo-deny $CARGO_DENY_VERSION" --version || failed=1
-    tool_matches "$BIN_DIR/cargo-machete" "$CARGO_MACHETE_VERSION" --version || failed=1
     if on_macos; then
         tool_matches "$BIN_DIR/swiftlint" "$SWIFTLINT_VERSION" version || failed=1
         tool_matches "$BIN_DIR/xcodegen" "Version: $XCODEGEN_VERSION" --version || failed=1
@@ -106,10 +104,6 @@ fi
 if ! tool_matches "$BIN_DIR/cargo-deny" "cargo-deny $CARGO_DENY_VERSION" --version; then
     cargo install --locked --force --root "$TOOLS_DIR" \
         cargo-deny --version "$CARGO_DENY_VERSION"
-fi
-if ! tool_matches "$BIN_DIR/cargo-machete" "$CARGO_MACHETE_VERSION" --version; then
-    cargo install --locked --force --root "$TOOLS_DIR" \
-        cargo-machete --version "$CARGO_MACHETE_VERSION"
 fi
 if on_macos && ! tool_matches "$BIN_DIR/swiftlint" "$SWIFTLINT_VERSION" version; then
     install_single_binary_zip \

@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -134,14 +133,14 @@ impl From<&InstallSnapshot> for InstallSnapshotDto {
 
 pub(crate) async fn install_status_stream(
     State(state): State<Arc<AppState>>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+) -> Sse<impl Stream<Item = Result<Event, !>>> {
     let rx = state.services.ollama_install.subscribe().await;
     let stream = WatchStream::new(rx).map(|snap| {
         let event = Event::default()
             .event("install")
             .json_data(InstallSnapshotDto::from(&snap))
             .unwrap_or_else(|_| Event::default().event("install").data("{}"));
-        Ok::<_, Infallible>(event)
+        Ok::<_, !>(event)
     });
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
 }

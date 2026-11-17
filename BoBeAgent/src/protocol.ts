@@ -2,7 +2,7 @@ import { Type, type Static, type TSchema } from "typebox";
 import { Compile, type Validator } from "typebox/compile";
 
 export const PROTOCOL_VERSION = 1;
-export const HARNESS_VERSION = "1.4.0";
+export const HARNESS_VERSION = "1.5.2";
 export const MAX_LINE_BYTES = 16 * 1024 * 1024;
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };

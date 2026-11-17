@@ -30,8 +30,7 @@ pub(crate) fn render(report: &Value) -> String {
     let origins = report
         .get("origins")
         .and_then(Value::as_array)
-        .map(|origins| origins.iter().filter_map(Value::as_str).collect::<Vec<_>>())
-        .unwrap_or_default();
+        .map_or_default(|origins| origins.iter().filter_map(Value::as_str).collect::<Vec<_>>());
     let mut lines = vec!["Scan with BoBe on your iPhone.".to_owned(), String::new()];
     match terminal_qr(link) {
         Some(qr) => lines.extend(qr),

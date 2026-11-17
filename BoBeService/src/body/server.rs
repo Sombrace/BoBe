@@ -429,9 +429,11 @@ pub(crate) async fn run(
             axum_server::tls_rustls::RustlsAcceptor::new(tls),
             Arc::clone(&identities),
         ))
+        .first_request_timeout(crate::util::listener::FIRST_REQUEST_TIMEOUT)
         .handle(body_handle)
         .serve(body_app.into_make_service());
     let adapter_server = axum_server::bind(adapter_address)
+        .first_request_timeout(crate::util::listener::FIRST_REQUEST_TIMEOUT)
         .handle(adapter_handle)
         .serve(adapter_app.into_make_service());
     gateway.mark_running();

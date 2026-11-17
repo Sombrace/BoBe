@@ -11,6 +11,7 @@ use tokio_util::either::Either;
 
 const TLS_HANDSHAKE_RECORD: u8 = 0x16;
 const FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const FIRST_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub(crate) struct LocalPlainAcceptor {
@@ -37,7 +38,7 @@ where
             if is_local_peer(stream.peer_addr().ok()) && !opens_with_tls(&stream).await? {
                 return Ok((Either::Left(stream), service));
             }
-            let (stream, service) = tls.accept(stream, service).await?;
+            let (stream, _) = tls.accept(stream, ()).await?;
             Ok((Either::Right(stream), service))
         })
     }

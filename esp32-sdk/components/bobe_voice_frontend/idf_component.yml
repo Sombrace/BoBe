@@ -3,6 +3,6 @@ description: "Optional BoBe ESP-SR front end"
 dependencies:
   idf: ">=6.1,<6.2"
   espressif/esp-sr:
-    version: "==2.6.0"
+    version: "==2.6.2"
     rules:
       - if: "$CONFIG{BOBE_ENABLE_ESP_SR} == True"

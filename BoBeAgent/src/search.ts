@@ -1,4 +1,4 @@
-import { access, readFile, stat } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
@@ -138,6 +138,13 @@ export function ownedFind(cwd: string, owner: ProcessClient, requestId: () => nu
   };
 }
 
+function rgText(value: unknown): string {
+  if (!isRecord(value)) return "";
+  if (typeof value.text === "string") return value.text;
+  if (typeof value.bytes === "string") return Buffer.from(value.bytes, "base64").toString("utf8");
+  return "";
+}
+
 export function ownedGrep(cwd: string, owner: ProcessClient, requestId: () => number,agentDir:string): ReturnType<typeof createGrepToolDefinition> {
   const definition = createGrepToolDefinition(cwd);
   return {
@@ -145,51 +152,64 @@ export function ownedGrep(cwd: string, owner: ProcessClient, requestId: () => nu
     execute: async (_id, params, signal, _update, context) => {
       const searchPath = absolutePath(params.path || ".", context?.cwd || cwd);
       const directory = (await stat(searchPath)).isDirectory();
-      const limit = Math.max(1, params.limit ?? 100);
-      const contextLines = Math.max(0, params.context ?? 0);
+      const limit = Math.max(1, Math.floor(params.limit ?? 100));
+      const contextLines = params.context && params.context > 0 ? Math.min(Math.floor(params.context), Number.MAX_SAFE_INTEGER) : 0;
       const flags = ["--no-config", "--json", "--line-number", "--color=never", "--hidden"];
       if (params.ignoreCase) flags.push("--ignore-case");
       if (params.literal) flags.push("--fixed-strings");
-      if (params.glob) flags.push("--glob", params.glob);
-      flags.push("--", params.pattern, searchPath);
-      const matches: { file: string; number: number; text: string }[] = [];
-      await runSearch(owner, requestId(), "rg", flags, cwd, agentDir,signal, line => {
-        if (!line.trim()) return false;
-        const event: unknown = JSON.parse(line);
-        if (!isRecord(event) || event.type !== "match") return false;
-        if (!isRecord(event.data) || !isRecord(event.data.path) || !isRecord(event.data.lines)
-          || typeof event.data.line_number !== "number" || typeof event.data.path.text !== "string"
-          || typeof event.data.lines.text !== "string") throw new Error("Search result cannot be represented as UTF-8 text");
-        matches.push({ file: event.data.path.text, number: event.data.line_number, text: event.data.lines.text });
-        return matches.length >= limit;
-      });
-      if (!matches.length) return { content: [{ type: "text", text: "No matches found" }], details: undefined };
-      let linesTruncated = false;
+      if (params.glob) flags.push("--glob", params.glob.replace(/^(!?)(?:\.\/)+/, "$1"));
+      if (contextLines) flags.push("--context", String(contextLines));
+      flags.push("--", params.pattern, directory ? "." : searchPath);
       const lines: string[] = [];
-      const files = new Map<string, Promise<string[]>>();
-      for (const match of matches) {
-        assertActive(signal);
-        const path = directory ? relative(searchPath, match.file) : "";
-        const label = path && !path.startsWith("..") ? path.replaceAll("\\", "/") : basename(match.file);
-        if (!contextLines) {
-          const line = truncateLine(match.text.replace(/\r\n/g, "\n").replace(/\r/g, "").replace(/\n$/, ""));
-          linesTruncated ||= line.wasTruncated;
-          lines.push(`${label}:${match.number}: ${line.text}`);
-        } else {
-          const content = await files.getOrInsertComputed(match.file, async file =>
-            (await readFile(file, "utf8")).replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n"));
-          for (let number = Math.max(1, match.number - contextLines); number <= Math.min(content.length, match.number + contextLines); number++) {
-            const line = truncateLine(content[number - 1] ?? "");
-            linesTruncated ||= line.wasTruncated;
-            lines.push(number === match.number ? `${label}:${number}: ${line.text}` : `${label}-${number}- ${line.text}`);
+      let bytes = 0;
+      let lineCount = 0;
+      let matches = 0;
+      let lastFile: string | undefined;
+      let limitHit = false;
+      let trailingEnd = 0;
+      let limitReached = false;
+      let linesTruncated = false;
+      const push = (file: string, number: number, text: string, match: boolean): void => {
+        lastFile = file;
+        const path = directory ? relative(searchPath, resolve(searchPath, file)) : "";
+        const label = path && !path.startsWith("..") ? path.replaceAll("\\", "/") : basename(file);
+        const line = truncateLine(text.replace(/\r?\n?$/, ""));
+        linesTruncated ||= line.wasTruncated;
+        const formatted = match ? `${label}:${number}: ${line.text}` : `${label}-${number}- ${line.text}`;
+        if (bytes - 1 <= DEFAULT_MAX_BYTES) lines.push(formatted);
+        bytes += Buffer.byteLength(formatted, "utf8") + 1;
+        lineCount++;
+      };
+      await runSearch(owner, requestId(), "rg", flags, directory ? searchPath : cwd, agentDir,signal, raw => {
+        if (!raw.trim()) return false;
+        const event: unknown = JSON.parse(raw);
+        if (!isRecord(event) || (event.type !== "match" && event.type !== "context") || !isRecord(event.data)) return false;
+        const match = event.type === "match";
+        const file = rgText(event.data.path);
+        const number = event.data.line_number;
+        if (!file || typeof number !== "number") return false;
+        const text = rgText(event.data.lines);
+        if (!limitHit) {
+          push(file, number, text, match);
+          if (match && ++matches >= limit) {
+            limitHit = true;
+            trailingEnd = number + contextLines;
           }
+          return false;
         }
-      }
+        const inWindow = file === lastFile && number <= trailingEnd;
+        if (inWindow) push(file, number, text, false);
+        if (match) limitReached = true;
+        return limitReached && !(inWindow && number < trailingEnd);
+      });
+      if (!matches) return { content: [{ type: "text", text: "No matches found" }], details: undefined };
       const truncation = truncateHead(lines.join("\n"), { maxLines: Number.MAX_SAFE_INTEGER });
+      truncation.totalLines = lineCount;
+      truncation.totalBytes = bytes - 1;
       let output = truncation.content;
       const details: GrepToolDetails = {};
       const notices: string[] = [];
-      if (matches.length >= limit) {
+      if (limitReached) {
         notices.push(`${limit} matches limit reached. Use limit=${limit * 2} for more, or refine pattern`);
         details.matchLimitReached = limit;
       }

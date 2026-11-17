@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::mem::DropGuard;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -547,35 +548,6 @@ pub(crate) struct BodyGateway {
     clock_origin: Instant,
     update_offer: Option<Arc<UpdateOffer>>,
     pub(super) sensor_states: Mutex<SensorStates>,
-}
-
-struct LeaseReleaseGuard {
-    gateway: Arc<BodyGateway>,
-    route: RouteDescriptor,
-    armed: bool,
-}
-
-impl LeaseReleaseGuard {
-    fn new(gateway: Arc<BodyGateway>, route: RouteDescriptor) -> Self {
-        Self {
-            gateway,
-            route,
-            armed: true,
-        }
-    }
-
-    fn finish(mut self) {
-        self.gateway.lock_state().finish_lease_release(&self.route);
-        self.armed = false;
-    }
-}
-
-impl Drop for LeaseReleaseGuard {
-    fn drop(&mut self) {
-        if self.armed {
-            self.gateway.lock_state().finish_lease_release(&self.route);
-        }
-    }
 }
 
 impl BodyGateway {
@@ -2215,7 +2187,9 @@ impl BodyGateway {
         reason: &'static str,
         notify_adapter: bool,
     ) {
-        let completion = LeaseReleaseGuard::new(Arc::clone(&self), route.clone());
+        let completion = DropGuard::new((Arc::clone(&self), route.clone()), |(gateway, route)| {
+            gateway.lock_state().finish_lease_release(&route);
+        });
         if let Some(abort) = release.expiry_abort {
             abort.abort();
         }
@@ -2245,7 +2219,7 @@ impl BodyGateway {
         if !self.send_terminal_idle(&route).await {
             self.invalidate_body(&route.device_id, route.connection_generation);
         }
-        completion.finish();
+        drop(completion);
         tracing::info!(
             device_id = %route.device_id,
             lease_id = %route.lease_id,

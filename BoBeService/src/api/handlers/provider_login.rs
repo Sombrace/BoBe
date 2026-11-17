@@ -1,4 +1,3 @@
-use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -84,7 +83,7 @@ pub(crate) async fn auth_status(
 pub(crate) async fn events(
     State(state): State<Arc<AppState>>,
     Path(profile): Path<String>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
+) -> Result<Sse<impl Stream<Item = Result<Event, !>>>, AppError> {
     let profile = configured_profile(&state, &profile)?;
     let Some(rx) = state.auth.provider_login.subscribe(&profile).await else {
         return Err(AppError::NotFound("no login session in flight".into()));
@@ -99,7 +98,7 @@ pub(crate) async fn events(
                     .event("login")
                     .data(r#"{"phase":"failed","message":"Could not encode provider login state"}"#)
             });
-        Ok::<_, Infallible>(event)
+        Ok::<_, !>(event)
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
 }

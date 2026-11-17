@@ -5,6 +5,7 @@ use std::sync::Arc;
 use axum::Extension;
 use axum::middleware::AddExtension;
 use axum_server::accept::Accept;
+use axum_server::tls::TlsService;
 use axum_server::tls_rustls::RustlsAcceptor;
 use sha2::{Digest, Sha256};
 use tokio_rustls::server::TlsStream;
@@ -26,13 +27,13 @@ impl BodyIdentityAcceptor {
 
 impl<I, S> Accept<I, S> for BodyIdentityAcceptor
 where
-    RustlsAcceptor: Accept<I, S, Stream = TlsStream<I>, Service = S>,
+    RustlsAcceptor: Accept<I, S, Stream = TlsStream<I>, Service = TlsService<S>>,
     <RustlsAcceptor as Accept<I, S>>::Future: Send + 'static,
     I: Send + 'static,
     S: Send + 'static,
 {
     type Stream = TlsStream<I>;
-    type Service = AddExtension<S, BodyPeerIdentity>;
+    type Service = AddExtension<TlsService<S>, BodyPeerIdentity>;
     type Future = Pin<Box<dyn Future<Output = io::Result<(Self::Stream, Self::Service)>> + Send>>;
 
     fn accept(&self, stream: I, service: S) -> Self::Future {

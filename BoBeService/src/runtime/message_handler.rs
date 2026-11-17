@@ -1,3 +1,4 @@
+use std::mem::DropGuard;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -50,24 +51,17 @@ struct ConversationChangeGuard {
     channel: ConversationChannelId,
 }
 
-struct ResponseGuard {
+fn interrupted_response_guard(
     conversation: Arc<ConversationService>,
     turn_id: ConversationTurnId,
-    armed: bool,
-}
-
-impl Drop for ResponseGuard {
-    fn drop(&mut self) {
-        if self.armed {
-            let conversation = Arc::clone(&self.conversation);
-            let turn_id = self.turn_id;
-            tokio::spawn(async move {
-                if let Err(error) = conversation.settle_interrupted_turn(turn_id).await {
-                    error!(%error, %turn_id, "message_handler.interrupted_response_persist_failed");
-                }
-            });
-        }
-    }
+) -> DropGuard<ConversationTurnId, impl FnOnce(ConversationTurnId)> {
+    DropGuard::new(turn_id, move |turn_id| {
+        tokio::spawn(async move {
+            if let Err(error) = conversation.settle_interrupted_turn(turn_id).await {
+                error!(%error, %turn_id, "message_handler.interrupted_response_persist_failed");
+            }
+        });
+    })
 }
 
 impl ConversationChangeGuard {
@@ -180,9 +174,9 @@ impl MessageHandler {
             .conversation
             .get_latest_readable_conversation(8, job.channel_id)
             .await?;
-        let turns = recent.map(|(_, turns)| turns.into_iter().map(|turn| serde_json::json!({
+        let turns = recent.map_or_default(|(_, turns)| turns.into_iter().map(|turn| serde_json::json!({
             "role":turn.role,"content":crate::util::text::truncate_str(&turn.content, UPDATE_TURN_MAX_BYTES),"complete":turn.is_complete,
-        })).collect::<Vec<_>>()).unwrap_or_default();
+        })).collect::<Vec<_>>());
         let input = crate::provider::JobInput {
             job_id: uuid::Uuid::new_v4(),
             kind: "offer_goal_update".into(),
@@ -412,11 +406,8 @@ impl MessageHandler {
             error!(%error, "message_handler.response_draft_failed");
             return false;
         }
-        let mut response_guard = ResponseGuard {
-            conversation: Arc::clone(&self.conversation),
-            turn_id: assistant_turn_id,
-            armed: true,
-        };
+        let response_guard =
+            interrupted_response_guard(Arc::clone(&self.conversation), assistant_turn_id);
 
         let result = match self
             .send_via_chat_worker(
@@ -441,7 +432,7 @@ impl MessageHandler {
 
         let persistence = self.persist_response(&result, conversation_id).await;
         if persistence != ResponsePersistence::Failed {
-            response_guard.armed = false;
+            DropGuard::dismiss(response_guard);
         }
         if result.success {
             match persistence {
@@ -700,11 +691,7 @@ mod tests {
             .begin_assistant_stream(active.id, turn_id)
             .await
             .unwrap();
-        let guard = ResponseGuard {
-            conversation: Arc::clone(&conversation),
-            turn_id,
-            armed: true,
-        };
+        let guard = interrupted_response_guard(Arc::clone(&conversation), turn_id);
         conversation.push_assistant_stream_delta(active.id, "Started, not finished.");
         drop(guard);
         conversation.settle_interrupted_turn(turn_id).await.unwrap();

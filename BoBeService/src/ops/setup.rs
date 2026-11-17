@@ -299,14 +299,13 @@ async fn connect(
     let models: Vec<String> = catalog
         .get("models")
         .and_then(Value::as_array)
-        .map(|models| {
+        .map_or_default(|models| {
             models
                 .iter()
                 .filter_map(|model| model.get("id").and_then(Value::as_str))
                 .map(str::to_owned)
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     if models.is_empty() {
         return Err(AppError::Validation("the service offered no models".into()));
     }

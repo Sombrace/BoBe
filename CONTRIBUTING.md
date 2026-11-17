@@ -58,7 +58,9 @@ has its own tools, and [Releasing](docs/releasing.md) covers release scripts.
   wording or dependencies. Passing tests do not replace operating the daemon,
   app or body.
 - Dependencies with build scripts, FFI, proc macros, subprocesses, parsers,
-  archives, filesystem or network reach need explicit review.
+  archives, filesystem or network reach need explicit review. Cargo and npm
+  take a new release only once it is three days old (`.cargo/config.toml`,
+  `BoBeAgent/.npmrc`), like Dependabot; override this only for a reviewed fix.
 
 ## Pull requests
 

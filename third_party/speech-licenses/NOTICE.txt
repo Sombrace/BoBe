@@ -1,9 +1,9 @@
 Native speech components linked into the BoBe daemon
 
-ptts 0.5.0 (Gradium / Laurent Mazare), https://github.com/gradium-ai/xn-ptts
+ptts 0.7.1 (Gradium / Laurent Mazare), https://github.com/gradium-ai/xn-ptts
   MIT, selected from MIT / Apache-2.0: ptts-MIT.txt
 
-xn 0.2.12 (Laurent Mazare), commit b50eef2488e6f0e1142ae9e115ad2ecca2052609,
+xn 0.2.14 (Laurent Mazare), commit 135b5fdbb3b8c9690b0207269454315e10cafdf2,
 https://github.com/LaurentMazare/xn
   MIT, selected from MIT / Apache-2.0: xn-MIT.txt
 

@@ -2,6 +2,7 @@
 version = 2
 ignore = [
     { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5 arrives only through elliptic-curve 0.13 in opaque-ke 4.0.1 and voprf 0.5, the newest stable OPAQUE stack; BoBe's pairing suite uses Ristretto255, whose scalar arithmetic runs in curve25519-dalek, so no secret value reaches crypto-bigint" },
+    { id = "RUSTSEC-2026-0459", reason = "sqlx 0.9.0, the newest release, caps libsqlite3-sys below 0.38; sqlx main allows 0.40 for 0.9.1 (launchbadge/sqlx#4525). The daemon opens only SQLite files it wrote, restore never installs -wal or -shm files, and backup verification reads a backup's database read-only, so stale memory from a planted -wal can reach only the integrity report shown to the owner who runs it. Remove when sqlx 0.9.1 is released" },
 ]
 
 [licenses]
@@ -12,14 +13,10 @@ allow = [
     "BSD-3-Clause",
     "BSL-1.0",
     "bzip2-1.0.6",
-    "CC0-1.0",
     "CDLA-Permissive-2.0",
     "ISC",
     "MIT",
-    "MPL-2.0",
-    "OpenSSL",
     "Unicode-3.0",
-    "Unicode-DFS-2016",
     "Zlib",
 ]
 
