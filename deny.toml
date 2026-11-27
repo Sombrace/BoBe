@@ -1,7 +1,8 @@
 [advisories]
 version = 2
 ignore = [
-    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5 arrives only through elliptic-curve 0.13 in opaque-ke 4.0.1 and voprf 0.5, the newest stable OPAQUE stack; BoBe's pairing suite uses Ristretto255, whose scalar arithmetic runs in curve25519-dalek, so no secret value reaches crypto-bigint" },
+    { id = "RUSTSEC-2026-0387", reason = "crypto-bigint 0.5 arrives only through elliptic-curve 0.13 in opaque-ke 4.0.1 and voprf 0.5, the newest stable OPAQUE stack; BoBe's pairing suite uses Ristretto255, whose scalar arithmetic runs in curve25519-dalek, so no secret value reaches crypto-bigint", allow = ["elliptic-curve@0.13.8"] },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is soft-deprecated, not vulnerable; the daemon and sqlx's SQLite timestamp encoding use it, and moving to jiff changes how stored timestamps are read and written, so it needs its own migration with an upgrade test" },
 ]
 
 [licenses]
