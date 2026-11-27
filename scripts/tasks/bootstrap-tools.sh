@@ -8,9 +8,9 @@ CACHE_DIR="$TOOLS_DIR/cache"
 MODE="${1:-install}"
 
 CARGO_ABOUT_VERSION="0.9.3"
-CARGO_DENY_VERSION="0.20.2"
+CARGO_DENY_VERSION="0.22.0"
 SWIFTLINT_VERSION="0.65.1"
-XCODEGEN_VERSION="2.46.0"
+XCODEGEN_VERSION="2.48.0"
 
 tool_matches() {
     local binary="$1"
@@ -116,7 +116,7 @@ if on_macos && ! tool_matches "$BIN_DIR/xcodegen" "Version: $XCODEGEN_VERSION" -
     archive="$(verified_archive \
         xcodegen "$XCODEGEN_VERSION" \
         "https://github.com/yonaskolb/XcodeGen/releases/download/$XCODEGEN_VERSION/xcodegen.zip" \
-        4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806)"
+        620c9f0dc10849f94728ab5df52d225ebab8187439dd6fee1925e59e80dff892)"
     temp="$(mktemp -d "$TOOLS_DIR/xcodegen.XXXXXX")"
     unzip -q "$archive" -d "$temp"
     rm -rf "$TOOLS_DIR/share/xcodegen"

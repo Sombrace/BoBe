@@ -17,7 +17,7 @@ use crate::provider::{ChatDelta, DomainTools, McpRuntimeConfig, SkillCreateParam
 use crate::util::process_group::signal_group;
 
 const MAX_LINE_BYTES: usize = 16 * 1024 * 1024;
-pub(crate) const HARNESS_VERSION: &str = "1.5.2";
+pub(crate) const HARNESS_VERSION: &str = "1.6.0";
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 type Reply = Result<Value, String>;
 type PendingReplies = HashMap<i64, oneshot::Sender<Reply>>;

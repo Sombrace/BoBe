@@ -555,6 +555,7 @@ export class Sessions {
     );
     const cancellations: Promise<PromiseSettledResult<void>[]>[] = [];
     const cancelResources = (): void => {
+      events.stop();
       cancellations.push(Promise.allSettled([bundle.session.abort(), bundle.mcp.cancelActive()]));
     };
     let cancelled = false;

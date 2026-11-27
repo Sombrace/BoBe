@@ -112,6 +112,7 @@ function scopedProvider(base: Provider, id: string, profile: Profile): Provider 
     ...(profile.base_url && profile.kind !== "rail_relay" && profile.kind !== "open_ai_compatible"
       ? { baseUrl: normalizeBaseUrl(profile.base_url) } : {}),
     ...(profile.organization ? { headers: { ...model.headers, "OpenAI-Organization": profile.organization } } : {}),
+    ...(model.api === "anthropic-messages" ? { compat: { ...model.compat, supportsMessageThreads: false } } : {}),
   });
   const native = <T extends Api>(model: Model<T>): Model<T> => ({ ...model, provider: base.id });
   return {

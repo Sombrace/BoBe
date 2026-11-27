@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 BOBE_NODE_VERSION="26.13.1"
-BOBE_PI_VERSION="1.5.2"
-BOBE_RG_VERSION="15.2.0"
+BOBE_PI_VERSION="1.6.0"
+BOBE_RG_VERSION="16.0.0"
 BOBE_FD_VERSION="10.5.2"
 BOBE_LIBATOMIC_SOURCE="gcc-14"
 BOBE_LIBATOMIC_VERSION="14.2.0-4ubuntu2~24.04.1"
@@ -156,10 +156,10 @@ bobe_stage_search_tools() {
             linux-x64) target=x86_64-unknown-linux-musl ;;
         esac
         case "$tool:$platform" in
-            rg:darwin-arm64) expected=3750b2e93f37e0c692657da574d7019a101c0084da05a790c83fd335bad973e4 ;;
-            rg:darwin-x64) expected=af7825fcc69a2afc7a7aea55fc9af90e26421d8f20fe59df32e233c0b8a231c1 ;;
-            rg:linux-arm64) expected=a740b91c82eaf9914cfedd353572f2791cbe0162c84101ee0951058f4dcbc90d ;;
-            rg:linux-x64) expected=33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c ;;
+            rg:darwin-arm64) expected=5a145656d5067144001bfce6648767fd3254599aa736f1ffdb7fb907760b8ca1 ;;
+            rg:darwin-x64) expected=aa9183b0e0bfac03c5818895ad18b75001c402d230063898abfe5a58cd413caa ;;
+            rg:linux-arm64) expected=0b0bddcfaf42be1f3c56bf929d70defd1a2d96f2577aecbd7029a3734ddb4740 ;;
+            rg:linux-x64) expected=54268ab4643c00a290a29b0086066d64b3f56236dd805ec64629a86f9bd29fd0 ;;
             fd:darwin-arm64) expected=81bf98a16d3d7230e4a9123fcede243d71ea31a577113476ed43f1cdf4773162 ;;
             fd:darwin-x64) expected=0f02e6000a8c896cd254cf4dccc7da1e604e77a32c6783609eed5e4cb07785e3 ;;
             fd:linux-arm64) expected=63ea52cb31586e6d98efa2f06d73d542f16c7d0c4af0f07b579aaf9714cf907a ;;

@@ -92,3 +92,28 @@ test("persistent MCP processes and native search share the same process capacity
   assert.equal(processes.programs.length,4);
   assert.ok(notifications.some(event=>event.method==="event" && event.params.delta.type==="tool_complete" && !event.params.delta.success));
 });
+
+test("find patterns are relative to the search path and grep keeps non-UTF-8 lines",async t=>{
+  const paths=await fixture(t);
+  await mkdir(join(paths.workspace,"src"));
+  await mkdir(join(paths.workspace,"pkg/src"),{recursive:true});
+  await writeFile(join(paths.workspace,"src/a.ts"),"marker\n");
+  await writeFile(join(paths.workspace,"pkg/src/b.ts"),"marker\n");
+  await writeFile(join(paths.workspace,"latin.txt"),Buffer.from([0x63,0x61,0x66,0xe9,0x20,0x6d,0x61,0x72,0x6b,0x65,0x72,0x0a]));
+  let calls=0;
+  let results:string[]=[];
+  const {worker}=await host(t,configuration(paths),context=>{
+    if (calls++===0) return {tools:[
+      {id:"find",name:"find",arguments:{pattern:"./src/*.ts"}},
+      {id:"bytes",name:"grep",arguments:{pattern:"marker",glob:"*.txt"}},
+    ]};
+    results=context.messages.filter(message=>message.role==="toolResult").map(message=>JSON.stringify(message.content));
+    return {text:"Searched."};
+  });
+  await worker.request({id:2,method:"chat",params:{text:"Search",channel:"text",context:""}});
+  const [found="",decoded=""]=results;
+  assert.equal(results.length,2);
+  assert.ok(found.includes("src/a.ts"),found);
+  assert.ok(!found.includes("pkg/src/b.ts"),found);
+  assert.ok(decoded.includes("latin.txt:1: caf"),decoded);
+});

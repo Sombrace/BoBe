@@ -30,9 +30,9 @@ pub(crate) const fn current_artifact() -> Result<OllamaArtifact, &'static str> {
         || cfg!(all(target_os = "macos", target_arch = "x86_64"))
     {
         return Ok(OllamaArtifact {
-            version: "0.40.16",
-            url: "https://github.com/ollama/ollama/releases/download/v0.40.16/ollama-darwin.tgz",
-            sha256: "a743717494315da7cd352982b805f6b992d4b4452ca117fd5fbf86c4ee46fca0",
+            version: "0.40.17",
+            url: "https://github.com/ollama/ollama/releases/download/v0.40.17/ollama-darwin.tgz",
+            sha256: "4b9db20d077c5a1e52fb4a6f2e6791f76ae945fd07c9b1a5647c82e927826653",
             max_bytes: 200_000_000,
             archive_name: "ollama-darwin.tgz",
             format: ArchiveFormat::TarGz,
@@ -42,9 +42,9 @@ pub(crate) const fn current_artifact() -> Result<OllamaArtifact, &'static str> {
     }
     if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         return Ok(OllamaArtifact {
-            version: "0.40.16",
-            url: "https://github.com/ollama/ollama/releases/download/v0.40.16/ollama-linux-amd64.tar.zst",
-            sha256: "87bfafb2acbc89b2e6a1be0a9043de6aa75fb450696f86bc426e65fc448f788d",
+            version: "0.40.17",
+            url: "https://github.com/ollama/ollama/releases/download/v0.40.17/ollama-linux-amd64.tar.zst",
+            sha256: "1df9d6228bac5a22e420b242708c0d10e5b886db97bab99d446a41760f4e79af",
             max_bytes: 1_600_000_000,
             archive_name: "ollama-linux-amd64.tar.zst",
             format: ArchiveFormat::TarZstd,
