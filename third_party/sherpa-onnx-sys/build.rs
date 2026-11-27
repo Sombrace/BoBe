@@ -7,11 +7,13 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-const VERSION: &str = "2.0.1";
+const VERSION: &str = "2.0.3";
 const MAX_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 const LIBRARIES: &[&str] = &[
     "sherpa-onnx-c-api",
     "sherpa-onnx-core",
+    "kaldi-hmm-gmm-core",
+    "kaldi-native-io-core",
     "kaldi-decoder-core",
     "sherpa-onnx-kaldifst-core",
     "sherpa-onnx-fstfar",
@@ -43,15 +45,15 @@ fn build() -> Result<(), Box<dyn Error>> {
     let (platform, expected) = match (os.as_str(), arch.as_str()) {
         ("macos", "aarch64") => (
             "osx-arm64",
-            "69413605e7d0d1286d40fbf66e898f7abb53f350d6057cbd154ea2e3f1437d2a",
+            "02d0059b66a8fcd20d711962943b37b59b499536077e6c3a42bb64c3d750455f",
         ),
         ("macos", "x86_64") => (
             "osx-x64",
-            "43146c71f17918d51c32b59fb0e41bdf8312d7944e428e9e1f5ea02d9f386312",
+            "eac2f780c8d4fac1b918c04081304a560fd62f7457546d474a8af9608ebc71fb",
         ),
         ("linux", "x86_64") => (
             "linux-x64",
-            "4b4c36e5560696e2864da3d9a7cdbb1fc1f0ce7af3509e19a659341debda009a",
+            "b8aca5c2772f6234b65b25b8b034b9589db0d862444807431a996b368b0f00f8",
         ),
         _ => return Err(format!("no verified recognition-only runtime for {os}/{arch}").into()),
     };

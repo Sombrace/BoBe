@@ -16,7 +16,7 @@
 //! | | When set, the build script copies the archive from this directory |
 //! | | instead of downloading it from the internet. The archive must have |
 //! | | the same filename that would normally be downloaded (e.g. |
-//! | | `sherpa-onnx-v2.0.1-linux-x64-shared-lib.tar.bz2`). |
+//! | | `sherpa-onnx-v2.0.3-linux-x64-shared-lib.tar.bz2`). |
 
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
@@ -33,6 +33,7 @@ extern "C" {
 }
 
 pub mod audio_tagging;
+pub mod forced_alignment;
 pub mod kws;
 pub mod offline_asr;
 pub mod offline_punctuation;
@@ -48,6 +49,7 @@ pub mod vad;
 pub mod wave;
 
 pub use audio_tagging::*;
+pub use forced_alignment::*;
 pub use kws::*;
 pub use offline_asr::*;
 pub use offline_punctuation::*;
