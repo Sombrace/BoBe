@@ -32,6 +32,8 @@ export class TurnEvents {
   private current: ReplyMessage | undefined;
   private final: ReplyMessage | undefined;
   private readonly openTools = new Map<string, { id: string; name: string }>();
+  private readonly skippedTools = new Set<string>();
+  private stopped = false;
   private failure: string | undefined;
   last: AssistantMessage | undefined;
   usage: Usage | undefined;
@@ -74,6 +76,10 @@ export class TurnEvents {
         }
       }
       this.current = undefined;
+    } else if (event.type === "tool_execution_start" && this.stopped) {
+      this.skippedTools.add(event.toolCallId);
+    } else if (event.type === "tool_execution_end" && this.skippedTools.delete(event.toolCallId)) {
+      return;
     } else if (event.type === "tool_execution_start") {
       const tool = { id: randomUUID(), name: event.toolName };
       this.openTools.set(event.toolCallId, tool);
@@ -92,6 +98,10 @@ export class TurnEvents {
     } else if (event.type === "turn_end") {
       this.turns++;
     }
+  }
+
+  stop(): void {
+    this.stopped = true;
   }
 
   assertSuccess(allowToolTermination = false): void {
@@ -119,12 +129,12 @@ export class TurnEvents {
     this.send?.({ type: "done" });
   }
 
-  commitOwnerQuestion(prompt:string):void {
+  commitOwnerQuestion(prompt: string): void {
     this.assertSuccess(true);
-    const id=randomUUID();
-    this.send?.({type:"message_delta",message_id:id,text:prompt});
-    this.send?.({type:"message_complete",message_id:id,content:prompt,output_tokens:0});
-    this.send?.({type:"done"});
+    const id = randomUUID();
+    this.send?.({ type: "message_delta", message_id: id, text: prompt });
+    this.send?.({ type: "message_complete", message_id: id, content: prompt, output_tokens: 0 });
+    this.send?.({ type: "done" });
   }
 
   private completeMessage(reply: ReplyMessage): void {

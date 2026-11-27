@@ -18,33 +18,34 @@ export function ownerInputTool(
     parameters: Type.Union([
       Type.Object({
         operation: Type.Literal("ask"),
-        kind: Type.Enum(["approval","information"]),
-        question: Type.String({ minLength:1,maxLength:2000 }),
-        action: Type.String({ minLength:1,maxLength:2000 }),
-        task: Type.String({ minLength:1,maxLength:32768 }),
-        context: Type.Optional(Type.String({ maxLength:8000 })),
+        kind: Type.Enum(["approval", "information"]),
+        question: Type.String({ minLength: 1, maxLength: 2000 }),
+        action: Type.String({ minLength: 1, maxLength: 2000 }),
+        task: Type.String({ minLength: 1, maxLength: 32768 }),
+        context: Type.Optional(Type.String({ maxLength: 8000 })),
         choices: Type.Optional(Type.Array(Type.Object({
-          value:Type.String({ minLength:1,maxLength:128 }),label:Type.String({ minLength:1,maxLength:128 }),
-        },{additionalProperties:false}),{maxItems:8})),
-        expires_seconds: Type.Optional(Type.Integer({ minimum:60,maximum:604800 })),
-        budget:Type.Optional(taskBudgetSchema),
-      },{additionalProperties:false}),
-      Type.Object({operation:Type.Literal("list")},{additionalProperties:false}),
+          value: Type.String({ minLength: 1, maxLength: 128 }),
+          label: Type.String({ minLength: 1, maxLength: 128 }),
+        }, { additionalProperties: false }), { maxItems: 8 })),
+        expires_seconds: Type.Optional(Type.Integer({ minimum: 60, maximum: 604800 })),
+        budget: Type.Optional(taskBudgetSchema),
+      }, { additionalProperties: false }),
+      Type.Object({ operation: Type.Literal("list") }, { additionalProperties: false }),
       Type.Object({
-        operation:Type.Enum(["get","present","cancel"]),
-        request_id:Type.String({format:"uuid"}),
-      },{additionalProperties:false}),
+        operation: Type.Enum(["get", "present", "cancel"]),
+        request_id: Type.String({ format: "uuid" }),
+      }, { additionalProperties: false }),
     ]),
-    execute:async (callId,args,signal) => {
-      const {operation,...parameters}=args;
-      const value=await control.call(operation,object(parameters),sourceKey(control,callId),signal);
-      const stop=operation==="ask" || operation==="present";
+    execute: async (callId, args, signal) => {
+      const { operation, ...parameters } = args;
+      const value = await control.call(operation, object(parameters), sourceKey(control, callId), signal);
+      const stop = operation === "ask" || operation === "present";
       if (stop) {
-        const input=object(value);
-        if (typeof input.id!=="string" || typeof input.prompt!=="string") throw new Error("Invalid durable owner question");
-        defer({id:input.id,prompt:input.prompt});
+        const input = object(value);
+        if (typeof input.id !== "string" || typeof input.prompt !== "string") throw new Error("Invalid durable owner question");
+        defer({ id: input.id, prompt: input.prompt });
       }
-      return {content:[{type:"text",text:JSON.stringify(value)}],details:value,terminate:stop};
+      return { content: [{ type: "text", text: JSON.stringify(value) }], details: value, terminate: stop };
     },
   });
 }

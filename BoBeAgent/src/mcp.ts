@@ -2,9 +2,9 @@ import { join } from "node:path";
 import {
   createMcpExtension, defineTool, type ExtensionFactory, type McpServerEntry, type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type {
-  JsonRpcMessage, McpTransport, McpTransportSendOptions,
-  McpTransportCloseListener, McpTransportErrorListener, McpTransportMessageListener,
+import {
+  mcpNamespace, type JsonRpcMessage, type McpTransport, type McpTransportSendOptions,
+  type McpTransportCloseListener, type McpTransportErrorListener, type McpTransportMessageListener,
 } from "@earendil-works/pi-mcp";
 import { assertActive, onAbort, rejections, type Redactor } from "./errors.ts";
 import { isRecord, type Json, type McpConfig } from "./protocol.ts";
@@ -124,7 +124,7 @@ class ObservedTransport implements McpTransport {
 function checkServerNames(config: McpConfig): void {
   const names = new Set<string>();
   for (const name of Object.keys(config.servers)) {
-    const namespace = name.replaceAll("-", "_");
+    const namespace = mcpNamespace(name);
     if (names.has(namespace)) throw new Error("MCP server names collide after pi namespace normalization");
     names.add(namespace);
   }

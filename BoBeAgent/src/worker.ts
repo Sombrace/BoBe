@@ -396,6 +396,7 @@ export class WorkerHost implements RpcHandler {
     await this.models?.close();
     await Promise.allSettled(this.active.values().map(activity => activity.completion));
     await this.sessions?.close();
+    await this.models?.runtime.settleCredentialWrites();
     this.processes.disconnect();
   }
 }

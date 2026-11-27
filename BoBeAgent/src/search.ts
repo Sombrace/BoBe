@@ -1,7 +1,7 @@
 import { access, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { homedir } from "node:os";
-import { basename, delimiter, dirname, join, relative, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import {
@@ -24,11 +24,11 @@ async function exists(path: string): Promise<boolean> {
   return await stat(path, { throwIfNoEntry: false }) !== undefined;
 }
 
-async function executable(program:"rg"|"fd",agentDir:string):Promise<string> {
-  const candidates=[
-    join(agentDir,"bin",program),
-    ...(process.env.PATH ?? "").split(delimiter).filter(Boolean).flatMap(directory=>
-      (program==="fd" ? ["fd","fdfind"] : ["rg"]).map(name=>join(directory,name))),
+async function executable(program: "rg" | "fd", agentDir: string): Promise<string> {
+  const candidates = [
+    join(agentDir, "bin", program),
+    ...(process.env.PATH ?? "").split(delimiter).filter(Boolean).flatMap(directory =>
+      (program === "fd" ? ["fd", "fdfind"] : ["rg"]).map(name => join(directory, name))),
   ];
   for (const candidate of candidates) {
     if (!(await stat(candidate, { throwIfNoEntry: false }))?.isFile()) continue;
@@ -39,7 +39,7 @@ async function executable(program:"rg"|"fd",agentDir:string):Promise<string> {
 }
 
 async function runSearch(
-  owner: ProcessClient, requestId: number, program: "rg" | "fd", args: string[], cwd: string,agentDir:string,
+  owner: ProcessClient, requestId: number, program: "rg" | "fd", args: string[], cwd: string, agentDir: string,
   signal: AbortSignal | undefined, line: (value: string) => boolean,
 ): Promise<void> {
   assertActive(signal);
@@ -60,7 +60,9 @@ async function runSearch(
   };
   try {
     using _abort = onAbort(signal, stop);
-    child = await owner.start({ program:await executable(program,agentDir), args, cwd, env: environment(), purpose: "shell", request_id: requestId }, (stream, data) => {
+    child = await owner.start({
+      program: await executable(program, agentDir), args, cwd, env: environment(), purpose: "shell", request_id: requestId,
+    }, (stream, data) => {
       if (stream === "stderr") { stderr = (stderr + data.toString("utf8")).slice(-65536); return; }
       if (stopRequested) return;
       try {
@@ -97,7 +99,7 @@ async function runSearch(
   }
 }
 
-export function ownedFind(cwd: string, owner: ProcessClient, requestId: () => number,agentDir:string): ReturnType<typeof createFindToolDefinition> {
+export function ownedFind(cwd: string, owner: ProcessClient, requestId: () => number, agentDir: string): ReturnType<typeof createFindToolDefinition> {
   const definition = createFindToolDefinition(cwd);
   return {
     ...definition,
@@ -107,8 +109,7 @@ export function ownedFind(cwd: string, owner: ProcessClient, requestId: () => nu
         exists,
         glob: (pattern, searchPath, options) => {
           searching = (async () => {
-            const limit = Math.max(1, options.limit);
-            const flags = ["--glob", "--color=never", "--hidden", "--max-results", String(limit)];
+            const flags = ["--glob", "--color=never", "--hidden", "--max-results", String(options.limit)];
             let insideGit = false;
             for (let directory = searchPath; ;) {
               if (await exists(join(directory, ".git"))) { insideGit = true; break; }
@@ -117,15 +118,20 @@ export function ownedFind(cwd: string, owner: ProcessClient, requestId: () => nu
               directory = parent;
             }
             if (!insideGit) flags.push("--no-require-git");
-            if (pattern.includes("/")) {
+            let effective = pattern.replace(/^(?:\.\/)+/, "");
+            if (effective.includes("/")) {
               flags.push("--full-path");
-              if (!pattern.startsWith("/") && !pattern.startsWith("**/") && pattern !== "**") pattern = `**/${pattern}`;
+              if (!isAbsolute(effective)) {
+                if (effective === effective.toLowerCase()) flags.push("--ignore-case");
+                effective = `${searchPath.replace(/\/+$/, "").replace(/[\\*?[\]{}]/g, "\\$&")}/${effective}`;
+              }
             }
-            flags.push("--", pattern, searchPath);
+            flags.push("--", effective, searchPath);
             const results: string[] = [];
-            await runSearch(owner, requestId(), "fd", flags, cwd, agentDir,signal, line => {
-              results.push(line.replace(/\r$/, ""));
-              return results.length >= limit;
+            await runSearch(owner, requestId(), "fd", flags, cwd, agentDir, signal, line => {
+              const result = line.replace(/\r$/, "").trim();
+              if (result) results.push(result);
+              return results.length >= options.limit;
             });
             return results;
           })();
@@ -145,7 +151,7 @@ function rgText(value: unknown): string {
   return "";
 }
 
-export function ownedGrep(cwd: string, owner: ProcessClient, requestId: () => number,agentDir:string): ReturnType<typeof createGrepToolDefinition> {
+export function ownedGrep(cwd: string, owner: ProcessClient, requestId: () => number, agentDir: string): ReturnType<typeof createGrepToolDefinition> {
   const definition = createGrepToolDefinition(cwd);
   return {
     ...definition,
@@ -180,7 +186,7 @@ export function ownedGrep(cwd: string, owner: ProcessClient, requestId: () => nu
         bytes += Buffer.byteLength(formatted, "utf8") + 1;
         lineCount++;
       };
-      await runSearch(owner, requestId(), "rg", flags, directory ? searchPath : cwd, agentDir,signal, raw => {
+      await runSearch(owner, requestId(), "rg", flags, directory ? searchPath : cwd, agentDir, signal, raw => {
         if (!raw.trim()) return false;
         const event: unknown = JSON.parse(raw);
         if (!isRecord(event) || (event.type !== "match" && event.type !== "context") || !isRecord(event.data)) return false;
